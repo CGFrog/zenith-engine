@@ -15,13 +15,13 @@
 #include "engine/application/Application.hpp"
 #include "engine/scene/Scene.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
-#include <fstream>
-#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -30,16 +30,10 @@
 #include <vector>
 
 namespace fs = std::filesystem;
+using testsupport::TempDirectory;
+using testsupport::writeText;
 
 namespace {
-int failures = 0;
-
-void expect(bool condition, std::string_view message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
 
 size_t entityCount(const Scene& scene) {
     return scene.registry().view<const SceneEntityIdComponent>().size();
@@ -140,33 +134,41 @@ class EditorHarness {
     ApplicationSession m_session;
 };
 
-void testStartupAndPersistence(const fs::path& root) {
+} // namespace
+
+TEST_SUITE_BEGIN("EditorSession");
+
+TEST_CASE("EditorSession: startup and persistence") {
+    const TempDirectory directory("editor-session-persistence");
+    const fs::path& root = directory.path();
     {
         EditorHarness editor(root);
-        expect(static_cast<bool>(editor.start()), "startup: the editor session starts without a GPU");
-        expect(entityCount(editor.scene) > 0, "startup: the default scene is populated");
+        CHECK_MESSAGE(static_cast<bool>(editor.start()), "startup: the editor session starts without a GPU");
+        CHECK_MESSAGE(entityCount(editor.scene) > 0, "startup: the default scene is populated");
         bool running = true;
         for (int frame = 0; frame < 5; ++frame) {
             const ApplicationFrameResult result = editor.frame();
             running = running && result.success && result.keepRunning;
         }
-        expect(running, "startup: idle frames keep the editor running");
-        expect(!editor.session().fixedUpdatesEnabled(), "startup: Edit mode runs no fixed updates");
+        CHECK_MESSAGE(running, "startup: idle frames keep the editor running");
+        CHECK_MESSAGE(!editor.session().fixedUpdatesEnabled(), "startup: Edit mode runs no fixed updates");
         editor.shutdown();
     }
     const fs::path settings = root / "settings";
-    expect(fs::is_regular_file(settings / "workspaces.json"), "persistence: unloading saves the workspaces");
-    expect(fs::is_regular_file(settings / "settings.ini"), "persistence: unloading saves the editor settings");
+    CHECK_MESSAGE(fs::is_regular_file(settings / "workspaces.json"), "persistence: unloading saves the workspaces");
+    CHECK_MESSAGE(fs::is_regular_file(settings / "settings.ini"), "persistence: unloading saves the editor settings");
 
     EditorHarness reopened(root);
-    expect(static_cast<bool>(reopened.start()) && reopened.frame().keepRunning,
-           "persistence: a second session starts from the saved workspaces and settings");
+    CHECK_MESSAGE((static_cast<bool>(reopened.start()) && reopened.frame().keepRunning),
+                  "persistence: a second session starts from the saved workspaces and settings");
 }
 
-void testPlayModeRestoresTheScene(const fs::path& root) {
+TEST_CASE("EditorSession: play mode restores the scene") {
+    const TempDirectory directory("editor-session-play");
+    const fs::path& root = directory.path();
     EditorHarness editor(root);
     if (!editor.start()) {
-        expect(false, "play: the editor session starts");
+        CHECK_MESSAGE(false, "play: the editor session starts");
         return;
     }
     editor.frame();
@@ -174,35 +176,37 @@ void testPlayModeRestoresTheScene(const fs::path& root) {
 
     editor.press(ImGuiKey_F5);
     ApplicationSession& session = editor.session();
-    expect(session.fixedUpdatesEnabled() && session.beginFixedUpdate(), "play: F5 enters Play mode");
+    CHECK_MESSAGE((session.fixedUpdatesEnabled() && session.beginFixedUpdate()), "play: F5 enters Play mode");
     editor.scene.createEntity("Spawned during play");
 
     editor.press(ImGuiKey_F6);
-    expect(!session.beginFixedUpdate(), "play: F6 pauses fixed updates");
+    CHECK_MESSAGE(!session.beginFixedUpdate(), "play: F6 pauses fixed updates");
     // The press's release frame runs the step and ends it (EditorPlayModeTests
     // counts what a step advances).
     editor.press(ImGuiKey_F7);
-    expect(!session.fixedUpdatesEnabled() && session.simulationClock().paused &&
-               session.simulationClock().frameStepSeconds == 0.0f,
-           "play: F7 steps one frame and stays paused");
+    CHECK_MESSAGE((!session.fixedUpdatesEnabled() && session.simulationClock().paused &&
+                   session.simulationClock().frameStepSeconds == 0.0f),
+                  "play: F7 steps one frame and stays paused");
     editor.press(ImGuiKey_F6);
-    expect(session.beginFixedUpdate(), "play: F6 again resumes");
+    CHECK_MESSAGE(session.beginFixedUpdate(), "play: F6 again resumes");
 
     editor.press(ImGuiMod_Shift | ImGuiKey_F5);
-    expect(!session.fixedUpdatesEnabled(), "play: Shift F5 returns to Edit mode");
-    expect(entityCount(editor.scene) == authored && !hasEntityNamed(editor.scene, "Spawned during play"),
-           "play: stopping restores the authored scene");
+    CHECK_MESSAGE(!session.fixedUpdatesEnabled(), "play: Shift F5 returns to Edit mode");
+    CHECK_MESSAGE((entityCount(editor.scene) == authored && !hasEntityNamed(editor.scene, "Spawned during play")),
+                  "play: stopping restores the authored scene");
 }
 
 // A module system that throws during Play stops Play at the end of the frame,
 // restores the edit scene, and leaves the editor running; Play starts again
 // once the cause is gone.
-void testGameplayFaultStopsPlay(const fs::path& root) {
+TEST_CASE("EditorSession: gameplay fault stops play") {
+    const TempDirectory directory("editor-session-fault");
+    const fs::path& root = directory.path();
     ProjectConfig project = testProject(root);
     project.gameModule = ZENITH_EDITOR_TEST_MODULE_V1;
     EditorHarness editor(root, std::move(project));
     if (!editor.start()) {
-        expect(false, "fault: the editor session starts with the test module");
+        CHECK_MESSAGE(false, "fault: the editor session starts with the test module");
         return;
     }
     editor.frame();
@@ -213,36 +217,38 @@ void testGameplayFaultStopsPlay(const fs::path& root) {
 
     editor.press(ImGuiKey_F5);
     const ApplicationFrameResult faulted = editor.frame();
-    expect(faulted.success && faulted.keepRunning, "fault: a throwing system does not end the editor");
-    expect(!session.fixedUpdatesEnabled(), "fault: a throwing system stops Play");
-    expect(entityCount(editor.scene) == authored && hasEntityNamed(editor.scene, "editor_test_throw"),
-           "fault: stopping restores the edit scene");
+    CHECK_MESSAGE((faulted.success && faulted.keepRunning), "fault: a throwing system does not end the editor");
+    CHECK_MESSAGE(!session.fixedUpdatesEnabled(), "fault: a throwing system stops Play");
+    CHECK_MESSAGE((entityCount(editor.scene) == authored && hasEntityNamed(editor.scene, "editor_test_throw")),
+                  "fault: stopping restores the edit scene");
     const std::vector<LogEntry> entries = editor.logger.entries();
-    expect(std::ranges::any_of(entries,
-                               [](const LogEntry& entry) {
-                                   return entry.level == LogLevel::Error &&
-                                          entry.message.find("System 'count_play' threw in Update") !=
-                                              std::string::npos;
-                               }),
-           "fault: the throwing system is logged with its name and phase");
+    CHECK_MESSAGE(std::ranges::any_of(entries,
+                                      [](const LogEntry& entry) {
+                                          return entry.level == LogLevel::Error &&
+                                                 entry.message.find("System 'count_play' threw in Update") !=
+                                                     std::string::npos;
+                                      }),
+                  "fault: the throwing system is logged with its name and phase");
     bool running = true;
     for (int frame = 0; frame < 3; ++frame) {
         const ApplicationFrameResult result = editor.frame();
         running = running && result.success && result.keepRunning;
     }
-    expect(running && !session.fixedUpdatesEnabled(), "fault: the editor keeps running in Edit mode");
+    CHECK_MESSAGE((running && !session.fixedUpdatesEnabled()), "fault: the editor keeps running in Edit mode");
 
     editor.scene.destroyEntity(editor.scene.findEntity(trigger));
     editor.press(ImGuiKey_F5);
     editor.frame();
-    expect(session.fixedUpdatesEnabled(), "fault: Play runs again once the system stops throwing");
+    CHECK_MESSAGE(session.fixedUpdatesEnabled(), "fault: Play runs again once the system stops throwing");
     editor.press(ImGuiMod_Shift | ImGuiKey_F5);
 }
 
-void testNewDocumentAndQuit(const fs::path& root) {
+TEST_CASE("EditorSession: new document and quit") {
+    const TempDirectory directory("editor-session-file");
+    const fs::path& root = directory.path();
     EditorHarness editor(root);
     if (!editor.start()) {
-        expect(false, "file: the editor session starts");
+        CHECK_MESSAGE(false, "file: the editor session starts");
         return;
     }
     editor.frame();
@@ -251,27 +257,32 @@ void testNewDocumentAndQuit(const fs::path& root) {
     // stop for the unsaved-changes dialog.
     editor.scene.createEntity("Scratch");
     const ApplicationFrameResult created = editor.press(ImGuiMod_Ctrl | ImGuiKey_N);
-    expect(created.keepRunning && !hasEntityNamed(editor.scene, "Scratch") && entityCount(editor.scene) == defaultCount,
-           "file: Ctrl N replaces a clean document with the default scene");
+    CHECK_MESSAGE(
+        (created.keepRunning && !hasEntityNamed(editor.scene, "Scratch") && entityCount(editor.scene) == defaultCount),
+        "file: Ctrl N replaces a clean document with the default scene");
 
     const ApplicationFrameResult quit = editor.press(ImGuiMod_Ctrl | ImGuiKey_Q);
-    expect(quit.success && !quit.keepRunning, "file: Ctrl Q on a clean document quits");
+    CHECK_MESSAGE((quit.success && !quit.keepRunning), "file: Ctrl Q on a clean document quits");
 }
 
-void testHostQuitRequest(const fs::path& root) {
+TEST_CASE("EditorSession: host quit request") {
+    const TempDirectory directory("editor-session-quit");
+    const fs::path& root = directory.path();
     EditorHarness editor(root);
     if (!editor.start()) {
-        expect(false, "quit: the editor session starts");
+        CHECK_MESSAGE(false, "quit: the editor session starts");
         return;
     }
     editor.frame();
     editor.press(ImGuiKey_F5);
     // Closing the window while playing stops Play mode and then quits.
     editor.session().requestQuit();
-    expect(!editor.session().fixedUpdatesEnabled(), "quit: a host quit request leaves Play mode");
+    CHECK_MESSAGE(!editor.session().fixedUpdatesEnabled(), "quit: a host quit request leaves Play mode");
     const ApplicationFrameResult result = editor.frame();
-    expect(result.success && !result.keepRunning, "quit: a host quit request on a clean document quits");
+    CHECK_MESSAGE((result.success && !result.keepRunning), "quit: a host quit request on a clean document quits");
 }
+
+namespace {
 
 // What the fake game process saw and does; shared with the test.
 struct FakeGame {
@@ -316,14 +327,17 @@ class FakeGameProcess final : public GameProcess {
     std::shared_ptr<FakeGame> m_game;
 };
 
+} // namespace
+
 // The play targets through the real keymap: F5 plays in the active viewport
 // (whose game view holds game input, so the editor captures the mouse
 // persistently), F9 and F10 (bound in keymap.json) play in a floating
 // viewport and standalone with a fake game process.
-void testPlayTargets(const fs::path& root) {
-    fs::create_directories(root / "settings");
+TEST_CASE("EditorSession: play targets") {
+    const TempDirectory directory("editor-session-targets");
+    const fs::path& root = directory.path();
     const fs::path executable = root / "zenith-fake.exe";
-    std::ofstream(executable) << "fake";
+    writeText(executable, "fake");
     {
         const auto binding = [](ImGuiKeyChord chord, const char* target) {
             return nlohmann::json{{"operator", "play.start"},
@@ -331,11 +345,11 @@ void testPlayTargets(const fs::path& root) {
                                   {"chord", formatKeyChord(chord)},
                                   {"properties", {{"target", target}}}};
         };
-        std::ofstream(root / "settings" / "keymap.json")
-            << nlohmann::json{{"version", 1},
-                              {"removed", nlohmann::json::array()},
-                              {"added", {binding(ImGuiKey_F9, "floating"), binding(ImGuiKey_F10, "standalone")}}}
-                   .dump();
+        writeText(root / "settings" / "keymap.json",
+                  nlohmann::json{{"version", 1},
+                                 {"removed", nlohmann::json::array()},
+                                 {"added", {binding(ImGuiKey_F9, "floating"), binding(ImGuiKey_F10, "standalone")}}}
+                      .dump());
     }
     const auto game = std::make_shared<FakeGame>();
     EditorHarness editor(root, std::nullopt,
@@ -345,33 +359,33 @@ void testPlayTargets(const fs::path& root) {
                                             },
                                             .temporaryDirectory = root / "play"});
     if (!editor.start()) {
-        expect(false, "targets: the editor session starts");
+        CHECK_MESSAGE(false, "targets: the editor session starts");
         return;
     }
     ApplicationSession& session = editor.session();
     editor.frame();
     editor.frame();
     const size_t authored = entityCount(editor.scene);
-    expect(editor.application().mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
-           "targets: editing flies the camera with the right mouse button only");
+    CHECK_MESSAGE(editor.application().mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
+                  "targets: editing flies the camera with the right mouse button only");
 
     editor.press(ImGuiKey_F5);
-    expect(session.fixedUpdatesEnabled(), "targets: F5 plays in the active viewport");
-    expect(editor.application().mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
-           "targets: away from the game view a click stays the editor's");
+    CHECK_MESSAGE(session.fixedUpdatesEnabled(), "targets: F5 plays in the active viewport");
+    CHECK_MESSAGE(editor.application().mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
+                  "targets: away from the game view a click stays the editor's");
     if (const ImGuiWindow* viewport = HeadlessImGuiContext::findWindow("##viewport.1")) {
         ImGui::GetIO().AddMousePosEvent(viewport->Pos.x + viewport->Size.x * 0.5f,
                                         viewport->Pos.y + viewport->Size.y * 0.5f);
     }
     editor.frame();
-    expect(editor.application().mouseCapturePolicy() == MouseCapturePolicy::Persistent,
-           "targets: over the focused game view a click captures the mouse until Esc");
+    CHECK_MESSAGE(editor.application().mouseCapturePolicy() == MouseCapturePolicy::Persistent,
+                  "targets: over the focused game view a click captures the mouse until Esc");
     editor.press(ImGuiKey_Escape);
-    expect(editor.application().mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
-           "targets: Esc gives game input back to the editor");
+    CHECK_MESSAGE(editor.application().mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
+                  "targets: Esc gives game input back to the editor");
     editor.press(ImGuiMod_Shift | ImGuiKey_F5);
-    expect(!session.fixedUpdatesEnabled() && entityCount(editor.scene) == authored,
-           "targets: Stop leaves the active viewport target");
+    CHECK_MESSAGE((!session.fixedUpdatesEnabled() && entityCount(editor.scene) == authored),
+                  "targets: Stop leaves the active viewport target");
 
     const auto floatingWindow = [] {
         const ImGuiWindow* window = HeadlessImGuiContext::findWindow("##viewport.2");
@@ -380,54 +394,57 @@ void testPlayTargets(const fs::path& root) {
     editor.press(ImGuiKey_F9);
     editor.frame();
     const ImGuiWindow* floating = floatingWindow();
-    expect(session.fixedUpdatesEnabled() && floating != nullptr && floating->DockNode == nullptr,
-           "targets: F9 plays in a new floating viewport");
+    CHECK_MESSAGE((session.fixedUpdatesEnabled() && floating != nullptr && floating->DockNode == nullptr),
+                  "targets: F9 plays in a new floating viewport");
     if (floating != nullptr) {
         ImGui::GetIO().AddMousePosEvent(floating->Pos.x + floating->Size.x * 0.5f,
                                         floating->Pos.y + floating->Size.y * 0.5f);
     }
     editor.frame();
-    expect(editor.application().mouseCapturePolicy() == MouseCapturePolicy::Persistent,
-           "targets: the floating viewport holds game input");
+    CHECK_MESSAGE(editor.application().mouseCapturePolicy() == MouseCapturePolicy::Persistent,
+                  "targets: the floating viewport holds game input");
     editor.press(ImGuiMod_Shift | ImGuiKey_F5);
     editor.frame();
-    expect(!session.fixedUpdatesEnabled() && floatingWindow() == nullptr, "targets: Stop closes the floating viewport");
+    CHECK_MESSAGE((!session.fixedUpdatesEnabled() && floatingWindow() == nullptr),
+                  "targets: Stop closes the floating viewport");
 
     editor.press(ImGuiKey_F10);
-    expect(game->running && !session.fixedUpdatesEnabled(),
-           "targets: F10 launches the standalone game and leaves the editor's scene alone");
+    CHECK_MESSAGE((game->running && !session.fixedUpdatesEnabled()),
+                  "targets: F10 launches the standalone game and leaves the editor's scene alone");
     const auto sceneArgument = std::ranges::find(game->arguments, "--scene");
     const bool hasScene = sceneArgument != game->arguments.end() && sceneArgument + 1 != game->arguments.end();
     const fs::path sceneFile = hasScene ? fs::path(*(sceneArgument + 1)) : fs::path();
-    expect(!game->arguments.empty() && game->arguments.front() == executable.string() && hasScene &&
-               fs::is_regular_file(sceneFile),
-           "targets: the game gets its executable and a temporary copy of the scene");
+    CHECK_MESSAGE((!game->arguments.empty() && game->arguments.front() == executable.string() && hasScene &&
+                   fs::is_regular_file(sceneFile)),
+                  "targets: the game gets its executable and a temporary copy of the scene");
     game->pendingLines = {"hello from the game"};
     editor.frame();
     bool streamed = false;
     for (const LogEntry& entry : editor.logger.entries()) {
         streamed = streamed || (entry.category == "game" && entry.message == "hello from the game");
     }
-    expect(streamed, "targets: the game's output reaches the log");
+    CHECK_MESSAGE(streamed, "targets: the game's output reaches the log");
     editor.press(ImGuiKey_F5);
-    expect(!session.fixedUpdatesEnabled(), "targets: Play waits while the standalone game runs");
+    CHECK_MESSAGE(!session.fixedUpdatesEnabled(), "targets: Play waits while the standalone game runs");
     editor.press(ImGuiMod_Shift | ImGuiKey_F5);
     editor.frame();
-    expect(game->cancelled && !fs::exists(sceneFile), "targets: Stop kills the game and removes its scene");
+    CHECK_MESSAGE((game->cancelled && !fs::exists(sceneFile)), "targets: Stop kills the game and removes its scene");
 
     editor.press(ImGuiKey_F10);
-    expect(game->running, "targets: the standalone game starts again");
+    CHECK_MESSAGE(game->running, "targets: the standalone game starts again");
     game->running = false;
     game->exitCode = 0;
     editor.frame();
     game->arguments.clear();
     // F5 reuses the last target, which only starts once the old game left Play.
     editor.press(ImGuiKey_F5);
-    expect(game->running && !game->arguments.empty(),
-           "targets: the game exiting leaves Play, so F5 starts the standalone game again");
+    CHECK_MESSAGE((game->running && !game->arguments.empty()),
+                  "targets: the game exiting leaves Play, so F5 starts the standalone game again");
     editor.press(ImGuiMod_Shift | ImGuiKey_F5);
     editor.frame();
 }
+
+namespace {
 
 // The id of an item in the Project Hub's window, reached through path's ids.
 ImGuiID projectHubItem(std::initializer_list<const char*> path) {
@@ -442,9 +459,13 @@ ImGuiID projectHubItem(std::initializer_list<const char*> path) {
     return id;
 }
 
+} // namespace
+
 // Starts in the hub, opens a template project from the recent list, and goes
 // back to the hub through File > Project Hub (run from operator search).
-void testProjectHubSwitchesProjects(const fs::path& root) {
+TEST_CASE("EditorSession: project hub switches projects") {
+    const TempDirectory directory("editor-session-hub");
+    const fs::path& root = directory.path();
     AssetManager generatorAssets;
     const ProjectTemplateResult generated =
         generateProjectFromTemplate({.displayName = "Hub Game",
@@ -454,35 +475,35 @@ void testProjectHubSwitchesProjects(const fs::path& root) {
                                      .engineAssetRoot = ZENITH_ASSET_DIR},
                                     generatorAssets);
     if (!generated) {
-        expect(false, "hub: the template project generates: " + generated.error);
+        CHECK_MESSAGE(false, ("hub: the template project generates: " + generated.error));
         return;
     }
     {
         RecentProjects recent(root / "settings" / "recent-projects.json");
         recent.recordOpened(generated.projectFile, "Hub Game", std::chrono::system_clock::time_point{});
-        expect(static_cast<bool>(recent.save()), "hub: the recent list is prepared");
+        CHECK_MESSAGE(static_cast<bool>(recent.save()), "hub: the recent list is prepared");
     }
 
     EditorHarness editor(
         root, EditorProjectHubOptions{.hub = {.defaultProjectLocation = root / "projects"}, .startInHub = true});
     if (!editor.start()) {
-        expect(false, "hub: the editor starts in the Project Hub");
+        CHECK_MESSAGE(false, "hub: the editor starts in the Project Hub");
         return;
     }
     const ApplicationFrameResult hubFrame = editor.frame();
-    expect(hubFrame.keepRunning && entityCount(editor.scene) == 0, "hub: the hub shows no scene");
+    CHECK_MESSAGE((hubFrame.keepRunning && entityCount(editor.scene) == 0), "hub: the hub shows no scene");
 
     const std::string projectKey = fs::absolute(generated.projectFile).lexically_normal().string();
     HeadlessImGuiContext::activateNextFrame(
         projectHubItem({"##hub_columns", "##recent_projects", projectKey.c_str(), "Open"}));
     const ApplicationFrameResult opened = editor.frame();
-    expect(opened.success && opened.keepRunning, "hub: opening a recent project keeps the editor running");
-    expect(hasEntityNamed(editor.scene, "Ground") && hasEntityNamed(editor.scene, "Camera"),
-           "hub: the chosen project's session opens its startup scene");
-    expect(editor.application().project().displayName == "Hub Game", "hub: the chosen project is current");
+    CHECK_MESSAGE((opened.success && opened.keepRunning), "hub: opening a recent project keeps the editor running");
+    CHECK_MESSAGE((hasEntityNamed(editor.scene, "Ground") && hasEntityNamed(editor.scene, "Camera")),
+                  "hub: the chosen project's session opens its startup scene");
+    CHECK_MESSAGE(editor.application().project().displayName == "Hub Game", "hub: the chosen project is current");
     const std::span<const RecentProject> recent = editor.application().recentProjects().entries();
-    expect(!recent.empty() && recent.front().lastOpened > std::chrono::system_clock::time_point{},
-           "hub: opening a project records when it was opened");
+    CHECK_MESSAGE((!recent.empty() && recent.front().lastOpened > std::chrono::system_clock::time_point{}),
+                  "hub: opening a project records when it was opened");
     editor.frame();
 
     // F3, then the operator's name and Enter.
@@ -490,53 +511,28 @@ void testProjectHubSwitchesProjects(const fs::path& root) {
     HeadlessImGuiContext::typeNextFrame("Project Hub");
     editor.frame();
     const ApplicationFrameResult left = editor.press(ImGuiKey_Enter);
-    expect(left.success && left.keepRunning && entityCount(editor.scene) == 0,
-           "hub: File > Project Hub closes the clean project and shows the hub");
-    expect(fs::is_regular_file(root / "settings" / "workspaces.json"),
-           "hub: leaving the project unloads its session, which saves the workspaces");
-    expect(editor.frame().keepRunning, "hub: the hub keeps running after a project closed");
+    CHECK_MESSAGE((left.success && left.keepRunning && entityCount(editor.scene) == 0),
+                  "hub: File > Project Hub closes the clean project and shows the hub");
+    CHECK_MESSAGE(fs::is_regular_file(root / "settings" / "workspaces.json"),
+                  "hub: leaving the project unloads its session, which saves the workspaces");
+    CHECK_MESSAGE(editor.frame().keepRunning, "hub: the hub keeps running after a project closed");
 }
 
-void testProjectHubUsesThePreferredLook(const fs::path& root) {
-    fs::create_directories(root / "settings");
-    {
-        std::ofstream settings(root / "settings" / "settings.ini");
-        settings << "theme.accent=violet\nui.scale=2\n";
-    }
+TEST_CASE("EditorSession: project hub uses the preferred look") {
+    const TempDirectory directory("editor-session-hub-look");
+    const fs::path& root = directory.path();
+    writeText(root / "settings" / "settings.ini", "theme.accent=violet\nui.scale=2\n");
     EditorHarness editor(
         root, EditorProjectHubOptions{.hub = {.defaultProjectLocation = root / "projects"}, .startInHub = true});
     if (!editor.start()) {
-        expect(false, "hub look: the editor starts in the Project Hub");
+        CHECK_MESSAGE(false, "hub look: the editor starts in the Project Hub");
         return;
     }
     const ApplicationFrameResult frame = editor.frame();
-    expect(frame.success && frame.keepRunning, "hub look: the hub draws");
-    expect(editorArtPixel() == 2.0f, "hub look: the hub uses the UI scale from settings.ini");
-    expect(editorAccent() == themeAccentInfo(ThemeAccent::Violet).color.withAlpha(1.0f),
-           "hub look: the hub uses the accent from settings.ini");
+    CHECK_MESSAGE((frame.success && frame.keepRunning), "hub look: the hub draws");
+    CHECK_MESSAGE(editorArtPixel() == 2.0f, "hub look: the hub uses the UI scale from settings.ini");
+    CHECK_MESSAGE(editorAccent() == themeAccentInfo(ThemeAccent::Violet).color.withAlpha(1.0f),
+                  "hub look: the hub uses the accent from settings.ini");
 }
-} // namespace
 
-int main() {
-    const fs::path root = fs::temp_directory_path() / "zenith_editor_session_tests";
-    std::error_code error;
-    fs::remove_all(root, error);
-    fs::create_directories(root);
-
-    testStartupAndPersistence(root / "persistence");
-    testPlayModeRestoresTheScene(root / "play");
-    testGameplayFaultStopsPlay(root / "fault");
-    testNewDocumentAndQuit(root / "file");
-    testHostQuitRequest(root / "quit");
-    testPlayTargets(root / "targets");
-    testProjectHubSwitchesProjects(root / "hub");
-    testProjectHubUsesThePreferredLook(root / "hub_look");
-
-    fs::remove_all(root, error);
-    if (failures != 0) {
-        std::cerr << failures << " editor session test(s) failed\n";
-        return 1;
-    }
-    std::cout << "Editor session tests passed\n";
-    return 0;
-}
+TEST_SUITE_END();

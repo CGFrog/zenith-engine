@@ -12,6 +12,8 @@
 #include "engine/scene/Collections.hpp"
 #include "engine/scene/Tags.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -20,15 +22,9 @@
 #include <string>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("SelectionTools");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 glm::mat4 at(glm::vec3 position) {
     return glm::translate(glm::mat4(1.0f), position);
@@ -46,18 +42,10 @@ struct Fixture : EditorTestFixture {
     std::filesystem::path root;
 
     Fixture()
-        : EditorTestFixture({.documentRoot = std::filesystem::temp_directory_path() / "zenith-selection-tools-tests"})
-        , root(document.options().assetRoot) {
-        std::error_code error;
-        std::filesystem::remove_all(root, error);
+        : root(scratch.path()) {
         std::filesystem::create_directories(root / defaultCubeModel.parent_path());
         std::filesystem::copy_file(std::filesystem::path(ZENITH_ASSET_DIR) / defaultCubeModel, root / defaultCubeModel);
-        expect(registerSelectOperators(operators).success, "the select operators should register");
-    }
-
-    ~Fixture() {
-        std::error_code error;
-        std::filesystem::remove_all(root, error);
+        CHECK_MESSAGE(registerSelectOperators(operators).success, "the select operators should register");
     }
 
     SceneEntityId entity(const char* name, Entity parent = entt::null) {
@@ -70,7 +58,7 @@ struct Fixture : EditorTestFixture {
 
     SceneEntityId cube(glm::vec3 location) {
         Entity created = entt::null;
-        expect(addCube(scene, assets, root, created).success, "the test cube should load");
+        CHECK_MESSAGE(addCube(scene, assets, root, created).success, "the test cube should load");
         scene.registry().get<TransformComponent>(created).local = at(location);
         scene.markTransformDirty(created);
         scene.updateWorldTransforms();
@@ -82,7 +70,7 @@ struct Fixture : EditorTestFixture {
     }
 };
 
-void testSelectHierarchy() {
+TEST_CASE("SelectionTools: select hierarchy") {
     Fixture fixture;
     const SceneEntityId parent = fixture.entity("Parent");
     const SceneEntityId first = fixture.entity("First", fixture.find(parent));
@@ -92,33 +80,34 @@ void testSelectHierarchy() {
     fixture.scene.registry().emplace<VisibilityComponent>(fixture.find(hidden)).hidden = true;
 
     fixture.selection.selectOnly(parent);
-    expect(static_cast<bool>(fixture.invoke("object.select_hierarchy", R"({"direction":"children"})")) &&
-               selected(fixture.selection, {first, second}) && fixture.selection.active() == first,
-           "] selects the direct, selectable children, the first one active");
-    expect(fixture.history.size() == 0, "selection operators record no undo step");
-    expect(static_cast<bool>(fixture.invoke("object.select_hierarchy", R"({"direction":"parent"})")) &&
-               selected(fixture.selection, {parent}),
-           "[ selects the parents");
-    expect(static_cast<bool>(fixture.invoke("object.select_hierarchy", R"({"direction":"children","extend":true})")) &&
-               selected(fixture.selection, {parent, first, second}),
-           "extend adds the children to the selection");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("object.select_hierarchy", R"({"direction":"children"})")) &&
+                   selected(fixture.selection, {first, second}) && fixture.selection.active() == first),
+                  "] selects the direct, selectable children, the first one active");
+    CHECK_MESSAGE(fixture.history.size() == 0, "selection operators record no undo step");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("object.select_hierarchy", R"({"direction":"parent"})")) &&
+                   selected(fixture.selection, {parent})),
+                  "[ selects the parents");
+    CHECK_MESSAGE(
+        (static_cast<bool>(fixture.invoke("object.select_hierarchy", R"({"direction":"children","extend":true})")) &&
+         selected(fixture.selection, {parent, first, second})),
+        "extend adds the children to the selection");
     fixture.selection.selectOnly(grandchild);
-    expect(fixture.invoke("object.select_hierarchy", R"({"direction":"children"})").status ==
-                   OperatorStatus::Cancelled &&
-               selected(fixture.selection, {grandchild}),
-           "finding nothing leaves the selection alone");
+    CHECK_MESSAGE(
+        (fixture.invoke("object.select_hierarchy", R"({"direction":"children"})").status == OperatorStatus::Cancelled &&
+         selected(fixture.selection, {grandchild})),
+        "finding nothing leaves the selection alone");
 
     fixture.selection.selectOnly(parent);
-    expect(static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"children"})")) &&
-               selected(fixture.selection, {first, second, grandchild}),
-           "grouped children are every selectable descendant");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"children"})")) &&
+                   selected(fixture.selection, {first, second, grandchild})),
+                  "grouped children are every selectable descendant");
     fixture.selection.selectOnly(parent);
-    expect(static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"immediate_children"})")) &&
-               selected(fixture.selection, {first, second}),
-           "immediate children are the direct ones");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"immediate_children"})")) &&
+                   selected(fixture.selection, {first, second})),
+                  "immediate children are the direct ones");
 }
 
-void testSelectGrouped() {
+TEST_CASE("SelectionTools: select grouped") {
     Fixture fixture;
     const SceneEntityId cubeA = fixture.cube({0.0f, 0.0f, 0.0f});
     const SceneEntityId cubeB = fixture.cube({2.0f, 0.0f, 0.0f});
@@ -134,37 +123,38 @@ void testSelectGrouped() {
     registry.emplace<TagsComponent>(fixture.find(plain)).tags = {"cold"};
 
     fixture.selection.selectOnly(cubeA);
-    expect(static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"mesh"})")) &&
-               selected(fixture.selection, {cubeA, cubeB}) && fixture.selection.active() == cubeA,
-           "mesh selects the objects drawing the same mesh, keeping the active one");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"mesh"})")) &&
+                   selected(fixture.selection, {cubeA, cubeB}) && fixture.selection.active() == cubeA),
+                  "mesh selects the objects drawing the same mesh, keeping the active one");
     fixture.selection.selectOnly(lampB);
-    expect(static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"components"})")) &&
-               selected(fixture.selection, {lampA, lampB}),
-           "components selects the objects with every component type the active one has");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"components"})")) &&
+                   selected(fixture.selection, {lampA, lampB})),
+                  "components selects the objects with every component type the active one has");
     fixture.selection.selectOnly(lampA);
-    expect(static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"tag"})")) &&
-               selected(fixture.selection, {lampA, cubeB}),
-           "tag selects the objects sharing any tag");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"tag"})")) &&
+                   selected(fixture.selection, {lampA, cubeB})),
+                  "tag selects the objects sharing any tag");
     fixture.selection.selectOnly(plain);
-    expect(fixture.invoke("object.select_grouped", R"({"type":"tag"})").status == OperatorStatus::Cancelled &&
-               selected(fixture.selection, {plain}),
-           "a group of one cancels and keeps the selection");
+    CHECK_MESSAGE((fixture.invoke("object.select_grouped", R"({"type":"tag"})").status == OperatorStatus::Cancelled &&
+                   selected(fixture.selection, {plain})),
+                  "a group of one cancels and keeps the selection");
 
     SceneCollections collections = fixture.scene.collections();
     SceneCollectionId props;
-    expect(static_cast<bool>(collections.create("Props", SceneCollectionId{}, props)),
-           "a collection should be created");
+    CHECK_MESSAGE((static_cast<bool>(collections.create("Props", SceneCollectionId{}, props))),
+                  "a collection should be created");
     fixture.scene.setCollections(std::move(collections));
     for (const SceneEntityId id : {cubeB, plain}) {
         registry.emplace_or_replace<CollectionMembershipComponent>(fixture.find(id)).insert(props);
     }
     fixture.selection.assign({plain, cubeA});
-    expect(static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"collection","extend":true})")) &&
-               selected(fixture.selection, {plain, cubeB, cubeA}),
-           "collection with extend adds the active object's collection mates");
+    CHECK_MESSAGE(
+        (static_cast<bool>(fixture.invoke("object.select_grouped", R"({"type":"collection","extend":true})")) &&
+         selected(fixture.selection, {plain, cubeB, cubeA})),
+        "collection with extend adds the active object's collection mates");
     fixture.selection.clear();
-    expect(fixture.invoke("object.select_grouped", R"({"type":"mesh"})").status == OperatorStatus::Cancelled,
-           "select grouped needs an active object");
+    CHECK_MESSAGE(fixture.invoke("object.select_grouped", R"({"type":"mesh"})").status == OperatorStatus::Cancelled,
+                  "select grouped needs an active object");
 }
 
 // A lens at (0, 0, 10) looking down -Z over an 800 x 600 view.
@@ -182,7 +172,7 @@ glm::vec2 toView(const RenderView& lens, glm::vec2 viewSize, glm::vec3 point) {
     return (glm::vec2(clip) / clip.w * 0.5f + 0.5f) * viewSize;
 }
 
-void testIconPicking() {
+TEST_CASE("SelectionTools: icon picking") {
     Fixture fixture;
     Scene& scene = fixture.scene;
     const SceneEntityId wall = fixture.cube({0.0f, 0.0f, 0.0f});
@@ -208,10 +198,10 @@ void testIconPicking() {
     const auto listed = [&icons](SceneEntityId id) {
         return std::ranges::find(icons, id, &SceneGizmoAnchor::entity) != icons.end();
     };
-    expect(listed(light) && listed(speaker) && !listed(hiddenLight) && !listed(wall),
-           "lights and emitters are pickable icons; hidden objects and meshes are not");
-    expect(!listed(light) || pickableIcons(view, {.lights = OverlayScope::Off}).size() == icons.size() - 1,
-           "an icon whose overlay is off cannot be clicked");
+    CHECK_MESSAGE((listed(light) && listed(speaker) && !listed(hiddenLight) && !listed(wall)),
+                  "lights and emitters are pickable icons; hidden objects and meshes are not");
+    CHECK_MESSAGE((!listed(light) || pickableIcons(view, {.lights = OverlayScope::Off}).size() == icons.size() - 1),
+                  "an icon whose overlay is off cannot be clicked");
 
     // A click on the light in front of the wall picks the light; beside it,
     // the speaker alone; the wall still picks away from both.
@@ -221,28 +211,31 @@ void testIconPicking() {
                             .viewSize = viewSize,
                             .icons = icons};
     ViewportPickOutcome outcome = resolveCpuPick(click, scene, fixture.assets);
-    expect(outcome.entities.size() == 1 && outcome.entities.front() == wall,
-           "without icons the wall is under the click");
+    CHECK_MESSAGE((outcome.entities.size() == 1 && outcome.entities.front() == wall),
+                  "without icons the wall is under the click");
     mergeIconPicks(click, scene, fixture.assets, outcome);
-    expect(outcome.entities.size() == 1 && outcome.entities.front() == light,
-           "a click on a light's icon picks the light over the mesh behind it");
+    CHECK_MESSAGE((outcome.entities.size() == 1 && outcome.entities.front() == light),
+                  "a click on a light's icon picks the light over the mesh behind it");
 
     ViewportPickQuery cycle = click;
     cycle.kind = ViewportPickKind::Cycle;
     ViewportPickOutcome candidates = resolveCpuPick(cycle, scene, fixture.assets);
     mergeIconPicks(cycle, scene, fixture.assets, candidates);
-    expect(candidates.entities.size() == 2 && candidates.entities[0] == light && candidates.entities[1] == wall,
-           "Alt+click cycling offers the icon before the meshes under it");
+    CHECK_MESSAGE(
+        (candidates.entities.size() == 2 && candidates.entities[0] == light && candidates.entities[1] == wall),
+        "Alt+click cycling offers the icon before the meshes under it");
 
     click.point = toView(lens, viewSize, {3.0f, 0.0f, 0.0f});
     outcome = resolveCpuPick(click, scene, fixture.assets);
     mergeIconPicks(click, scene, fixture.assets, outcome);
-    expect(outcome.entities.size() == 1 && outcome.entities.front() == speaker, "an emitter is clicked by its origin");
+    CHECK_MESSAGE((outcome.entities.size() == 1 && outcome.entities.front() == speaker),
+                  "an emitter is clicked by its origin");
 
     click.point = toView(lens, viewSize, {0.0f, 0.4f, 0.5f});
     outcome = resolveCpuPick(click, scene, fixture.assets);
     mergeIconPicks(click, scene, fixture.assets, outcome);
-    expect(outcome.entities.size() == 1 && outcome.entities.front() == wall, "away from icons the mesh pick stands");
+    CHECK_MESSAGE((outcome.entities.size() == 1 && outcome.entities.front() == wall),
+                  "away from icons the mesh pick stands");
 
     // A light inside the wall does not steal the wall's clicks, though Alt+click still reaches it.
     scene.registry().get<TransformComponent>(fixture.find(light)).local = at({0.0f, 0.0f, 0.0f});
@@ -252,13 +245,15 @@ void testIconPicking() {
     click.point = toView(lens, viewSize, {0.0f, 0.0f, 0.0f});
     outcome = resolveCpuPick(click, scene, fixture.assets);
     mergeIconPicks(click, scene, fixture.assets, outcome);
-    expect(outcome.entities.size() == 1 && outcome.entities.front() == wall, "an icon behind a surface is not clicked");
+    CHECK_MESSAGE((outcome.entities.size() == 1 && outcome.entities.front() == wall),
+                  "an icon behind a surface is not clicked");
     cycle = click;
     cycle.kind = ViewportPickKind::Cycle;
     candidates = resolveCpuPick(cycle, scene, fixture.assets);
     mergeIconPicks(cycle, scene, fixture.assets, candidates);
-    expect(candidates.entities.size() == 2 && candidates.entities[0] == wall && candidates.entities[1] == light,
-           "cycling reaches an icon hidden behind a surface after the surface");
+    CHECK_MESSAGE(
+        (candidates.entities.size() == 2 && candidates.entities[0] == wall && candidates.entities[1] == light),
+        "cycling reaches an icon hidden behind a surface after the surface");
 
     ViewportPickQuery box{
         .kind = ViewportPickKind::Region,
@@ -269,17 +264,9 @@ void testIconPicking() {
         .icons = icons};
     ViewportPickOutcome inside = resolveCpuPick(box, scene, fixture.assets);
     mergeIconPicks(box, scene, fixture.assets, inside);
-    expect(inside.entities.size() == 1 && inside.entities.front() == speaker, "box select takes the icons inside");
+    CHECK_MESSAGE((inside.entities.size() == 1 && inside.entities.front() == speaker),
+                  "box select takes the icons inside");
 }
 } // namespace
 
-int main() {
-    testSelectHierarchy();
-    testSelectGrouped();
-    testIconPicking();
-    if (failures != 0) {
-        std::cerr << failures << " selection tool test(s) failed\n";
-        return 1;
-    }
-    return 0;
-}
+TEST_SUITE_END();

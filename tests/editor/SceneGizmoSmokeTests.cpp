@@ -16,6 +16,9 @@
 #include "engine/Engine.hpp"
 #include "engine/graphics/GraphicsValidation.hpp"
 #include "engine/resources/ResourceLocator.hpp"
+#include "support/Skip.hpp"
+#include "support/StandaloneChecks.hpp"
+#include "support/VulkanProbe.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -31,14 +34,8 @@
 
 namespace {
 struct SmokeResults {
-    std::vector<std::string> failures;
+    testsupport::StandaloneChecks checks;
     uint32_t framesWithLabels{0};
-
-    void expect(bool condition, uint32_t frame, const std::string& message) {
-        if (!condition) {
-            failures.push_back("frame " + std::to_string(frame) + ": " + message);
-        }
-    }
 };
 
 glm::mat4 lookFrom(const glm::vec3& position, const glm::vec3& target) {
@@ -136,15 +133,15 @@ class SceneGizmoScene final : public ApplicationScene {
                                                    .forward = glm::normalize(glm::vec3(0.0f, -6.0f, -11.0f)),
                                                    .verticalFovRadians = glm::radians(50.0f)});
         DebugDraw* output = rendering.viewDebugDraw(view);
-        m_results.expect(output != nullptr, m_frame, "the default view has a debug list");
+        m_results.checks.check(output != nullptr, m_frame, "the default view has a debug list");
         if (output == nullptr || gizmosDisabled()) {
             return;
         }
         context.scene.updateWorldTransforms();
         drawSceneGizmos({.scene = context.scene, .assets = context.assets, .selection = m_selection}, everyOverlay(),
                         *output);
-        m_results.expect(output->lineCount() > 0 && !output->labels().empty(), m_frame,
-                         "the scene records gizmo lines and labels");
+        m_results.checks.check(output->lineCount() > 0 && !output->labels().empty(), m_frame,
+                               "the scene records gizmo lines and labels");
     }
 
     void fixedUpdate(ApplicationContext&, const InputState&, float) override {}
@@ -157,8 +154,8 @@ class SceneGizmoScene final : public ApplicationScene {
         if (m_frame < 3 || gizmosDisabled()) {
             return;
         }
-        m_results.expect(rendering.viewDebugDraw(view) == nullptr || rendering.viewDebugDraw(view)->empty(), m_frame,
-                         "the renderer clears the view's list after drawing it");
+        m_results.checks.check(rendering.viewDebugDraw(view) == nullptr || rendering.viewDebugDraw(view)->empty(),
+                               m_frame, "the renderer clears the view's list after drawing it");
         const std::span<const ProjectedDebugLabel> labels = rendering.viewDebugLabels(view);
         const bool hasActive = std::ranges::any_of(labels, [](const ProjectedDebugLabel& label) {
             return label.text == "Active" && label.color == sceneGizmoColors().active;
@@ -197,21 +194,19 @@ int main(int, char** argv) {
     if (!engine.init()) {
         std::cerr << "Engine initialization failed\n";
         engine.shutdown();
+        if (std::string reason; !testsupport::vulkanDeviceAvailable(testsupport::VulkanDeviceKind::Any, reason)) {
+            std::cout << "Skipping: " << reason << '\n';
+            return testsupport::skipExitCode;
+        }
         return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
     SmokeResults results;
     SceneGizmoApplication application(results);
     const bool ran = engine.run(application);
     engine.shutdown();
-    for (const std::string& failure : results.failures) {
-        std::cerr << "FAILED: " << failure << '\n';
-    }
-    const bool labelsSeen = gizmosDisabled() || results.framesWithLabels > 0;
-    if (!labelsSeen) {
-        std::cerr << "FAILED: the view never published the active object's label (is ZENITH_SMOKE_FRAMES at least "
-                     "4?)\n";
-    }
-    const bool passed = ran && results.failures.empty() && labelsSeen;
+    results.checks.check(gizmosDisabled() || results.framesWithLabels > 0,
+                         "the view never published the active object's label (is ZENITH_SMOKE_FRAMES at least 4?)");
+    const bool passed = ran && results.checks.failures() == 0;
     if (passed) {
         std::cout << "Scene gizmo smoke test passed\n";
     }

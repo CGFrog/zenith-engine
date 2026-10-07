@@ -110,11 +110,6 @@ zenith_add_test_suite(engine
         zenith_test_not_a_module
     NEEDS_ASSETS)
 
-# meshoptimizer is private to the engine library; this test calls it directly.
-zenith_add_test(zenith_milestones_19_21 EXECUTABLE zenith_milestone_19_21_tests
-    SOURCES Milestone19And21Tests.cpp
-    LIBS zenith_engine zenith_demo zenith_editor_app meshoptimizer NEEDS_ASSETS)
-
 # One CTest per backend: each half waits on real file-system latency, so
 # they run in parallel rather than back to back.
 zenith_add_test_executable(zenith_file_watcher_tests SOURCES FileWatcherTests.cpp LIBS zenith_engine zenith_test_support)

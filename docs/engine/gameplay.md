@@ -122,8 +122,8 @@ A host without a registry (`linkGameplay`, a packaged game) accepts and drops
 the registration. A table file uses the schema its `.meta` import settings
 name (`{"schema": "items"}`), else one named like its file stem.
 
-`tests/engine/DefinitionTableTests.cpp` (`zenith_definition_tables`);
-`tests/engine/AssetReloadTests.cpp` (`zenith_asset_reload`) covers schemas;
+`tests/engine/DefinitionTableTests.cpp` (`engine.DefinitionTable`);
+`tests/engine/AssetReloadTests.cpp` (`engine.AssetReload`) covers schemas;
 `tests/engine/GameServicesTests.cpp` covers the resource store and
 `assetPath`.
 
@@ -176,5 +176,5 @@ its meshes (a scene holding a runtime mesh cannot be serialized; a
 material). Release the leases on teardown and call
 `services.requestAssetCollection()` to free the floor's meshes, GPU buffers
 and physics shapes ([Assets](assets.md)).
-`tests/engine/RuntimeContentTests.cpp` (`zenith_runtime_content`) and the
+`tests/engine/RuntimeContentTests.cpp` (`engine.RuntimeContent`) and the
 `zenith_runtime_content_vulkan_smoke` capture test cover it.

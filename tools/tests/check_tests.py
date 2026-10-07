@@ -38,6 +38,10 @@ STANDALONE = {
     'tests/engine/FileWatcherTests.cpp',
     # Needs a window; skips (77) without one.
     'tests/engine/InputManagerTests.cpp',
+    # Argument-driven: builds (and times) a generated project's game module.
+    'tests/editor/GeneratedModuleRuns.cpp',
+    # A tool that writes the FPS template's committed scene and prefab.
+    'tests/editor/FpsTemplateWriter.cpp',
 }
 
 HAND_ROLLED = re.compile(r'^\s*(?:static\s+)?(?:void\s+expect\w*\s*\(|int\s+failures\s*=)', re.M)

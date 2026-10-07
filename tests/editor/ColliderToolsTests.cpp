@@ -8,11 +8,13 @@
 #include "engine/resources/ResourceLocator.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cmath>
+#include <filesystem>
 #include <functional>
-#include <iostream>
 #include <optional>
 #include <span>
 #include <string>
@@ -24,15 +26,9 @@
 // may choose from, and the viewport handles (placement, drag maths, and a
 // drag as one undo step or cancelled).
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("ColliderTools");
 
-void expect(bool condition, const std::string& message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 bool near(float actual, float expected, float tolerance = 1e-4f) {
     return std::abs(actual - expected) <= tolerance;
@@ -40,7 +36,16 @@ bool near(float actual, float expected, float tolerance = 1e-4f) {
 
 constexpr const char* propertiesWindow = "Collider test";
 
-struct Fixture : EditorTestFixture {
+// Points the resource locator at the build tree's assets, as the editor does
+// from its executable path. A base of Fixture, so it runs before the editor
+// fixture reads assetRoot().
+struct LocatedResources {
+    LocatedResources() {
+        initializeResourceLocator(std::filesystem::path(ZENITH_ASSET_DIR).parent_path() / "zenith_editor_tests");
+    }
+};
+
+struct Fixture : LocatedResources, EditorTestFixture {
     EntityPropertiesView view{componentLayout};
     SceneEntityId entity;
 
@@ -69,7 +74,7 @@ struct Fixture : EditorTestFixture {
 // let the popup appear, then press the item.
 void chooseShape(Fixture& fixture, const char* label) {
     const ImGuiWindow* window = HeadlessImGuiContext::findWindow(propertiesWindow);
-    expect(window != nullptr, "the properties window should be drawn");
+    CHECK_MESSAGE(window != nullptr, "the properties window should be drawn");
     if (window == nullptr) {
         return;
     }
@@ -77,7 +82,7 @@ void chooseShape(Fixture& fixture, const char* label) {
     fixture.drawProperties();
     fixture.drawProperties();
     const ImGuiWindow* popup = HeadlessImGuiContext::findWindow("##Combo_");
-    expect(popup != nullptr && popup->Active, "the Shape combo should open");
+    CHECK_MESSAGE((popup != nullptr && popup->Active), "the Shape combo should open");
     if (popup == nullptr) {
         return;
     }
@@ -86,69 +91,73 @@ void chooseShape(Fixture& fixture, const char* label) {
     fixture.drawProperties();
 }
 
-void testShapeConversion() {
+TEST_CASE("ColliderTools: shape conversion") {
     using ComponentEditors::ColliderShapeKind;
     using ComponentEditors::convertColliderShape;
     const ColliderShape box = BoxCollider{.halfExtents = {0.5f, 1.0f, 0.25f}};
     const ColliderShape asSphere = convertColliderShape(box, ColliderShapeKind::Sphere, {});
-    expect(std::holds_alternative<SphereCollider>(asSphere) && near(std::get<SphereCollider>(asSphere).radius, 1.0f),
-           "a box becomes a sphere as large as its largest half extent");
+    CHECK_MESSAGE(
+        (std::holds_alternative<SphereCollider>(asSphere) && near(std::get<SphereCollider>(asSphere).radius, 1.0f)),
+        "a box becomes a sphere as large as its largest half extent");
     const ColliderShape asCapsule = convertColliderShape(box, ColliderShapeKind::Capsule, {});
     const auto& capsule = std::get<CapsuleCollider>(asCapsule);
-    expect(near(capsule.radius, 0.5f) && near(capsule.halfHeight + capsule.radius, 1.0f),
-           "a box becomes a capsule as tall as it, as wide as its wider side");
+    CHECK_MESSAGE((near(capsule.radius, 0.5f) && near(capsule.halfHeight + capsule.radius, 1.0f)),
+                  "a box becomes a capsule as tall as it, as wide as its wider side");
     const ColliderShape backToBox = convertColliderShape(asCapsule, ColliderShapeKind::Box, {});
-    expect(std::get<BoxCollider>(backToBox).halfExtents == glm::vec3(0.5f, 1.0f, 0.5f),
-           "a capsule becomes the box around it");
+    CHECK_MESSAGE(std::get<BoxCollider>(backToBox).halfExtents == glm::vec3(0.5f, 1.0f, 0.5f),
+                  "a capsule becomes the box around it");
     const ColliderShape flat =
         convertColliderShape(BoxCollider{.halfExtents = {2.0f, 0.1f, 2.0f}}, ColliderShapeKind::Capsule, {});
-    expect(std::get<CapsuleCollider>(flat).halfHeight > 0.0f, "a capsule from a flat box keeps a positive height");
+    CHECK_MESSAGE(std::get<CapsuleCollider>(flat).halfHeight > 0.0f,
+                  "a capsule from a flat box keeps a positive height");
     const MeshHandle mesh{.index = 3, .generation = 1};
-    expect(std::get<TriangleMeshCollider>(convertColliderShape(box, ColliderShapeKind::TriangleMesh, mesh)).mesh ==
-               mesh,
-           "a triangle mesh takes the chosen mesh");
+    CHECK_MESSAGE(
+        std::get<TriangleMeshCollider>(convertColliderShape(box, ColliderShapeKind::TriangleMesh, mesh)).mesh == mesh,
+        "a triangle mesh takes the chosen mesh");
 }
 
-void testShapeSwitchInInspector() {
+TEST_CASE("ColliderTools: shape switch in inspector") {
     Fixture fixture;
     HeadlessImGuiContext imgui;
     fixture.drawProperties();
     chooseShape(fixture, "Sphere");
     const auto* sphere = std::get_if<SphereCollider>(&fixture.collider().shape);
-    expect(sphere != nullptr && near(sphere->radius, 1.0f), "choosing Sphere turns the box into a sphere its size");
-    expect(fixture.history.size() == 1, "switching the shape is one undo step");
+    CHECK_MESSAGE((sphere != nullptr && near(sphere->radius, 1.0f)),
+                  "choosing Sphere turns the box into a sphere its size");
+    CHECK_MESSAGE(fixture.history.size() == 1, "switching the shape is one undo step");
     fixture.editing().undo();
-    expect(std::holds_alternative<BoxCollider>(fixture.collider().shape) &&
-               std::get<BoxCollider>(fixture.collider().shape).halfExtents == glm::vec3(0.5f, 1.0f, 0.25f),
-           "undo restores the box");
+    CHECK_MESSAGE((std::holds_alternative<BoxCollider>(fixture.collider().shape) &&
+                   std::get<BoxCollider>(fixture.collider().shape).halfExtents == glm::vec3(0.5f, 1.0f, 0.25f)),
+                  "undo restores the box");
 
     // Without a model mesh, Triangle Mesh cannot be chosen.
     chooseShape(fixture, "Triangle Mesh");
-    expect(std::holds_alternative<BoxCollider>(fixture.collider().shape),
-           "a collider without a mesh to use cannot become a triangle mesh");
+    CHECK_MESSAGE(std::holds_alternative<BoxCollider>(fixture.collider().shape),
+                  "a collider without a mesh to use cannot become a triangle mesh");
 }
 
-void testMeshChoices() {
+TEST_CASE("ColliderTools: mesh choices") {
     Fixture fixture;
     const AssetLoadResult<MeshHandle> cube = fixture.assets.loadMesh(assetRoot() / "primitives" / "cube.gltf", 0);
-    expect(static_cast<bool>(cube), "the cube mesh should load: " + cube.error);
+    CHECK_MESSAGE(static_cast<bool>(cube), ("the cube mesh should load: " + cube.error));
     if (!cube) {
         return;
     }
     const Entity entity = fixture.scene.findEntity(fixture.entity);
-    expect(ComponentEditors::colliderMeshChoices(fixture.scene, fixture.assets, entity).empty(),
-           "an entity without meshes offers none");
+    CHECK_MESSAGE(ComponentEditors::colliderMeshChoices(fixture.scene, fixture.assets, entity).empty(),
+                  "an entity without meshes offers none");
     fixture.scene.registry().emplace<MeshRendererComponent>(entity, MeshRendererComponent{.mesh = cube.handle});
     const std::vector<ComponentEditors::ColliderMeshChoice> choices =
         ComponentEditors::colliderMeshChoices(fixture.scene, fixture.assets, entity);
-    expect(choices.size() == 1 && choices.front().mesh == cube.handle && !choices.front().name.empty(),
-           "an entity's own mesh is offered");
+    CHECK_MESSAGE((choices.size() == 1 && choices.front().mesh == cube.handle && !choices.front().name.empty()),
+                  "an entity's own mesh is offered");
 
     HeadlessImGuiContext imgui;
     fixture.drawProperties();
     chooseShape(fixture, "Triangle Mesh");
     const auto* triangles = std::get_if<TriangleMeshCollider>(&fixture.collider().shape);
-    expect(triangles != nullptr && triangles->mesh == cube.handle, "choosing Triangle Mesh uses the entity's mesh");
+    CHECK_MESSAGE((triangles != nullptr && triangles->mesh == cube.handle),
+                  "choosing Triangle Mesh uses the entity's mesh");
 }
 
 bool nearVector(const glm::vec3& actual, const glm::vec3& expected, float tolerance = 1e-4f) {
@@ -165,50 +174,50 @@ const ColliderHandle* findHandle(const std::vector<ColliderHandle>& handles, Col
     return nullptr;
 }
 
-void testHandlePlacement() {
+TEST_CASE("ColliderTools: handle placement") {
     const glm::mat4 world =
         glm::translate(glm::mat4(1.0f), {1.0f, 0.0f, 0.0f}) * glm::scale(glm::mat4(1.0f), {2.0f, 1.0f, 1.0f});
     const ColliderComponent box{.shape = BoxCollider{.halfExtents = {0.5f, 0.25f, 1.0f}},
                                 .offsetPosition = {0.0f, 1.0f, 0.0f}};
     const std::vector<ColliderHandle> boxHandles = colliderHandles(box, world);
     const ColliderHandle* right = findHandle(boxHandles, ColliderHandle::Dimension::BoxHalfExtent, 0, 1.0f);
-    expect(boxHandles.size() == 6 && right != nullptr && nearVector(right->position, {2.0f, 1.0f, 0.0f}) &&
-               nearVector(right->direction, {1.0f, 0.0f, 0.0f}),
-           "a box has a handle at each face centre, scaled and offset like its body");
+    CHECK_MESSAGE((boxHandles.size() == 6 && right != nullptr && nearVector(right->position, {2.0f, 1.0f, 0.0f}) &&
+                   nearVector(right->direction, {1.0f, 0.0f, 0.0f})),
+                  "a box has a handle at each face centre, scaled and offset like its body");
 
     const ColliderComponent capsule{.shape = CapsuleCollider{.halfHeight = 0.5f, .radius = 0.25f}};
     const std::vector<ColliderHandle> capsuleHandles = colliderHandles(capsule, glm::mat4(1.0f));
     const ColliderHandle* top = findHandle(capsuleHandles, ColliderHandle::Dimension::CapsuleHalfHeight, 1, 1.0f);
-    expect(capsuleHandles.size() == 6 && top != nullptr && nearVector(top->position, {0.0f, 0.75f, 0.0f}),
-           "a capsule has four radius handles and one at each end's tip");
-    expect(colliderHandles(ColliderComponent{.shape = TriangleMeshCollider{}}, glm::mat4(1.0f)).empty(),
-           "a triangle mesh collider has no handles");
+    CHECK_MESSAGE((capsuleHandles.size() == 6 && top != nullptr && nearVector(top->position, {0.0f, 0.75f, 0.0f})),
+                  "a capsule has four radius handles and one at each end's tip");
+    CHECK_MESSAGE(colliderHandles(ColliderComponent{.shape = TriangleMeshCollider{}}, glm::mat4(1.0f)).empty(),
+                  "a triangle mesh collider has no handles");
 }
 
-void testHandleDragMaths() {
+TEST_CASE("ColliderTools: handle drag maths") {
     const ColliderComponent box{.shape = BoxCollider{.halfExtents = {0.5f, 0.5f, 0.5f}}};
     const glm::vec3 scale{2.0f, 1.0f, 1.0f};
     const glm::mat4 world = glm::scale(glm::mat4(1.0f), scale);
     const ColliderHandle right =
         *findHandle(colliderHandles(box, world), ColliderHandle::Dimension::BoxHalfExtent, 0, 1.0f);
     const ColliderComponent symmetric = dragColliderHandle(box, right, scale, 1.0f, ColliderHandleDrag::Symmetric);
-    expect(near(std::get<BoxCollider>(symmetric.shape).halfExtents.x, 1.0f) &&
-               symmetric.offsetPosition == glm::vec3(0.0f),
-           "a symmetric drag grows both sides by the distance and keeps the shape centred");
+    CHECK_MESSAGE((near(std::get<BoxCollider>(symmetric.shape).halfExtents.x, 1.0f) &&
+                   symmetric.offsetPosition == glm::vec3(0.0f)),
+                  "a symmetric drag grows both sides by the distance and keeps the shape centred");
 
     const ColliderComponent oneSided = dragColliderHandle(box, right, scale, 1.0f, ColliderHandleDrag::OneSided);
     const float halfX = std::get<BoxCollider>(oneSided.shape).halfExtents.x;
     const float centre = oneSided.offsetPosition.x * scale.x;
-    expect(near(halfX, 0.75f) && near(centre + halfX * scale.x, 2.0f) && near(centre - halfX * scale.x, -1.0f),
-           "a one-sided drag moves only the dragged face, shifting the offset");
+    CHECK_MESSAGE((near(halfX, 0.75f) && near(centre + halfX * scale.x, 2.0f) && near(centre - halfX * scale.x, -1.0f)),
+                  "a one-sided drag moves only the dragged face, shifting the offset");
 
     const ColliderHandle left =
         *findHandle(colliderHandles(box, world), ColliderHandle::Dimension::BoxHalfExtent, 0, -1.0f);
     const ColliderComponent collapsed = dragColliderHandle(box, left, scale, -10.0f, ColliderHandleDrag::OneSided);
     const float collapsedHalf = std::get<BoxCollider>(collapsed.shape).halfExtents.x;
-    expect(near(collapsedHalf, 0.001f) &&
-               near(collapsed.offsetPosition.x * scale.x + collapsedHalf * scale.x, 1.0f, 1e-3f),
-           "dragging a face past the other stops at the minimum size with the other face in place");
+    CHECK_MESSAGE((near(collapsedHalf, 0.001f) &&
+                   near(collapsed.offsetPosition.x * scale.x + collapsedHalf * scale.x, 1.0f, 1e-3f)),
+                  "dragging a face past the other stops at the minimum size with the other face in place");
 
     const ColliderComponent turned{.shape = SphereCollider{.radius = 0.5f},
                                    .offsetRotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 0, 1))};
@@ -216,9 +225,9 @@ void testHandleDragMaths() {
         *findHandle(colliderHandles(turned, glm::mat4(1.0f)), ColliderHandle::Dimension::Radius, 0, 1.0f);
     const ColliderComponent movedSphere =
         dragColliderHandle(turned, up, glm::vec3(1.0f), 1.0f, ColliderHandleDrag::OneSided);
-    expect(near(std::get<SphereCollider>(movedSphere.shape).radius, 1.0f) &&
-               nearVector(movedSphere.offsetPosition, {0.0f, 0.5f, 0.0f}),
-           "a turned shape's one-sided drag follows the handle's turned axis");
+    CHECK_MESSAGE((near(std::get<SphereCollider>(movedSphere.shape).radius, 1.0f) &&
+                   nearVector(movedSphere.offsetPosition, {0.0f, 0.5f, 0.0f})),
+                  "a turned shape's one-sided drag follows the handle's turned axis");
 }
 
 // The lens looks down -Z at the origin from 10 m; a 200 by 100 pixel view.
@@ -235,16 +244,16 @@ glm::vec2 viewPixel(const glm::vec3& point) {
     return (glm::vec2(clip) / clip.w * 0.5f + 0.5f) * viewSize;
 }
 
-void testAxisParameter() {
+TEST_CASE("ColliderTools: axis parameter") {
     const RenderView lens = frontLens();
     const std::optional<float> atOrigin =
         colliderHandleAxisParameter(lens, viewSize, viewPixel({0.0f, 0.0f, 0.0f}), {0.0f, 0.0f, 0.0f}, {1, 0, 0});
     const std::optional<float> atTwo =
         colliderHandleAxisParameter(lens, viewSize, viewPixel({2.0f, 0.0f, 0.0f}), {0.0f, 0.0f, 0.0f}, {1, 0, 0});
-    expect(atOrigin && near(*atOrigin, 0.0f, 1e-3f) && atTwo && near(*atTwo, 2.0f, 1e-3f),
-           "the axis parameter is where the mouse ray passes the handle's line");
-    expect(!colliderHandleAxisParameter(lens, viewSize, viewSize * 0.5f, {0.0f, 0.0f, 0.0f}, {0, 0, 1}),
-           "a line pointing at the lens cannot be dragged");
+    CHECK_MESSAGE((atOrigin && near(*atOrigin, 0.0f, 1e-3f) && atTwo && near(*atTwo, 2.0f, 1e-3f)),
+                  "the axis parameter is where the mouse ray passes the handle's line");
+    CHECK_MESSAGE(!colliderHandleAxisParameter(lens, viewSize, viewSize * 0.5f, {0.0f, 0.0f, 0.0f}, {0, 0, 1}),
+                  "a line pointing at the lens cannot be dragged");
 }
 
 // Drives the tool over frames with the mouse in view pixels.
@@ -265,48 +274,35 @@ struct HandleDriver {
     }
 };
 
-void testHandleDragUndo() {
+TEST_CASE("ColliderTools: handle drag undo") {
     Fixture fixture;
     HandleDriver driver{fixture};
     // The box's +X face handle at (0.5, 0, 0).
     const glm::vec2 handle = viewPixel({0.5f, 0.0f, 0.0f});
-    expect(!driver.frame(handle + glm::vec2(0.0f, 30.0f), false, false),
-           "away from every handle the viewport picks as usual");
-    expect(driver.frame(handle, false, false) && driver.tool.hovered().has_value(), "a hovered handle blocks picking");
+    CHECK_MESSAGE(!driver.frame(handle + glm::vec2(0.0f, 30.0f), false, false),
+                  "away from every handle the viewport picks as usual");
+    CHECK_MESSAGE((driver.frame(handle, false, false) && driver.tool.hovered().has_value()),
+                  "a hovered handle blocks picking");
     driver.frame(handle, true, true);
-    expect(driver.tool.dragging(), "pressing a handle starts a drag");
+    CHECK_MESSAGE(driver.tool.dragging(), "pressing a handle starts a drag");
     driver.frame(viewPixel({1.5f, 0.0f, 0.0f}), false, true);
     driver.frame(viewPixel({1.5f, 0.0f, 0.0f}), false, false);
-    expect(near(std::get<BoxCollider>(fixture.collider().shape).halfExtents.x, 1.5f, 1e-3f) &&
-               fixture.history.size() == 1 && !driver.tool.dragging(),
-           "dragging the face a metre out grows both sides and is one undo step");
+    CHECK_MESSAGE((near(std::get<BoxCollider>(fixture.collider().shape).halfExtents.x, 1.5f, 1e-3f) &&
+                   fixture.history.size() == 1 && !driver.tool.dragging()),
+                  "dragging the face a metre out grows both sides and is one undo step");
     fixture.editing().undo();
-    expect(near(std::get<BoxCollider>(fixture.collider().shape).halfExtents.x, 0.5f),
-           "undo restores the dragged collider");
+    CHECK_MESSAGE(near(std::get<BoxCollider>(fixture.collider().shape).halfExtents.x, 0.5f),
+                  "undo restores the dragged collider");
 
     driver.frame(handle, true, true);
     driver.frame(viewPixel({1.5f, 0.0f, 0.0f}), false, true, true);
-    expect(fixture.collider().offsetPosition.x > 0.4f, "Ctrl drags one side, moving the offset");
+    CHECK_MESSAGE(fixture.collider().offsetPosition.x > 0.4f, "Ctrl drags one side, moving the offset");
     driver.frame(viewPixel({1.5f, 0.0f, 0.0f}), false, true, true, true);
-    expect(near(std::get<BoxCollider>(fixture.collider().shape).halfExtents.x, 0.5f) &&
-               fixture.collider().offsetPosition == glm::vec3(0.0f) && fixture.history.size() == 1 &&
-               !driver.tool.dragging(),
-           "a cancelled drag restores the collider and records nothing");
+    CHECK_MESSAGE((near(std::get<BoxCollider>(fixture.collider().shape).halfExtents.x, 0.5f) &&
+                   fixture.collider().offsetPosition == glm::vec3(0.0f) && fixture.history.size() == 1 &&
+                   !driver.tool.dragging()),
+                  "a cancelled drag restores the collider and records nothing");
 }
 } // namespace
 
-int main(int, char** argv) {
-    initializeResourceLocator(argv[0]);
-    testShapeConversion();
-    testShapeSwitchInInspector();
-    testMeshChoices();
-    testHandlePlacement();
-    testHandleDragMaths();
-    testAxisParameter();
-    testHandleDragUndo();
-    if (failures != 0) {
-        std::cerr << failures << " collider tool test(s) failed\n";
-        return 1;
-    }
-    return 0;
-}
+TEST_SUITE_END();

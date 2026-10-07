@@ -11,6 +11,8 @@
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/theme/ThemeChrome.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <imgui.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -18,7 +20,6 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -26,57 +27,51 @@
 
 namespace fs = std::filesystem;
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("PlayTargets");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
-
-void testTargetsAndPolicies() {
-    expect(playTargets().size() == 3 && playTargets().front().target == PlayTarget::ActiveViewport,
-           "the active viewport is the first (default) target");
+TEST_CASE("PlayTargets: targets and policies") {
+    CHECK_MESSAGE((playTargets().size() == 3 && playTargets().front().target == PlayTarget::ActiveViewport),
+                  "the active viewport is the first (default) target");
     for (const PlayTargetInfo& info : playTargets()) {
-        expect(parsePlayTarget(info.key) == info.target && playTargetInfo(info.target).key == info.key &&
-                   !info.label.empty(),
-               "every target parses from its key");
+        CHECK_MESSAGE((parsePlayTarget(info.key) == info.target && playTargetInfo(info.target).key == info.key &&
+                       !info.label.empty()),
+                      "every target parses from its key");
     }
-    expect(parsePlayTarget("viewport") == PlayTarget::ActiveViewport &&
-               parsePlayTarget("floating") == PlayTarget::FloatingViewport &&
-               parsePlayTarget("standalone") == PlayTarget::Standalone && !parsePlayTarget("window"),
-           "target keys are viewport, floating, and standalone");
+    CHECK_MESSAGE((parsePlayTarget("viewport") == PlayTarget::ActiveViewport &&
+                   parsePlayTarget("floating") == PlayTarget::FloatingViewport &&
+                   parsePlayTarget("standalone") == PlayTarget::Standalone && !parsePlayTarget("window")),
+                  "target keys are viewport, floating, and standalone");
 
-    expect(gameViewBanner(false, true, true) == GameViewBanner::None &&
-               gameViewBanner(true, false, false) == GameViewBanner::ClickToFocus &&
-               gameViewBanner(true, true, false) == GameViewBanner::ClickToCapture &&
-               gameViewBanner(true, true, true) == GameViewBanner::EscReleasesCursor,
-           "the banner follows focus and capture");
-    expect(gameViewBannerText(GameViewBanner::EscReleasesCursor).find("Esc") != std::string_view::npos &&
-               gameViewBannerText(GameViewBanner::None).empty(),
-           "the capture banner names Esc");
-    expect(playMouseCapturePolicy(true) == MouseCapturePolicy::Persistent &&
-               playMouseCapturePolicy(false) == MouseCapturePolicy::WhileRightMouseDown,
-           "only a focused game view captures the mouse persistently");
+    CHECK_MESSAGE((gameViewBanner(false, true, true) == GameViewBanner::None &&
+                   gameViewBanner(true, false, false) == GameViewBanner::ClickToFocus &&
+                   gameViewBanner(true, true, false) == GameViewBanner::ClickToCapture &&
+                   gameViewBanner(true, true, true) == GameViewBanner::EscReleasesCursor),
+                  "the banner follows focus and capture");
+    CHECK_MESSAGE((gameViewBannerText(GameViewBanner::EscReleasesCursor).find("Esc") != std::string_view::npos &&
+                   gameViewBannerText(GameViewBanner::None).empty()),
+                  "the capture banner names Esc");
+    CHECK_MESSAGE((playMouseCapturePolicy(true) == MouseCapturePolicy::Persistent &&
+                   playMouseCapturePolicy(false) == MouseCapturePolicy::WhileRightMouseDown),
+                  "only a focused game view captures the mouse persistently");
 
-    expect(playModeTint(EditorMode::Edit, false) == ThemeModeTint::None &&
-               playModeTint(EditorMode::Play, false) == ThemeModeTint::Play &&
-               playModeTint(EditorMode::Simulate, true) == ThemeModeTint::Simulate &&
-               playModeTint(EditorMode::Paused, false) == ThemeModeTint::Play &&
-               playModeTint(EditorMode::Paused, true) == ThemeModeTint::Simulate,
-           "the tint follows Play and Simulate, paused or not");
+    CHECK_MESSAGE((playModeTint(EditorMode::Edit, false) == ThemeModeTint::None &&
+                   playModeTint(EditorMode::Play, false) == ThemeModeTint::Play &&
+                   playModeTint(EditorMode::Simulate, true) == ThemeModeTint::Simulate &&
+                   playModeTint(EditorMode::Paused, false) == ThemeModeTint::Play &&
+                   playModeTint(EditorMode::Paused, true) == ThemeModeTint::Simulate),
+                  "the tint follows Play and Simulate, paused or not");
     const std::optional<ThemeColor> play = themeModeTintColor(ThemeModeTint::Play);
     const std::optional<ThemeColor> simulate = themeModeTintColor(ThemeModeTint::Simulate);
-    expect(!themeModeTintColor(ThemeModeTint::None) && play && simulate && *play != *simulate && play->a > 0.0f &&
-               simulate->a > 0.0f,
-           "Play and Simulate have distinct visible tints");
+    CHECK_MESSAGE((!themeModeTintColor(ThemeModeTint::None) && play && simulate && *play != *simulate &&
+                   play->a > 0.0f && simulate->a > 0.0f),
+                  "Play and Simulate have distinct visible tints");
     ThemeChrome chrome;
-    expect(chrome.modeTint() == ThemeModeTint::None, "the chrome starts untinted");
+    CHECK_MESSAGE(chrome.modeTint() == ThemeModeTint::None, "the chrome starts untinted");
     chrome.setModeTint(ThemeModeTint::Simulate);
-    expect(chrome.modeTint() == ThemeModeTint::Simulate, "the chrome keeps the tint it is given");
+    CHECK_MESSAGE(chrome.modeTint() == ThemeModeTint::Simulate, "the chrome keeps the tint it is given");
 }
+
+namespace {
 
 Entity addCamera(Scene& scene, const char* name, glm::vec3 position, bool primary) {
     const Entity camera = scene.createEntity(name);
@@ -87,14 +82,18 @@ Entity addCamera(Scene& scene, const char* name, glm::vec3 position, bool primar
     return camera;
 }
 
-void testGameCamera() {
+} // namespace
+
+TEST_CASE("PlayTargets: game camera") {
     Scene scene;
-    expect(gameCamera(scene) == entt::null, "a scene without cameras has no game camera");
+    CHECK_MESSAGE((gameCamera(scene) == entt::null), "a scene without cameras has no game camera");
     addCamera(scene, "Spare", {1.0f, 0.0f, 0.0f}, false);
-    expect(gameCamera(scene) == entt::null, "a camera that is not primary is not the game camera");
+    CHECK_MESSAGE((gameCamera(scene) == entt::null), "a camera that is not primary is not the game camera");
     const Entity primary = addCamera(scene, "Player", {0.0f, 2.0f, 0.0f}, true);
-    expect(gameCamera(scene) == primary, "the primary camera is the game camera");
+    CHECK_MESSAGE(gameCamera(scene) == primary, "the primary camera is the game camera");
 }
+
+namespace {
 
 // Records what the game view asks the session for.
 class GameViewActions final : public TestSessionActions {
@@ -198,7 +197,9 @@ ImVec2 centerOf(const ViewportPanel& panel) {
     return {panel.position().x + panel.size().x * 0.5f, panel.position().y + panel.size().y * 0.5f};
 }
 
-void testGameView() {
+} // namespace
+
+TEST_CASE("PlayTargets: game view") {
     GameViewFixture fixture;
     const Entity camera = addCamera(fixture.scene, "Player camera", {3.0f, 4.0f, 5.0f}, true);
     const glm::vec3 cameraPosition = sceneCameraLens(fixture.scene, camera)->position;
@@ -207,67 +208,74 @@ void testGameView() {
         fixture.frame(outside);
     }
     const glm::vec3 editorPosition = fixture.left().lens(fixture.scene).position;
-    expect(glm::length(editorPosition - cameraPosition) > 1e-3f, "an editing viewport looks through its editor camera");
+    CHECK_MESSAGE(glm::length(editorPosition - cameraPosition) > 1e-3f,
+                  "an editing viewport looks through its editor camera");
 
     fixture.left().setGameInputFocus(true);
-    expect(!fixture.left().gameInputFocus(), "only a game view takes game input focus");
+    CHECK_MESSAGE(!fixture.left().gameInputFocus(), "only a game view takes game input focus");
     fixture.left().beginGameView();
     fixture.gameView = &fixture.left();
-    expect(fixture.left().gameView() && fixture.left().gameInputFocus(), "a game view starts with input focus");
+    CHECK_MESSAGE((fixture.left().gameView() && fixture.left().gameInputFocus()),
+                  "a game view starts with input focus");
     const ImVec2 inside = centerOf(fixture.left());
     fixture.frame(inside);
-    expect(glm::length(fixture.left().lens(fixture.scene).position - cameraPosition) < 1e-4f,
-           "the game view looks through the game camera");
-    expect(!fixture.right().gameView() &&
-               glm::length(fixture.right().lens(fixture.scene).position - cameraPosition) > 1e-3f,
-           "other viewports keep their editor cameras");
-    expect(fixture.left().gameViewBanner() == GameViewBanner::ClickToCapture &&
-               fixture.right().gameViewBanner() == GameViewBanner::None,
-           "a focused game view with a free cursor offers to capture it");
-    expect(fixture.left().gameViewHoldsCursor(), "the game may capture the cursor while the mouse is over its view");
+    CHECK_MESSAGE(glm::length(fixture.left().lens(fixture.scene).position - cameraPosition) < 1e-4f,
+                  "the game view looks through the game camera");
+    CHECK_MESSAGE((!fixture.right().gameView() &&
+                   glm::length(fixture.right().lens(fixture.scene).position - cameraPosition) > 1e-3f),
+                  "other viewports keep their editor cameras");
+    CHECK_MESSAGE((fixture.left().gameViewBanner() == GameViewBanner::ClickToCapture &&
+                   fixture.right().gameViewBanner() == GameViewBanner::None),
+                  "a focused game view with a free cursor offers to capture it");
+    CHECK_MESSAGE(fixture.left().gameViewHoldsCursor(),
+                  "the game may capture the cursor while the mouse is over its view");
     fixture.frame(centerOf(fixture.right()));
-    expect(fixture.left().gameInputFocus() && !fixture.left().gameViewHoldsCursor(),
-           "over another viewport the editor keeps the cursor, so a click there is not captured");
+    CHECK_MESSAGE((fixture.left().gameInputFocus() && !fixture.left().gameViewHoldsCursor()),
+                  "over another viewport the editor keeps the cursor, so a click there is not captured");
 
     InputState captured;
     captured.mouseCaptured = true;
     fixture.frame(inside, captured);
-    expect(fixture.left().gameViewBanner() == GameViewBanner::EscReleasesCursor && fixture.left().gameViewHoldsCursor(),
-           "while the game holds the mouse the banner says Esc releases it");
+    CHECK_MESSAGE(
+        (fixture.left().gameViewBanner() == GameViewBanner::EscReleasesCursor && fixture.left().gameViewHoldsCursor()),
+        "while the game holds the mouse the banner says Esc releases it");
 
     fixture.actions.invoked.clear();
     fixture.pressEscape(inside);
-    expect(std::ranges::count(fixture.actions.invoked, "play.release_game_input") == 1 &&
-               !fixture.left().gameInputFocus() && fixture.left().gameViewBanner() == GameViewBanner::ClickToFocus,
-           "Esc releases game input through play.release_game_input");
+    CHECK_MESSAGE((std::ranges::count(fixture.actions.invoked, "play.release_game_input") == 1 &&
+                   !fixture.left().gameInputFocus() && fixture.left().gameViewBanner() == GameViewBanner::ClickToFocus),
+                  "Esc releases game input through play.release_game_input");
 
     fixture.actions.invoked.clear();
     fixture.click(inside);
-    expect(std::ranges::count(fixture.actions.invoked, "play.focus_game_view") == 1 && fixture.left().gameInputFocus(),
-           "a click on the game view takes focus through play.focus_game_view");
-    expect(std::ranges::none_of(fixture.actions.invoked,
-                                [](const std::string& id) { return id.starts_with("view3d.select"); }),
-           "a click on the game view selects nothing");
+    CHECK_MESSAGE(
+        (std::ranges::count(fixture.actions.invoked, "play.focus_game_view") == 1 && fixture.left().gameInputFocus()),
+        "a click on the game view takes focus through play.focus_game_view");
+    CHECK_MESSAGE(std::ranges::none_of(fixture.actions.invoked,
+                                       [](const std::string& id) { return id.starts_with("view3d.select"); }),
+                  "a click on the game view selects nothing");
 
     fixture.actions.invoked.clear();
     fixture.click(centerOf(fixture.right()));
-    expect(!fixture.left().gameInputFocus(), "a click elsewhere releases game input");
+    CHECK_MESSAGE(!fixture.left().gameInputFocus(), "a click elsewhere releases game input");
 
     fixture.left().endGameView();
     fixture.gameView = nullptr;
     fixture.frame(outside);
-    expect(!fixture.left().gameView() && fixture.left().gameViewBanner() == GameViewBanner::None &&
-               glm::length(fixture.left().lens(fixture.scene).position - editorPosition) < 1e-4f,
-           "ending the game view returns to the editor camera");
+    CHECK_MESSAGE((!fixture.left().gameView() && fixture.left().gameViewBanner() == GameViewBanner::None &&
+                   glm::length(fixture.left().lens(fixture.scene).position - editorPosition) < 1e-4f),
+                  "ending the game view returns to the editor camera");
 
     // Without a game camera the game view falls back to the editor camera.
     fixture.scene.destroyEntity(camera);
     fixture.left().beginGameView();
     fixture.frame(inside);
-    expect(glm::length(fixture.left().lens(fixture.scene).position - editorPosition) < 1e-4f,
-           "a scene without a game camera plays through the editor camera");
+    CHECK_MESSAGE(glm::length(fixture.left().lens(fixture.scene).position - editorPosition) < 1e-4f,
+                  "a scene without a game camera plays through the editor camera");
     fixture.left().endGameView();
 }
+
+namespace {
 
 // What the fake game process saw and does; shared with the test.
 struct FakeGame {
@@ -327,8 +335,11 @@ size_t gameEntries(const Logger& logger, std::string_view text) {
     return count;
 }
 
-void testStandalone(const fs::path& root) {
-    fs::create_directories(root);
+} // namespace
+
+TEST_CASE("PlayTargets: standalone") {
+    const testsupport::TempDirectory directory("play-targets-standalone");
+    const fs::path& root = directory.path();
     const fs::path executable = root / "zenith-fake.exe";
     std::ofstream(executable) << "fake";
     const fs::path project = root / "game.zenith-project";
@@ -345,80 +356,65 @@ void testStandalone(const fs::path& root) {
     StandalonePlayer player(std::make_unique<FakeGameProcess>(game));
     const StandaloneResult missing =
         player.start({.gameExecutable = root / "missing.exe", .temporaryDirectory = temporary}, scene, assets, options);
-    expect(!missing && missing.error.find("missing.exe") != std::string::npos && game->starts.empty(),
-           "a missing game executable fails before launching anything");
+    CHECK_MESSAGE((!missing && missing.error.find("missing.exe") != std::string::npos && game->starts.empty()),
+                  "a missing game executable fails before launching anything");
 
     const StandaloneLaunch launch{
         .gameExecutable = executable, .projectFile = project, .temporaryDirectory = temporary};
-    expect(static_cast<bool>(player.start(launch, scene, assets, options)) && player.running(),
-           "the standalone game starts");
+    CHECK_MESSAGE((static_cast<bool>(player.start(launch, scene, assets, options)) && player.running()),
+                  "the standalone game starts");
     const fs::path sceneFile = player.sceneFile();
     std::error_code sameFolderError;
-    expect(fs::is_regular_file(sceneFile) && fs::equivalent(sceneFile.parent_path(), temporary, sameFolderError) &&
-               sceneFile.extension() == ".zenith-scene",
-           "the edited scene is written to a temporary .zenith-scene");
+    CHECK_MESSAGE((fs::is_regular_file(sceneFile) &&
+                   fs::equivalent(sceneFile.parent_path(), temporary, sameFolderError) &&
+                   sceneFile.extension() == ".zenith-scene"),
+                  "the edited scene is written to a temporary .zenith-scene");
     Scene written;
-    expect(SceneDocument::load(sceneFile, assets, options, written).success &&
-               written.registry().view<const NameComponent>().size() == 1,
-           "the temporary scene holds the unsaved document");
+    CHECK_MESSAGE((SceneDocument::load(sceneFile, assets, options, written).success &&
+                   written.registry().view<const NameComponent>().size() == 1),
+                  "the temporary scene holds the unsaved document");
     const std::vector<std::string> expected{executable.string(), "--project", fs::absolute(project).string(), "--scene",
                                             sceneFile.string()};
-    expect(game->starts.size() == 1 && game->starts.front().command.arguments == expected &&
-               game->starts.front().command.kind == ChildProcessCommand::Kind::Program &&
-               game->starts.front().workingDirectory == executable.parent_path(),
-           "the game runs as <game> --project <file> --scene <temporary scene> beside its executable");
-    expect(!player.start(launch, scene, assets, options), "a second game cannot start while one runs");
+    CHECK_MESSAGE((game->starts.size() == 1 && game->starts.front().command.arguments == expected &&
+                   game->starts.front().command.kind == ChildProcessCommand::Kind::Program &&
+                   game->starts.front().workingDirectory == executable.parent_path()),
+                  "the game runs as <game> --project <file> --scene <temporary scene> beside its executable");
+    CHECK_MESSAGE(!player.start(launch, scene, assets, options), "a second game cannot start while one runs");
 
     game->pendingLines = {"Vulkan ready", "Loaded scene"};
-    expect(!player.poll(logger) && gameEntries(logger, "Vulkan ready") == 1 &&
-               gameEntries(logger, "Loaded scene") == 1 && player.outputLines() == 2,
-           "the game's output streams into the log");
+    CHECK_MESSAGE((!player.poll(logger) && gameEntries(logger, "Vulkan ready") == 1 &&
+                   gameEntries(logger, "Loaded scene") == 1 && player.outputLines() == 2),
+                  "the game's output streams into the log");
 
     player.stop();
-    expect(game->cancelled && player.stopRequested(), "Stop terminates the game process");
+    CHECK_MESSAGE((game->cancelled && player.stopRequested()), "Stop terminates the game process");
     game->pendingLines = {"last words"};
-    expect(player.poll(logger) && !player.running() && gameEntries(logger, "last words") == 1 &&
-               gameEntries(logger, "stopped") == 1,
-           "the poll after Stop reports the end with the remaining output");
-    expect(!fs::exists(sceneFile), "the temporary scene is removed when the game ends");
-    expect(!player.poll(logger), "the end is reported once");
+    CHECK_MESSAGE((player.poll(logger) && !player.running() && gameEntries(logger, "last words") == 1 &&
+                   gameEntries(logger, "stopped") == 1),
+                  "the poll after Stop reports the end with the remaining output");
+    CHECK_MESSAGE(!fs::exists(sceneFile), "the temporary scene is removed when the game ends");
+    CHECK_MESSAGE(!player.poll(logger), "the end is reported once");
 
     // Exiting by itself, without a project file.
-    expect(static_cast<bool>(
-               player.start({.gameExecutable = executable, .temporaryDirectory = temporary}, scene, assets, options)),
-           "the game starts again after it ended");
-    expect(game->starts.back().command.arguments.size() == 3 && game->starts.back().command.arguments[1] == "--scene",
-           "without a project file the game gets only the scene");
+    CHECK_MESSAGE(static_cast<bool>(player.start({.gameExecutable = executable, .temporaryDirectory = temporary}, scene,
+                                                 assets, options)),
+                  "the game starts again after it ended");
+    CHECK_MESSAGE(
+        (game->starts.back().command.arguments.size() == 3 && game->starts.back().command.arguments[1] == "--scene"),
+        "without a project file the game gets only the scene");
     const fs::path secondScene = player.sceneFile();
     game->running = false;
     game->exitCode = 3;
-    expect(player.poll(logger) && !player.running() && gameEntries(logger, "code 3") == 1 && !fs::exists(secondScene),
-           "a game that exits by itself ends the run and reports its exit code");
+    CHECK_MESSAGE(
+        (player.poll(logger) && !player.running() && gameEntries(logger, "code 3") == 1 && !fs::exists(secondScene)),
+        "a game that exits by itself ends the run and reports its exit code");
 
     game->failStart = true;
     const StandaloneResult failed = player.start(launch, scene, assets, options);
-    expect(!failed && !player.running() && failed.error.find("no such program") != std::string::npos,
-           "a process that cannot start reports why");
+    CHECK_MESSAGE((!failed && !player.running() && failed.error.find("no such program") != std::string::npos),
+                  "a process that cannot start reports why");
     std::error_code error;
-    expect(fs::is_empty(temporary, error), "a failed start leaves no temporary scene behind");
+    CHECK_MESSAGE(fs::is_empty(temporary, error), "a failed start leaves no temporary scene behind");
 }
-} // namespace
 
-int main() {
-    const fs::path root = fs::temp_directory_path() / "zenith_play_targets_tests";
-    std::error_code error;
-    fs::remove_all(root, error);
-
-    testTargetsAndPolicies();
-    testGameCamera();
-    testGameView();
-    testStandalone(root);
-
-    fs::remove_all(root, error);
-    if (failures != 0) {
-        std::cerr << failures << " play target test(s) failed\n";
-        return 1;
-    }
-    std::cout << "Play target tests passed\n";
-    return 0;
-}
+TEST_SUITE_END();

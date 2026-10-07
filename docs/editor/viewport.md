@@ -98,7 +98,7 @@ gameplay and module debug draw (`RenderRuntime::debugDraw`, `DebugDraw::
 channels`) that hold primitives or are hidden, each as a toggle; hiding a
 channel hides it in every view, game views included, and is not saved.
 `tests/editor/SceneGizmoDrawTests.cpp` covers the geometry and policy on the
-CPU; `tests/editor/SceneGizmoCaptureTests.cpp` is the strict-validation smoke
+CPU; `tests/editor/SceneGizmoSmokeTests.cpp` is the strict-validation smoke
 test and the `scene_gizmos` reference capture.
 
 

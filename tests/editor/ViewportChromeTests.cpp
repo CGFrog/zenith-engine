@@ -6,21 +6,17 @@
 #include "editor/panels/ViewportOperators.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <imgui.h>
 
 #include <filesystem>
 #include <iostream>
 #include <string>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("ViewportChrome");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 // The session's operator and keymap services without a window: operators run
 // through the fixture's registry and runner with the default keymap, and
@@ -53,7 +49,7 @@ struct ViewportFixture : EditorTestFixture {
     ViewportFixture() {
         useActions(actions);
         for (Operator& op : viewportOperators(viewports)) {
-            expect(static_cast<bool>(operators.add(std::move(op))), "the viewport operators should register");
+            CHECK_MESSAGE((static_cast<bool>(operators.add(std::move(op)))), "the viewport operators should register");
         }
     }
 
@@ -142,31 +138,32 @@ SceneEntityId selectNewEntity(ViewportFixture& fixture) {
     return id;
 }
 
-void testDefaultsAndPickingIgnoresChrome() {
+TEST_CASE("ViewportChrome: defaults and picking ignores chrome") {
     ViewportFixture fixture;
     HeadlessImGui imgui;
-    expect(fixture.viewport.chrome().toolbarVisible && !fixture.viewport.chrome().sidebarVisible,
-           "the viewport should start like Blender: tool shelf shown, sidebar hidden");
-    expect(fixture.viewport.chrome().shading == ViewportShading::Rendered, "the viewport should start rendered");
+    CHECK_MESSAGE((fixture.viewport.chrome().toolbarVisible && !fixture.viewport.chrome().sidebarVisible),
+                  "the viewport should start like Blender: tool shelf shown, sidebar hidden");
+    CHECK_MESSAGE(fixture.viewport.chrome().shading == ViewportShading::Rendered, "the viewport should start rendered");
     imgui.settle(fixture, {640.0f, 360.0f});
-    expect(fixture.viewport.size().x > 100.0f && fixture.viewport.size().y > 100.0f,
-           "the image area should be laid out without a rendered texture");
+    CHECK_MESSAGE((fixture.viewport.size().x > 100.0f && fixture.viewport.size().y > 100.0f),
+                  "the image area should be laid out without a rendered texture");
 
     const SceneEntityId selected = selectNewEntity(fixture);
     const ImVec2 shelf = toolShelfPoint(fixture.viewport);
     imgui.settle(fixture, shelf);
     imgui.frame(fixture, shelf, true);
     imgui.frame(fixture, shelf);
-    expect(fixture.selection.active() == selected, "a click on the tool shelf should not pick through it");
+    CHECK_MESSAGE(fixture.selection.active() == selected, "a click on the tool shelf should not pick through it");
 
     const ImVec2 center = imageCenter(fixture.viewport);
     imgui.settle(fixture, center);
     imgui.frame(fixture, center, true);
     imgui.frame(fixture, center);
-    expect(fixture.selection.empty(), "a click on empty image space should pick nothing and clear the selection");
+    CHECK_MESSAGE(fixture.selection.empty(),
+                  "a click on empty image space should pick nothing and clear the selection");
 }
 
-void testKeysToggleRegions() {
+TEST_CASE("ViewportChrome: keys toggle regions") {
     ViewportFixture fixture;
     HeadlessImGui imgui;
     imgui.settle(fixture, {640.0f, 360.0f});
@@ -175,7 +172,7 @@ void testKeysToggleRegions() {
 
     imgui.frame(fixture, hovered, false, ImGuiKey_N);
     imgui.frame(fixture, hovered);
-    expect(fixture.viewport.chrome().sidebarVisible, "N over the viewport should open the sidebar");
+    CHECK_MESSAGE(fixture.viewport.chrome().sidebarVisible, "N over the viewport should open the sidebar");
 
     // The sidebar now covers part of the image; clicks there must not pick,
     // and its Item tab draws the active object's transform.
@@ -184,88 +181,92 @@ void testKeysToggleRegions() {
     imgui.settle(fixture, sidebar);
     imgui.frame(fixture, sidebar, true);
     imgui.frame(fixture, sidebar);
-    expect(fixture.selection.active() == selected, "a click on the sidebar should not pick through it");
+    CHECK_MESSAGE(fixture.selection.active() == selected, "a click on the sidebar should not pick through it");
 
     // N works while the mouse is over the sidebar too, as in Blender.
     imgui.frame(fixture, sidebar, false, ImGuiKey_N);
     imgui.frame(fixture, sidebar);
-    expect(!fixture.viewport.chrome().sidebarVisible, "N over the sidebar should close it");
+    CHECK_MESSAGE(!fixture.viewport.chrome().sidebarVisible, "N over the sidebar should close it");
 
     imgui.settle(fixture, hovered);
     imgui.frame(fixture, hovered, false, ImGuiKey_T);
     imgui.frame(fixture, hovered);
-    expect(!fixture.viewport.chrome().toolbarVisible, "T over the viewport should hide the tool shelf");
+    CHECK_MESSAGE(!fixture.viewport.chrome().toolbarVisible, "T over the viewport should hide the tool shelf");
 
     // With the shelf hidden, its old place is image again and picks.
     const ImVec2 shelf = toolShelfPoint(fixture.viewport);
     imgui.settle(fixture, shelf);
     imgui.frame(fixture, shelf, true);
     imgui.frame(fixture, shelf);
-    expect(fixture.selection.empty(), "a click where the hidden tool shelf was should pick the image");
+    CHECK_MESSAGE(fixture.selection.empty(), "a click where the hidden tool shelf was should pick the image");
 
-    expect(fixture.actions.operatorShortcut("view3d.toggle_sidebar", {}) == "N" &&
-               fixture.actions.operatorShortcut("view3d.toggle_toolbar", {}) == "T",
-           "the header's View menu should show the N and T shortcuts");
+    CHECK_MESSAGE((fixture.actions.operatorShortcut("view3d.toggle_sidebar", {}) == "N" &&
+                   fixture.actions.operatorShortcut("view3d.toggle_toolbar", {}) == "T"),
+                  "the header's View menu should show the N and T shortcuts");
 }
 
-void testOperators() {
+TEST_CASE("ViewportChrome: operators") {
     ViewportFixture fixture;
-    expect(static_cast<bool>(fixture.invoke("view3d.toggle_sidebar")) && fixture.viewport.chrome().sidebarVisible,
-           "view3d.toggle_sidebar should show the sidebar");
-    expect(static_cast<bool>(fixture.invoke("view3d.toggle_toolbar")) && !fixture.viewport.chrome().toolbarVisible,
-           "view3d.toggle_toolbar should hide the tool shelf");
-    expect(static_cast<bool>(fixture.invoke("view3d.shading_set", R"({"type":"wireframe"})")) &&
-               fixture.viewport.chrome().shading == ViewportShading::Wireframe,
-           "view3d.shading_set should store the panel's shading");
-    expect(static_cast<bool>(fixture.invoke("view3d.shading_set", R"({"type":"material_preview"})")) &&
-               fixture.viewport.chrome().shading == ViewportShading::MaterialPreview,
-           "view3d.shading_set should accept every shading mode");
-    expect(fixture.invoke("view3d.shading_set", R"({"type":"x-ray"})").status == OperatorStatus::Failed,
-           "an unknown shading mode should fail");
-    expect(!fixture.history.canUndo(), "chrome operators should not record undo steps");
+    CHECK_MESSAGE(
+        (static_cast<bool>(fixture.invoke("view3d.toggle_sidebar")) && fixture.viewport.chrome().sidebarVisible),
+        "view3d.toggle_sidebar should show the sidebar");
+    CHECK_MESSAGE(
+        (static_cast<bool>(fixture.invoke("view3d.toggle_toolbar")) && !fixture.viewport.chrome().toolbarVisible),
+        "view3d.toggle_toolbar should hide the tool shelf");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("view3d.shading_set", R"({"type":"wireframe"})")) &&
+                   fixture.viewport.chrome().shading == ViewportShading::Wireframe),
+                  "view3d.shading_set should store the panel's shading");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("view3d.shading_set", R"({"type":"material_preview"})")) &&
+                   fixture.viewport.chrome().shading == ViewportShading::MaterialPreview),
+                  "view3d.shading_set should accept every shading mode");
+    CHECK_MESSAGE(fixture.invoke("view3d.shading_set", R"({"type":"x-ray"})").status == OperatorStatus::Failed,
+                  "an unknown shading mode should fail");
+    CHECK_MESSAGE(!fixture.history.canUndo(), "chrome operators should not record undo steps");
 }
 
-void testOverlayOperatorsAndAreaState() {
+TEST_CASE("ViewportChrome: overlay operators and area state") {
     ViewportFixture fixture;
     ViewportOverlays& overlays = fixture.viewport.chrome().overlays;
-    expect(overlays.scene == SceneGizmoOverlays{} && !overlays.sceneInPlay,
-           "a new viewport starts with the default scene overlays, off in Play");
-    expect(static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"grid"})")) && !overlays.grid,
-           "view3d.overlay_toggle should flip an on/off overlay");
-    expect(static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"lights"})")) &&
-               overlays.scene.lights == OverlayScope::Off,
-           "toggling a shown scoped overlay should turn it off");
-    expect(static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"colliders"})")) &&
-               overlays.scene.colliders == OverlayScope::Off &&
-               static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"colliders"})")) &&
-               overlays.scene.colliders == SceneGizmoOverlays{}.colliders,
-           "toggling a scoped overlay back on should restore its default scope");
-    expect(static_cast<bool>(fixture.invoke("view3d.overlay_scope_set", R"({"overlay":"colliders","scope":"all"})")) &&
-               overlays.scene.colliders == OverlayScope::All,
-           "view3d.overlay_scope_set should set a scoped overlay");
-    expect(fixture.invoke("view3d.overlay_scope_set", R"({"overlay":"grid","scope":"all"})").status ==
-               OperatorStatus::Failed,
-           "an on/off overlay should refuse a scope");
-    expect(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"x-ray"})").status == OperatorStatus::Failed,
-           "an unknown overlay should fail");
-    expect(static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"scene_in_play"})")) &&
-               overlays.sceneInPlay,
-           "Play-mode scene overlays are toggled like any overlay");
-    expect(!fixture.history.canUndo(), "overlay operators should not record undo steps");
+    CHECK_MESSAGE((overlays.scene == SceneGizmoOverlays{} && !overlays.sceneInPlay),
+                  "a new viewport starts with the default scene overlays, off in Play");
+    CHECK_MESSAGE(
+        (static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"grid"})")) && !overlays.grid),
+        "view3d.overlay_toggle should flip an on/off overlay");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"lights"})")) &&
+                   overlays.scene.lights == OverlayScope::Off),
+                  "toggling a shown scoped overlay should turn it off");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"colliders"})")) &&
+                   overlays.scene.colliders == OverlayScope::Off &&
+                   static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"colliders"})")) &&
+                   overlays.scene.colliders == SceneGizmoOverlays{}.colliders),
+                  "toggling a scoped overlay back on should restore its default scope");
+    CHECK_MESSAGE(
+        (static_cast<bool>(fixture.invoke("view3d.overlay_scope_set", R"({"overlay":"colliders","scope":"all"})")) &&
+         overlays.scene.colliders == OverlayScope::All),
+        "view3d.overlay_scope_set should set a scoped overlay");
+    CHECK_MESSAGE(fixture.invoke("view3d.overlay_scope_set", R"({"overlay":"grid","scope":"all"})").status ==
+                      OperatorStatus::Failed,
+                  "an on/off overlay should refuse a scope");
+    CHECK_MESSAGE(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"x-ray"})").status == OperatorStatus::Failed,
+                  "an unknown overlay should fail");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"scene_in_play"})")) &&
+                   overlays.sceneInPlay),
+                  "Play-mode scene overlays are toggled like any overlay");
+    CHECK_MESSAGE(!fixture.history.canUndo(), "overlay operators should not record undo steps");
 
-    expect(overlays.navigationMesh &&
-               static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"navigation_mesh"})")) &&
-               !overlays.navigationMesh,
-           "the navigation mesh preview is shown by default and toggled like any overlay");
-    expect(!overlays.physicsShapes && !overlays.contacts && !overlays.characters && !overlays.navAgents,
-           "Play's debugging overlays start off");
+    CHECK_MESSAGE((overlays.navigationMesh &&
+                   static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"navigation_mesh"})")) &&
+                   !overlays.navigationMesh),
+                  "the navigation mesh preview is shown by default and toggled like any overlay");
+    CHECK_MESSAGE((!overlays.physicsShapes && !overlays.contacts && !overlays.characters && !overlays.navAgents),
+                  "Play's debugging overlays start off");
     for (const char* overlay : {"physics_shapes", "contacts", "characters", "nav_agents"}) {
-        expect(static_cast<bool>(
-                   fixture.invoke("view3d.overlay_toggle", std::string(R"({"overlay":")") + overlay + R"("})")),
-               "Play's debugging overlays toggle like any overlay");
+        CHECK_MESSAGE((static_cast<bool>(
+                          fixture.invoke("view3d.overlay_toggle", std::string(R"({"overlay":")") + overlay + R"("})"))),
+                      "Play's debugging overlays toggle like any overlay");
     }
-    expect(overlays.physicsShapes && overlays.contacts && overlays.characters && overlays.navAgents,
-           "each debugging overlay turned on");
+    CHECK_MESSAGE((overlays.physicsShapes && overlays.contacts && overlays.characters && overlays.navAgents),
+                  "each debugging overlay turned on");
 
     // The overlays travel with the area.
     overlays.scene.names = OverlayScope::All;
@@ -275,15 +276,16 @@ void testOverlayOperatorsAndAreaState() {
     ViewportPanel restored(otherRegistry);
     restored.restoreAreaState(saved);
     const ViewportOverlays& copy = restored.chrome().overlays;
-    expect(copy.scene == overlays.scene && copy.grid == overlays.grid && copy.sceneInPlay == overlays.sceneInPlay &&
-               copy.gizmo == overlays.gizmo && copy.navigationMesh == overlays.navigationMesh && copy.physicsShapes &&
-               copy.contacts && copy.characters && copy.navAgents,
-           "a viewport's area state should round-trip its overlays");
+    CHECK_MESSAGE((copy.scene == overlays.scene && copy.grid == overlays.grid &&
+                   copy.sceneInPlay == overlays.sceneInPlay && copy.gizmo == overlays.gizmo &&
+                   copy.navigationMesh == overlays.navigationMesh && copy.physicsShapes && copy.contacts &&
+                   copy.characters && copy.navAgents),
+                  "a viewport's area state should round-trip its overlays");
     ViewportPanel defaults(otherRegistry);
     defaults.restoreAreaState("not json");
     defaults.restoreAreaState(R"({"overlays":{"lights":"sideways","grid":3,"unknown":true}})");
-    expect(defaults.chrome().overlays.scene == SceneGizmoOverlays{} && defaults.chrome().overlays.grid,
-           "unreadable area state should keep the defaults");
+    CHECK_MESSAGE((defaults.chrome().overlays.scene == SceneGizmoOverlays{} && defaults.chrome().overlays.grid),
+                  "unreadable area state should keep the defaults");
 
     // Headless frames record nothing visible but must run with every overlay.
     HeadlessImGui imgui;
@@ -294,18 +296,20 @@ void testOverlayOperatorsAndAreaState() {
     imgui.settle(fixture, {10.0f, 10.0f});
 }
 
-void testSidebarTabsAndChromeDrawing() {
+TEST_CASE("ViewportChrome: sidebar tabs and chrome drawing") {
     ViewportFixture fixture;
     HeadlessImGui imgui;
     ViewportPanel& viewport = fixture.viewport;
     const auto drawTab = [](EditorContext&) { ImGui::TextUnformatted("Module tab"); };
     ViewportRegistry& viewports = fixture.viewports;
-    expect(static_cast<bool>(viewports.addSidebarTab({.title = "Spinners", .draw = drawTab})),
-           "a module tab should be added");
-    expect(!viewports.addSidebarTab({.title = "Spinners", .draw = drawTab}), "duplicate tab titles should be refused");
-    expect(!viewports.addSidebarTab({.title = "View", .draw = drawTab}), "built-in tab titles should be refused");
-    expect(!viewports.addSidebarTab({.title = "", .draw = drawTab}), "tabs need a title");
-    expect(!viewports.addSidebarTab({.title = "Empty"}), "tabs need a draw function");
+    CHECK_MESSAGE((static_cast<bool>(viewports.addSidebarTab({.title = "Spinners", .draw = drawTab}))),
+                  "a module tab should be added");
+    CHECK_MESSAGE(!viewports.addSidebarTab({.title = "Spinners", .draw = drawTab}),
+                  "duplicate tab titles should be refused");
+    CHECK_MESSAGE(!viewports.addSidebarTab({.title = "View", .draw = drawTab}),
+                  "built-in tab titles should be refused");
+    CHECK_MESSAGE(!viewports.addSidebarTab({.title = "", .draw = drawTab}), "tabs need a title");
+    CHECK_MESSAGE(!viewports.addSidebarTab({.title = "Empty"}), "tabs need a draw function");
 
     // Every region and overlay combination draws headless.
     fixture.invoke("view3d.toggle_sidebar");
@@ -320,8 +324,8 @@ void testSidebarTabsAndChromeDrawing() {
                                       .gizmo = false};
         imgui.settle(fixture, {10.0f, 10.0f});
     }
-    expect(viewports.removeSidebarTab("Spinners") && !viewports.removeSidebarTab("Spinners"),
-           "a tab should be removed once");
+    CHECK_MESSAGE((viewports.removeSidebarTab("Spinners") && !viewports.removeSidebarTab("Spinners")),
+                  "a tab should be removed once");
 
     // The menu and tab bodies edit the settings they are given.
     ImGui::NewFrame();
@@ -338,20 +342,9 @@ void testSidebarTabsAndChromeDrawing() {
     ViewportChromeWidgets::drawViewTab(fixture.viewport.camera());
     ImGui::End();
     ImGui::Render();
-    expect(state.shading == ViewportShading::Rendered && tools.gizmo == GizmoMode::Select,
-           "drawing chrome widgets without input should change nothing");
+    CHECK_MESSAGE((state.shading == ViewportShading::Rendered && tools.gizmo == GizmoMode::Select),
+                  "drawing chrome widgets without input should change nothing");
 }
 } // namespace
 
-int main() {
-    testOperators();
-    testOverlayOperatorsAndAreaState();
-    testDefaultsAndPickingIgnoresChrome();
-    testKeysToggleRegions();
-    testSidebarTabsAndChromeDrawing();
-    if (failures != 0) {
-        std::cerr << failures << " viewport chrome test(s) failed\n";
-        return 1;
-    }
-    return 0;
-}
+TEST_SUITE_END();

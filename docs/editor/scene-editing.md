@@ -78,7 +78,7 @@ leaves them in place and pastes at the top level under a transient parent
 (copies under it would be transient too), saves and autosaves leave them out, and Play
 enters without them (the parked edit scene keeps them for Stop). The
 Hierarchy dims their rows with a "generated, not saved" tooltip.
-`zenith_transient_editing` covers it.
+`editor.TransientEditing` covers it.
 
 Copies keep their place. `SceneFragment::copy` writes each copied root
 without a parent but with its `world_transform` beside its local transform;
@@ -101,7 +101,7 @@ the largest counter any object with that base has (the bare base counts as 0).
 Crate, Crate_1, Crate_5 gives Crate_6 for a copy of any of them; a name nothing
 else uses is kept (pasting after the original was deleted). Duplicate, array,
 scatter, and paste share the rule, and a run of copies counts up. Pasted
-descendants keep their names. `zenith_copy_naming` tests the pure function.
+descendants keep their names. `editor.CopyNaming` tests the pure function.
 
 Copy and paste cost what is copied, not the scene. `copy` serializes only
 the copied subtrees (`SceneDocument::serializeEntities`) and names the
@@ -115,7 +115,7 @@ handle and components, so in Play pasting or duplicating leaves the running
 physics bodies of the rest of the scene alone; only the copies are marked for
 physics. Prefab instance links and overrides, preserved components of
 unregistered (module) types, and collections travel inside the copied
-entities' document forms. `zenith_scoped_capture` covers scope parity for
+entities' document forms. `editor.ScopedCapture` covers scope parity for
 every migrated operator, paste parity, handles, Play, sibling order, and
 runtime meshes.
 

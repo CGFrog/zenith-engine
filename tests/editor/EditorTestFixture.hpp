@@ -29,6 +29,7 @@
 #include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/ui/GameUi.hpp"
+#include "support/TempDirectory.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -123,8 +124,9 @@ class KeymapSessionActions : public TestSessionActions {
 };
 
 struct EditorTestFixtureOptions {
-    // The document's asset root.
-    std::filesystem::path documentRoot{std::filesystem::temp_directory_path()};
+    // The document's asset root; empty for a directory of the fixture's own
+    // (EditorTestFixture::scratch).
+    std::filesystem::path documentRoot{};
     LoggerConfig logger{};
 };
 
@@ -136,11 +138,14 @@ struct EditorTestFixtureOptions {
 struct EditorTestFixture {
     explicit EditorTestFixture(EditorTestFixtureOptions options = {})
         : logger(options.logger)
-        , document(std::move(options.documentRoot)) {}
+        , document(options.documentRoot.empty() ? scratch.path() : std::move(options.documentRoot)) {}
 
     EditorTestFixture(const EditorTestFixture&) = delete;
     EditorTestFixture& operator=(const EditorTestFixture&) = delete;
 
+    // The fixture's own directory: the document's asset root unless the
+    // options name one. Declared first, so it outlives everything using it.
+    testsupport::TempDirectory scratch{"editor-fixture"};
     Logger logger;
     Scene scene;
     AssetManager assets{&logger};

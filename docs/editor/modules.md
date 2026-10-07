@@ -68,7 +68,7 @@ Play or Simulate to stop also gets its own status-bar pill.
 `zenith_editor_module_smoke` runs the editor smoke on a generated project
 naming `zenith_editor_test_module`, hot reloads it once, and checks its
 editor extensions are registered before and after the reload.
-`zenith_game_module_host` runs the test module's `editor_test.generate_preview`
+`editor.GameModuleHost` runs the test module's `editor_test.generate_preview`
 operator through the runner and Adjust Last Operation (seeds, every property
 type, panel invocation with values, and the reload releasing the preview and
 the random streams).
