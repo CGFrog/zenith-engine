@@ -15,7 +15,7 @@ enum class VulkanDeviceKind {
     Hardware,
 };
 
-// Loads the Vulkan loader on its own (volk) and looks for a device of kind;
+// Loads the Vulkan loader on its own (not through volk) and looks for a device of kind;
 // false, with the reason, when there is none. Creates and destroys its own
 // instance, so it is independent of the engine's.
 bool vulkanDeviceAvailable(VulkanDeviceKind kind, std::string& reason);

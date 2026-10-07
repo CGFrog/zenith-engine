@@ -41,7 +41,10 @@ TEST_CASE("FrameTaskGraph: resource hazards create deterministic dependencies") 
     CHECK_MESSAGE((result.success && !readBeforeWrite.load()), "resource hazards create deterministic dependencies");
     CHECK_MESSAGE((result.stats.nodeCount == 2 && result.stats.jobCount == 32),
                   "stable ranges use the configured minimum grain size");
-    CHECK_MESSAGE((result.stats.maximumQueueDepth > 0 && result.stats.workerUtilization >= 0.0),
+    // The queue depth is sampled after each node's work is submitted, so a
+    // worker that drained it first (a loaded machine) makes 0 a true reading:
+    // the depth is bounded by the jobs submitted, not required to be nonzero.
+    CHECK_MESSAGE((result.stats.maximumQueueDepth <= result.stats.jobCount && result.stats.workerUtilization >= 0.0),
                   "task graph reports scheduling telemetry");
 }
 

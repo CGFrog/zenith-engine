@@ -13,6 +13,10 @@
 #include "engine/graphics/GraphicsValidation.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
+#include "support/Skip.hpp"
+#include "support/StandaloneChecks.hpp"
+#include "support/VulkanProbe.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cmath>
@@ -27,19 +31,13 @@
 namespace {
 // Shared by the scene and main(); the scene is destroyed before run() returns.
 struct SmokeResults {
-    std::vector<std::string> failures;
+    testsupport::StandaloneChecks checks;
     uint32_t framesWithBothViews{0};
     uint64_t trackedViewBytesDefaultOnly{0};
     uint64_t trackedViewBytesWithViews{0};
     double viewAMilliseconds{0.0};
     double viewBMilliseconds{0.0};
     uint32_t runtimeRenderables{0};
-
-    void expect(bool condition, uint32_t frame, const std::string& message) {
-        if (!condition) {
-            failures.push_back("frame " + std::to_string(frame) + ": " + message);
-        }
-    }
 };
 
 // Device memory the renderer reports for size-dependent per-view targets.
@@ -121,17 +119,17 @@ class MultiViewScene final : public ApplicationScene {
         }
         updateIsolation(context);
         if (m_frame == 25) {
-            m_results.expect(rendering.setActiveView(m_viewB), m_frame, "view B becomes the active view");
+            m_results.checks.check(rendering.setActiveView(m_viewB), m_frame, "view B becomes the active view");
         }
         if (m_frame == 50) {
             const RenderObjectId outlined = static_cast<RenderObjectId>(entt::to_integral(m_cubes.front()));
-            m_results.expect(rendering.setViewOutlinedObjects(m_viewA, std::span(&outlined, 1)), m_frame,
-                             "view A accepts outlines");
+            m_results.checks.check(rendering.setViewOutlinedObjects(m_viewA, std::span(&outlined, 1)), m_frame,
+                                   "view A accepts outlines");
         }
         if (m_frame == 60) {
-            m_results.expect(rendering.destroyView(m_viewB), m_frame, "view B is destroyed");
-            m_results.expect(rendering.activeView() == rendering.defaultView(), m_frame,
-                             "destroying the active view activates the default view");
+            m_results.checks.check(rendering.destroyView(m_viewB), m_frame, "view B is destroyed");
+            m_results.checks.check(rendering.activeView() == rendering.defaultView(), m_frame,
+                                   "destroying the active view activates the default view");
         }
         if (m_frame == 70) {
             m_viewC = rendering.createView();
@@ -139,16 +137,17 @@ class MultiViewScene final : public ApplicationScene {
             fxaa.antialiasing = AntialiasingMode::Fxaa;
             fxaa.depthPrepass = false;
             fxaa.volumetricFog = VolumetricFogQuality::Off;
-            m_results.expect(m_viewC && m_viewC.index == m_viewB.index && m_viewC.generation != m_viewB.generation,
-                             m_frame, "view C reuses view B's slot with a new generation");
-            m_results.expect(rendering.setViewSettings(m_viewC, fxaa), m_frame, "view C accepts settings");
-            m_results.expect(rendering.setViewOverride(
-                                 m_viewC, RenderView{.position = {-8.0f, 3.0f, 0.0f}, .forward = {1.0f, -0.3f, 0.0f}}),
-                             m_frame, "view C accepts a camera");
+            m_results.checks.check(m_viewC && m_viewC.index == m_viewB.index &&
+                                       m_viewC.generation != m_viewB.generation,
+                                   m_frame, "view C reuses view B's slot with a new generation");
+            m_results.checks.check(rendering.setViewSettings(m_viewC, fxaa), m_frame, "view C accepts settings");
+            m_results.checks.check(rendering.setViewOverride(m_viewC, RenderView{.position = {-8.0f, 3.0f, 0.0f},
+                                                                                 .forward = {1.0f, -0.3f, 0.0f}}),
+                                   m_frame, "view C accepts a camera");
         }
         if (m_frame == 90) {
-            m_results.expect(rendering.destroyView(m_viewA) && rendering.destroyView(m_viewC), m_frame,
-                             "views A and C are destroyed");
+            m_results.checks.check(rendering.destroyView(m_viewA) && rendering.destroyView(m_viewC), m_frame,
+                                   "views A and C are destroyed");
         }
         // Views render only on frames that request them; view A skips 80-84.
         const bool viewAHidden = m_frame >= 80 && m_frame < 85;
@@ -189,14 +188,15 @@ class MultiViewScene final : public ApplicationScene {
         RenderRuntime& rendering = context.rendering;
         const std::vector<RenderObjectId> center{centerCube()};
         if (m_frame == 10) {
-            m_results.expect(rendering.setViewVisibleEntities(m_viewB, center), m_frame, "view B accepts isolation");
+            m_results.checks.check(rendering.setViewVisibleEntities(m_viewB, center), m_frame,
+                                   "view B accepts isolation");
         } else if (m_frame == 20) {
-            m_results.expect(rendering.setViewVisibleEntities(m_viewB, std::nullopt) &&
-                                 !rendering.viewVisibleEntities(m_viewB),
-                             m_frame, "view B leaves isolation");
+            m_results.checks.check(rendering.setViewVisibleEntities(m_viewB, std::nullopt) &&
+                                       !rendering.viewVisibleEntities(m_viewB),
+                                   m_frame, "view B leaves isolation");
         } else if (m_frame == 30) {
-            m_results.expect(rendering.setViewVisibleEntities(rendering.defaultView(), center), m_frame,
-                             "the default view accepts isolation");
+            m_results.checks.check(rendering.setViewVisibleEntities(rendering.defaultView(), center), m_frame,
+                                   "the default view accepts isolation");
         } else if (m_frame == 40) {
             rendering.setViewVisibleEntities(rendering.defaultView(), std::nullopt);
         } else if (m_frame == 45) {
@@ -218,31 +218,31 @@ class MultiViewScene final : public ApplicationScene {
         if (frame == 5) {
             m_results.runtimeRenderables = renderables;
             // 25 cubes, the ground, and the instanced cube share one mesh.
-            m_results.expect(renderables > 0 && renderables % 27 == 0, frame,
-                             "the collection instance adds one cube's items");
+            m_results.checks.check(renderables > 0 && renderables % 27 == 0, frame,
+                                   "the collection instance adds one cube's items");
         }
         if (frame >= 12 && frame < 20) {
             const RenderViewStats b = rendering.viewStats(m_viewB);
-            m_results.expect(b.visibleCount == 1, frame, "isolated view B draws only the isolated cube");
+            m_results.checks.check(b.visibleCount == 1, frame, "isolated view B draws only the isolated cube");
         }
         if (frame >= 32 && frame < 40) {
             const RenderViewStats isolated = rendering.viewStats(rendering.defaultView());
-            m_results.expect(isolated.visibleCount == 1, frame, "the isolated default view draws only one cube");
+            m_results.checks.check(isolated.visibleCount == 1, frame, "the isolated default view draws only one cube");
         }
         if (frame >= 47 && frame < 55) {
-            m_results.expect(renderables * 27 == m_results.runtimeRenderables * 26, frame,
-                             "editor visibility hides the hidden cube");
+            m_results.checks.check(renderables * 27 == m_results.runtimeRenderables * 26, frame,
+                                   "editor visibility hides the hidden cube");
         }
         if (frame >= 57 && frame < 90) {
-            m_results.expect(renderables == m_results.runtimeRenderables, frame,
-                             "the runtime mode draws hidden cubes and the moving instance");
+            m_results.checks.check(renderables == m_results.runtimeRenderables, frame,
+                                   "the runtime mode draws hidden cubes and the moving instance");
         }
     }
 
     void createViews(RenderRuntime& rendering) {
         m_viewA = rendering.createView();
         m_viewB = rendering.createView();
-        m_results.expect(m_viewA && m_viewB, m_frame, "two views are created");
+        m_results.checks.check(m_viewA && m_viewB, m_frame, "two views are created");
         // View A: the full-quality path with its own temporal and fog history.
         RenderSettings full = rendering.settings();
         full.antialiasing = AntialiasingMode::Taa;
@@ -250,7 +250,7 @@ class MultiViewScene final : public ApplicationScene {
         full.reflections = ReflectionQuality::ScreenSpaceHalfResolution;
         full.volumetricFog = VolumetricFogQuality::Medium;
         full.bloom = BloomQuality::Downsampled;
-        m_results.expect(rendering.setViewSettings(m_viewA, full), m_frame, "view A accepts settings");
+        m_results.checks.check(rendering.setViewSettings(m_viewA, full), m_frame, "view A accepts settings");
         // View B: a cheap top-down view without temporal or screen-space work.
         RenderSettings cheap = rendering.settings();
         cheap.antialiasing = AntialiasingMode::Off;
@@ -259,14 +259,14 @@ class MultiViewScene final : public ApplicationScene {
         cheap.volumetricFog = VolumetricFogQuality::Off;
         cheap.bloom = BloomQuality::Off;
         cheap.dynamicResolution.enabled = false;
-        m_results.expect(rendering.setViewSettings(m_viewB, cheap), m_frame, "view B accepts settings");
-        m_results.expect(rendering.setViewOverride(m_viewB, RenderView{.position = {0.0f, 20.0f, 0.1f},
-                                                                       .forward = {0.0f, -1.0f, 0.0f},
-                                                                       .up = {0.0f, 0.0f, -1.0f},
-                                                                       .verticalFovRadians = glm::radians(70.0f),
-                                                                       .nearPlane = 1.0f,
-                                                                       .farPlane = 60.0f}),
-                         m_frame, "view B accepts a camera");
+        m_results.checks.check(rendering.setViewSettings(m_viewB, cheap), m_frame, "view B accepts settings");
+        m_results.checks.check(rendering.setViewOverride(m_viewB, RenderView{.position = {0.0f, 20.0f, 0.1f},
+                                                                             .forward = {0.0f, -1.0f, 0.0f},
+                                                                             .up = {0.0f, 0.0f, -1.0f},
+                                                                             .verticalFovRadians = glm::radians(70.0f),
+                                                                             .nearPlane = 1.0f,
+                                                                             .farPlane = 60.0f}),
+                               m_frame, "view B accepts a camera");
     }
 
     // Stats describe the frame submitted before this update.
@@ -277,18 +277,18 @@ class MultiViewScene final : public ApplicationScene {
         }
         checkIsolation(rendering, frame);
         const RenderViewStats defaultStats = rendering.viewStats(rendering.defaultView());
-        m_results.expect(defaultStats.rendered, frame, "the default view renders every frame");
+        m_results.checks.check(defaultStats.rendered, frame, "the default view renders every frame");
         const RenderViewStats a = rendering.viewStats(m_viewA);
         const RenderViewStats b = rendering.viewStats(m_viewB);
         if (frame >= 2 && frame < 40) {
-            m_results.expect(a.rendered && a.width == 320 && a.height == 180, frame, "view A renders at 320x180");
-            m_results.expect(rendering.viewTexture(m_viewA) && rendering.viewWidth(m_viewA) == 320, frame,
-                             "view A publishes its texture and size");
+            m_results.checks.check(a.rendered && a.width == 320 && a.height == 180, frame, "view A renders at 320x180");
+            m_results.checks.check(rendering.viewTexture(m_viewA) && rendering.viewWidth(m_viewA) == 320, frame,
+                                   "view A publishes its texture and size");
         }
         if (frame >= 2 && frame < 60) {
-            m_results.expect(b.rendered && b.width == 200 && b.height == 260 && b.internalWidth == 200, frame,
-                             "view B renders at 200x260");
-            m_results.expect(b.visibleCount > 0 && b.drawCalls > 0, frame, "view B draws the scene");
+            m_results.checks.check(b.rendered && b.width == 200 && b.height == 260 && b.internalWidth == 200, frame,
+                                   "view B renders at 200x260");
+            m_results.checks.check(b.visibleCount > 0 && b.drawCalls > 0, frame, "view B draws the scene");
             if (a.rendered && b.rendered) {
                 ++m_results.framesWithBothViews;
             }
@@ -299,20 +299,20 @@ class MultiViewScene final : public ApplicationScene {
             m_results.viewBMilliseconds = b.cpuMilliseconds;
         }
         if (frame >= 41 && frame < 80) {
-            m_results.expect(a.rendered && a.width == 400 && a.height == 300, frame, "view A resized to 400x300");
+            m_results.checks.check(a.rendered && a.width == 400 && a.height == 300, frame, "view A resized to 400x300");
         }
         if (frame >= 81 && frame < 85) {
-            m_results.expect(!a.rendered, frame, "view A skips frames it was not requested on");
+            m_results.checks.check(!a.rendered, frame, "view A skips frames it was not requested on");
         }
         if (frame >= 61) {
-            m_results.expect(!rendering.viewAlive(m_viewB), frame, "view B stays destroyed");
+            m_results.checks.check(!rendering.viewAlive(m_viewB), frame, "view B stays destroyed");
         }
         if (frame >= 72 && frame < 90) {
             const RenderViewStats c = rendering.viewStats(m_viewC);
-            m_results.expect(c.rendered && c.width == 256, frame, "view C renders in the reused slot");
+            m_results.checks.check(c.rendered && c.width == 256, frame, "view C renders in the reused slot");
         }
         if (frame >= 91) {
-            m_results.expect(rendering.viewCount() == 1, frame, "only the default view remains");
+            m_results.checks.check(rendering.viewCount() == 1, frame, "only the default view remains");
         }
         if (frame == 100) {
             m_results.trackedViewBytesDefaultOnly = trackedViewBytes(rendering.stats());
@@ -352,23 +352,23 @@ int main(int, char** argv) {
     if (!engine.init()) {
         std::cerr << "Engine initialization failed\n";
         engine.shutdown();
+        if (std::string reason; !testsupport::vulkanDeviceAvailable(testsupport::VulkanDeviceKind::Any, reason)) {
+            std::cout << "Skipping: " << reason << '\n';
+            return testsupport::skipExitCode;
+        }
         return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
     SmokeResults results;
     MultiViewApplication application(results);
     const bool ran = engine.run(application);
     engine.shutdown();
-    for (const std::string& failure : results.failures) {
-        std::cerr << "FAILED: " << failure << '\n';
-    }
-    if (results.framesWithBothViews == 0) {
-        std::cerr << "FAILED: no frame rendered both created views (is ZENITH_SMOKE_FRAMES at least 60?)\n";
-    }
+    results.checks.check(results.framesWithBothViews > 0,
+                         "no frame rendered both created views (is ZENITH_SMOKE_FRAMES at least 60?)");
     std::cout << "Tracked per-view target bytes: " << results.trackedViewBytesDefaultOnly
               << " with the default view only, " << results.trackedViewBytesWithViews << " with two created views\n";
     std::cout << "View CPU recording: A " << results.viewAMilliseconds << " ms, B " << results.viewBMilliseconds
               << " ms\n";
-    const bool passed = ran && results.failures.empty() && results.framesWithBothViews > 0;
+    const bool passed = ran && results.checks.failures() == 0;
     if (passed) {
         std::cout << "Multi-view smoke test passed\n";
     }

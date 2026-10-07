@@ -14,6 +14,10 @@
 #include "engine/graphics/GraphicsValidation.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
+#include "support/Skip.hpp"
+#include "support/StandaloneChecks.hpp"
+#include "support/VulkanProbe.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -21,18 +25,11 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace {
 struct SmokeResults {
-    std::vector<std::string> failures;
+    testsupport::StandaloneChecks checks;
     uint32_t framesWithLabels{0};
-
-    void expect(bool condition, uint32_t frame, const std::string& message) {
-        if (!condition) {
-            failures.push_back("frame " + std::to_string(frame) + ": " + message);
-        }
-    }
 };
 
 glm::mat4 cameraWorld(const glm::vec3& position, const glm::vec3& target) {
@@ -141,23 +138,23 @@ class DebugDrawScene final : public ApplicationScene {
     void createViews(RenderRuntime& rendering) {
         m_upscaledView = rendering.createView();
         m_topView = rendering.createView();
-        m_results.expect(m_upscaledView && m_topView, m_frame, "two views are created");
+        m_results.checks.check(m_upscaledView && m_topView, m_frame, "two views are created");
         RenderSettings upscaled = rendering.settings();
         upscaled.antialiasing = AntialiasingMode::Taa;
         upscaled.upscaler.mode = UpscalerMode::Fsr1;
         upscaled.upscaler.quality = UpscalerQuality::Performance;
-        m_results.expect(rendering.setViewSettings(m_upscaledView, upscaled), m_frame, "upscaled view settings");
-        m_results.expect(rendering.setViewOverride(m_upscaledView,
-                                                   RenderView{.position = {5.0f, 3.0f, 6.0f},
+        m_results.checks.check(rendering.setViewSettings(m_upscaledView, upscaled), m_frame, "upscaled view settings");
+        m_results.checks.check(rendering.setViewOverride(
+                                   m_upscaledView, RenderView{.position = {5.0f, 3.0f, 6.0f},
                                                               .forward = glm::normalize(glm::vec3(-5.0f, -2.4f, -6.0f)),
                                                               .verticalFovRadians = glm::radians(50.0f)}),
-                         m_frame, "upscaled view camera");
-        m_results.expect(rendering.setViewOverride(m_topView, RenderView{.position = {0.0f, 12.0f, 0.1f},
-                                                                         .forward = {0.0f, -1.0f, 0.0f},
-                                                                         .up = {0.0f, 0.0f, -1.0f},
-                                                                         .nearPlane = 1.0f,
-                                                                         .farPlane = 40.0f}),
-                         m_frame, "top view camera");
+                               m_frame, "upscaled view camera");
+        m_results.checks.check(rendering.setViewOverride(m_topView, RenderView{.position = {0.0f, 12.0f, 0.1f},
+                                                                               .forward = {0.0f, -1.0f, 0.0f},
+                                                                               .up = {0.0f, 0.0f, -1.0f},
+                                                                               .nearPlane = 1.0f,
+                                                                               .farPlane = 40.0f}),
+                               m_frame, "top view camera");
     }
 
     // Labels and stats describe the frame drawn before this update.
@@ -166,27 +163,29 @@ class DebugDrawScene final : public ApplicationScene {
         if (frame == 0) {
             return;
         }
-        m_results.expect(rendering.debugDraw().empty(), frame, "the renderer clears the all-views list");
+        m_results.checks.check(rendering.debugDraw().empty(), frame, "the renderer clears the all-views list");
         const DebugDraw* upscaledList = rendering.viewDebugDraw(m_upscaledView);
-        m_results.expect(upscaledList == nullptr || upscaledList->empty(), frame, "the renderer clears view lists");
+        m_results.checks.check(upscaledList == nullptr || upscaledList->empty(), frame,
+                               "the renderer clears view lists");
         const std::span<const ProjectedDebugLabel> defaultLabels = rendering.viewDebugLabels(rendering.defaultView());
-        m_results.expect(hasLabel(defaultLabels, "origin"), frame, "the default view projects the shared label");
-        m_results.expect(!hasLabel(defaultLabels, "behind"), frame, "a label behind the camera is culled");
-        m_results.expect(!hasLabel(defaultLabels, "upscaled only"), frame, "view labels stay in their view");
+        m_results.checks.check(hasLabel(defaultLabels, "origin"), frame, "the default view projects the shared label");
+        m_results.checks.check(!hasLabel(defaultLabels, "behind"), frame, "a label behind the camera is culled");
+        m_results.checks.check(!hasLabel(defaultLabels, "upscaled only"), frame, "view labels stay in their view");
         const RenderViewStats defaultStats = rendering.viewStats(rendering.defaultView());
         for (const ProjectedDebugLabel& label : defaultLabels) {
-            m_results.expect(label.position.x >= 0.0f && label.position.y >= 0.0f &&
-                                 label.position.x <= static_cast<float>(defaultStats.width) &&
-                                 label.position.y <= static_cast<float>(defaultStats.height) && label.distance > 0.0f,
-                             frame, "projected labels lie inside the view");
+            m_results.checks.check(label.position.x >= 0.0f && label.position.y >= 0.0f &&
+                                       label.position.x <= static_cast<float>(defaultStats.width) &&
+                                       label.position.y <= static_cast<float>(defaultStats.height) &&
+                                       label.distance > 0.0f,
+                                   frame, "projected labels lie inside the view");
         }
         if (frame >= 2) {
             const RenderViewStats upscaled = rendering.viewStats(m_upscaledView);
-            m_results.expect(upscaled.rendered && rendering.viewStats(m_topView).rendered, frame,
-                             "both created views render");
+            m_results.checks.check(upscaled.rendered && rendering.viewStats(m_topView).rendered, frame,
+                                   "both created views render");
             const std::span<const ProjectedDebugLabel> upscaledLabels = rendering.viewDebugLabels(m_upscaledView);
-            m_results.expect(hasLabel(upscaledLabels, "origin") && hasLabel(upscaledLabels, "upscaled only"), frame,
-                             "a created view projects shared and own labels");
+            m_results.checks.check(hasLabel(upscaledLabels, "origin") && hasLabel(upscaledLabels, "upscaled only"),
+                                   frame, "a created view projects shared and own labels");
             if (hasLabel(defaultLabels, "origin") && hasLabel(upscaledLabels, "upscaled only")) {
                 ++m_results.framesWithLabels;
             }
@@ -223,19 +222,19 @@ int main(int, char** argv) {
     if (!engine.init()) {
         std::cerr << "Engine initialization failed\n";
         engine.shutdown();
+        if (std::string reason; !testsupport::vulkanDeviceAvailable(testsupport::VulkanDeviceKind::Any, reason)) {
+            std::cout << "Skipping: " << reason << '\n';
+            return testsupport::skipExitCode;
+        }
         return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
     SmokeResults results;
     DebugDrawApplication application(results);
     const bool ran = engine.run(application);
     engine.shutdown();
-    for (const std::string& failure : results.failures) {
-        std::cerr << "FAILED: " << failure << '\n';
-    }
-    if (results.framesWithLabels == 0) {
-        std::cerr << "FAILED: no frame published labels in two views (is ZENITH_SMOKE_FRAMES at least 4?)\n";
-    }
-    const bool passed = ran && results.failures.empty() && results.framesWithLabels > 0;
+    results.checks.check(results.framesWithLabels > 0,
+                         "no frame published labels in two views (is ZENITH_SMOKE_FRAMES at least 4?)");
+    const bool passed = ran && results.checks.failures() == 0;
     if (passed) {
         std::cout << "Debug draw smoke test passed\n";
     }

@@ -353,7 +353,7 @@ TEST_CASE("Physics: simultaneous triggers arrive in order") {
 }
 } // namespace
 
-TEST_CASE("Physics: a falling box settles, answers queries and syncs queued lifecycle changes") {
+TEST_CASE("Physics: a falling box settles then answers queries and syncs queued lifecycle changes") {
     PhysicsWorld physics;
     CHECK_MESSAGE(static_cast<bool>(physics.init()), "physics world initializes");
 

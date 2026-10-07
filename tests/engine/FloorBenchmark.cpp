@@ -8,6 +8,8 @@
 
 #include "engine/diagnostics/Benchmark.hpp"
 
+#include "support/TempDirectory.hpp"
+
 #include <chrono>
 #include <iostream>
 
@@ -29,9 +31,8 @@ template <typename Body> void timed(BenchmarkReport& report, const char* name, B
 
 int main() {
     using namespace floor_fixture;
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith_floor_benchmark";
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root);
+    const testsupport::TempDirectory temporary("floor-benchmark");
+    const std::filesystem::path& root = temporary.path();
     BenchmarkReport report;
     try {
         FloorSession session(root);
@@ -52,7 +53,6 @@ int main() {
         std::cerr << "FAILED: " << error.what() << '\n';
         return 1;
     }
-    std::filesystem::remove_all(root);
     std::cout << report.json() << '\n';
     return 0;
 }

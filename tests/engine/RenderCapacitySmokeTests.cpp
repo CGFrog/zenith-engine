@@ -10,6 +10,10 @@
 #include "engine/graphics/Particles.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
+#include "support/Skip.hpp"
+#include "support/StandaloneChecks.hpp"
+#include "support/VulkanProbe.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -26,15 +30,9 @@ constexpr uint32_t extraCubes = 500;
 constexpr uint32_t extraEmitters = 6;
 
 struct SmokeResults {
-    std::vector<std::string> failures;
+    testsupport::StandaloneChecks checks;
     uint32_t primitivesPerCube{0};
     uint32_t checkedFrames{0};
-
-    void expect(bool condition, uint32_t frame, const std::string& message) {
-        if (!condition) {
-            failures.push_back("frame " + std::to_string(frame) + ": " + message);
-        }
-    }
 };
 
 class CapacityScene final : public ApplicationScene {
@@ -86,16 +84,16 @@ class CapacityScene final : public ApplicationScene {
         }
         const RenderStats& stats = context.rendering.stats();
         const uint32_t frame = m_frame - 1;
-        m_results.expect(stats.renderableCount <= objectCapacity, frame,
-                         "at most the per-frame object capacity is drawn, not " +
-                             std::to_string(stats.renderableCount));
-        m_results.expect(stats.droppedRenderItems >= extraCubes, frame,
-                         "the renderables over the capacity are counted, not " +
-                             std::to_string(stats.droppedRenderItems));
+        m_results.checks.check(stats.renderableCount <= objectCapacity, frame,
+                               "at most the per-frame object capacity is drawn, not " +
+                                   std::to_string(stats.renderableCount));
+        m_results.checks.check(stats.droppedRenderItems >= extraCubes, frame,
+                               "the renderables over the capacity are counted, not " +
+                                   std::to_string(stats.droppedRenderItems));
         if (stats.particleEmitterCount == particles::maximumEmitters) {
-            m_results.expect(stats.droppedParticleEmitters == extraEmitters, frame,
-                             "the emitters over the capacity are counted, not " +
-                                 std::to_string(stats.droppedParticleEmitters));
+            m_results.checks.check(stats.droppedParticleEmitters == extraEmitters, frame,
+                                   "the emitters over the capacity are counted, not " +
+                                       std::to_string(stats.droppedParticleEmitters));
         }
         ++m_results.checkedFrames;
     }
@@ -140,6 +138,10 @@ int main(int, char** argv) {
     if (!engine.init()) {
         std::cerr << "Engine initialization failed\n";
         engine.shutdown();
+        if (std::string reason; !testsupport::vulkanDeviceAvailable(testsupport::VulkanDeviceKind::Any, reason)) {
+            std::cout << "Skipping: " << reason << '\n';
+            return testsupport::skipExitCode;
+        }
         return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
     SmokeResults results;
@@ -147,20 +149,11 @@ int main(int, char** argv) {
     const bool ran = engine.run(application);
     const size_t renderWarnings = warningsMentioning(engine.logger(), "Render items exceed");
     engine.shutdown();
-    if (!ran) {
-        results.failures.push_back("the run ended early instead of rendering past the capacity");
-    }
-    if (results.checkedFrames == 0) {
-        results.failures.push_back("no frame was checked (is ZENITH_SMOKE_FRAMES at least 4?)");
-    }
-    if (renderWarnings != 1) {
-        results.failures.push_back("the renderable overflow is logged once, not " + std::to_string(renderWarnings) +
-                                   " times");
-    }
-    for (const std::string& failure : results.failures) {
-        std::cerr << "FAILED: " << failure << '\n';
-    }
-    const bool passed = results.failures.empty();
+    results.checks.check(ran, "the run ended early instead of rendering past the capacity");
+    results.checks.check(results.checkedFrames != 0, "no frame was checked (is ZENITH_SMOKE_FRAMES at least 4?)");
+    results.checks.check(renderWarnings == 1,
+                         "the renderable overflow is logged once, not " + std::to_string(renderWarnings) + " times");
+    const bool passed = results.checks.failures() == 0;
     if (passed) {
         std::cout << "Render capacity smoke test passed\n";
     }
