@@ -32,6 +32,34 @@ from registration linked into the executable (`linkGameplay`), or the built-in
 types and systems alone. `GameplayRunner` plays a `Gameplay` in a game's
 `ApplicationScene` (the project application and the demo use it).
 
+## Shared engine library
+
+`zenith_engine` is a shared library. The editor, the game executable, tests,
+and any game module loaded at runtime link the same engine binary, so there is
+one copy of engine code and of third-party state that must not be duplicated:
+SDL (itself built shared), the Dear ImGui context (compiled into the engine
+with ImGuizmo and exported with `IMGUI_API`), and the privately linked volk
+function table, Jolt allocator and factory, and shaderc. On Windows the build
+exports every engine function automatically; data that must cross the
+boundary needs `ZENITH_ENGINE_API` (`EngineExport.hpp`). Engine headers must
+not call privately linked libraries inline, and a consumer that uses one
+directly links its own independent copy.
+
+Module code is reachable through registered functions, EnTT storage created by
+module code, and component values, so a host releases all of them, destroying
+affected scenes after serializing what must survive, before unloading.
+Wiring modules and systems into `Engine` and the editor is application
+composition: the game executable loads the project's module in place when it
+ships inside the package (from a shadow copy otherwise, so it can be rebuilt)
+and runs its Play systems with the frame's input (see
+[Demo game](../game/demo.md)); the editor's `GameModuleHost` hot reloads it by
+serializing the scene, replacing the scene's registry, and restoring it with
+the new module's registry (see [Game module hosting](../editor/modules.md)).
+A module's optional editor extensions use a header-only, editor-owned API
+(`EditorModuleApi.hpp`) the engine never sees; the host removes each from the
+editor's registries before the module unloads (see
+[Editor extensions](../EDITOR_EXTENSIONS.md)).
+
 ## Fault isolation
 
 A gameplay bug must not end the game or the editor, so every call into game
@@ -96,7 +124,7 @@ Besides the scene, mode, and delta, a system gets:
   [Window and input](window-input.md).
 
 Changing `SystemContext`, `ModuleRegistrar`, or a registered descriptor bumps
-`ZENITH_MODULE_API_VERSION` (now 13: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, C6 added `BehaviourContext::physics`, and E7 added `unscaledDeltaSeconds` to both contexts and the pause and time scale to `GameServices`; the roguelike readiness review's critical items then changed the layouts of `Scene`, `GameServices`, `SystemContext` (`debugDraw`), `PrefabSystem`, `DebugDraw`, `ContactEvent` and `ApplicationControl`, which made it 9; the editor's asset, material, collision and navigation tools then changed `ContactEvent`, `ColliderComponent`, `MaterialOverrideComponent`, `FieldPresentation`, `ComponentType` and `GameServices`, which made it 10; asset import then added `InputState::droppedFiles` and definition schemas to `ModuleRegistrar` and `GameModule`, which made it 11; the convex-hull collider then added an alternative to `ColliderShape`, which made it 12; grouping `GameServices` into `world()`, `time()`, `content()` and `outside()` then changed its layout and accessors, which made it 13).
+`ZENITH_MODULE_API_VERSION` (now 13: the [gameplay roadmap](../history/gameplay-roadmap-2026.md)'s A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, C6 added `BehaviourContext::physics`, and E7 added `unscaledDeltaSeconds` to both contexts and the pause and time scale to `GameServices`; the roguelike readiness review's critical items then changed the layouts of `Scene`, `GameServices`, `SystemContext` (`debugDraw`), `PrefabSystem`, `DebugDraw`, `ContactEvent` and `ApplicationControl`, which made it 9; the editor's asset, material, collision and navigation tools then changed `ContactEvent`, `ColliderComponent`, `MaterialOverrideComponent`, `FieldPresentation`, `ComponentType` and `GameServices`, which made it 10; asset import then added `InputState::droppedFiles` and definition schemas to `ModuleRegistrar` and `GameModule`, which made it 11; the convex-hull collider then added an alternative to `ColliderShape`, which made it 12; grouping `GameServices` into `world()`, `time()`, `content()` and `outside()` then changed its layout and accessors, which made it 13).
 
 ## Behaviours (`src/engine/behaviour/`)
 

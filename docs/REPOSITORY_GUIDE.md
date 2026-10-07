@@ -4,15 +4,15 @@ This guide is the index of Zenith's checked-in files. It explains what each elem
 owns, what depends on it, and where a change belongs. The top-level layout,
 build, runtime content, and tests are described here; each subsystem has its
 own document under `docs/engine/`, `docs/editor/`, and `docs/game/` (see
-[Subsystem docs](#subsystem-docs)). For the runtime sequence
-and subsystem contracts, see [Architecture](ARCHITECTURE.md). For commands and
+[Subsystem docs](#subsystem-docs)). For the dependency direction, the runtime
+sequence, and an overview of each data flow, see [Architecture](ARCHITECTURE.md). For commands and
 common changes, see [Development](DEVELOPMENT.md). The remaining optimization
 objectives and their measurement gates are in
 [Performance roadmap](PERFORMANCE_ROADMAP.md). How a game module extends the
-editor is in [Editor extensions](EDITOR_EXTENSIONS.md). The phased plan and
-status for end-to-end gameplay programming (engine gameplay services,
-Behaviours, the editor script workflow) is in
-[Gameplay roadmap](GAMEPLAY_ROADMAP.md). The prioritised engine and editor
+editor is in [Editor extensions](EDITOR_EXTENSIONS.md). The open follow-ups
+of the finished gameplay roadmap (engine gameplay services, Behaviours, the
+editor script workflow) are in [Gameplay roadmap](GAMEPLAY_ROADMAP.md).
+Finished plans and dated measurement logs are archived in `docs/history/`. The prioritised engine and editor
 gaps to close before the roguelike are in
 [Roguelike readiness review](ROGUELIKE_READINESS_REVIEW.md).
 
@@ -24,7 +24,7 @@ gaps to close before the roguelike are in
 | `README.md` | Quick-start overview, controls, current feature summary, and links into these detailed guides. |
 | `AGENTS.md` | Root contributor policy and navigation. Scoped guides under `src/engine/`, `src/editor/`, `src/game/`, and `tests/` add local ownership rules. |
 | `CLAUDE.md` | Claude Code entry point: imports `AGENTS.md` and adds the fast-navigation rules (code map first, scoped searches). Each folder with an `AGENTS.md` has a `CLAUDE.md` that imports it. |
-| `docs/` | Documentation, indexed by `docs/README.md`: the user guide (`docs/guide/`), tutorials, the code map and contributor playbook, this guide, architecture, and per-subsystem references. |
+| `docs/` | Documentation, indexed by `docs/README.md`: the user guide (`docs/guide/`), tutorials, the code map and contributor playbook, this guide, architecture, per-subsystem references, live plans and validation gates, and archived history (`docs/history/`: finished plans and dated measurement logs). |
 | `.clang-format` | Formatting rules for C++ headers and sources. |
 | `.gitignore` | Excludes generated and local files such as the build tree. |
 | `.vscode/` | Optional editor configuration. It is not required by the build. |
@@ -170,7 +170,8 @@ Engine (`src/engine/`, `shaders/`):
 - [Animation](engine/animation.md): clip playback, cross-fades, and the animator state machine.
 - [Navigation](engine/navigation.md): navigation meshes from static colliders, paths, and agents.
 - [Gameplay](engine/gameplay.md): reusable gameplay mechanisms such as the first-person player.
-- [Graphics](engine/graphics.md): the renderer structure, Vulkan context, swapchain, frame resources, render graph, and pipelines.
+- [Graphics](engine/graphics.md): the renderer structure and render flow, Vulkan context, swapchain, frame resources, render graph, debug drawing, and pipelines.
+- [Graphics render views and picking](engine/graphics-views.md): multi-view frames, secondary scenes, per-view shadows, and GPU picking.
 - [Graphics scene passes](engine/graphics-passes.md): GPU-driven culling, AO, clustered and local-light shadows, fog, decals, particles, environment lighting, and `MeshPass`.
 - [Graphics post-processing](engine/graphics-post.md): post-process, colour grading, SSR, bloom and exposure, motion blur, TAA, upscaling, and depth of field.
 - [Shaders](engine/shaders.md): every GLSL file under `shaders/` and its stage.
@@ -222,7 +223,7 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 | `tests/editor/` | Settings, build output parsing, build runner and IDE launching, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, operators and keymaps, prefab authoring and operators, areas and workspaces (registry, type switching, layout switching, per-area state, `workspaces.json` and its version, and legacy layout migration), the built-in area types (each drawn headless, multi-instance Asset Browser areas and primary promotion, and the default workspaces' layouts and round trip), asset browser, selection, camera behavior, and component editing helpers. |
 | `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior; the `zenith_game_demo` module loaded with `GameModule::load`, parity with the linked gameplay, authored character controllers playing in the game, the demo project playing through its module, and the game's project runtime (command line, packaged-project discovery, module loading, `ProjectApplication`, scene verification). |
 | `tests/packaging/` | CMake script tests of packaging configure checks (`cmake -P`), such as project assets colliding with engine runtime assets. |
-| `tests/capture/`, `tests/references/` | Reference capture driver, the showcase, irradiance-room and debug-draw capture manifests, and reference PNGs (`docs/RENDERER_VALIDATION.md`). |
+| `tests/capture/`, `tests/references/` | Reference capture driver, the showcase, irradiance-room and debug-draw capture manifests, and reference PNGs ([Renderer validation](RENDERER_VALIDATION.md#frame-capture-and-reference-images)). |
 
 The executables return a nonzero status on failed expectations so CTest can
 report failures without another test framework. Test sources and registrations

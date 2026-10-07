@@ -3,13 +3,12 @@
 // Edit/Play/Simulate state: snapshot on enter, restore on stop, time scale, pause, frame step.
 
 #include "engine/application/SimulationClock.hpp"
+#include "engine/assets/Assets.hpp"
 #include "engine/module/SystemScheduler.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
 #include <span>
 #include <vector>
-
-class AssetManager;
 
 // What the editor is doing with the scene. Play and Simulate both run on a
 // throwaway copy of the document (the "runtime scene"): anything that treats
@@ -84,9 +83,18 @@ class EditorPlayMode {
     // back; null in Edit mode. Apply to Edit Scene patches it (through
     // SceneEditing::applyToEditScene) so Stop restores the patched version.
     Scene* editScene();
+    // Renews the leases on the parked edit scene's assets; call once per
+    // frame. The engine leases only the active (runtime) scene, and the edit
+    // scene can hold assets the runtime scene no longer uses (transient
+    // entities never enter Play; Play may destroy entities), which a forced
+    // AssetManager::collectUnused would otherwise evict before Stop. No-op in
+    // Edit mode.
+    void leaseEditSceneAssets(const AssetManager& assets);
 
   private:
     Scene m_editScene;
+    // Held from enter() to stop(); see leaseEditSceneAssets.
+    AssetLeaseSet m_editSceneAssets;
     std::vector<SceneEntityId> m_editSelection;
     EditorMode m_mode{EditorMode::Edit};
     bool m_simulating{false};

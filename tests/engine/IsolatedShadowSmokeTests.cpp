@@ -1,6 +1,7 @@
-// Bounded Vulkan smoke test of per-view shadow isolation (docs/ARCHITECTURE.md,
-// Render views): a view isolated to some objects (the editor's local view)
-// casts sun, point, and spot shadows from those objects only, while a view
+// Bounded Vulkan smoke test of per-view shadow isolation
+// (docs/engine/graphics-views.md, Render views): a view isolated to some
+// objects (the editor's local view) casts sun, point, and spot shadows from
+// those objects only, while a view
 // beside it keeps the whole scene's shadows. First a created view is isolated
 // next to the full default view, then the default view is isolated next to the
 // full created view. One isolated cube moves every frame so local-light tiles

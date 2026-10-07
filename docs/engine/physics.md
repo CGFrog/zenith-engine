@@ -48,6 +48,30 @@ transforms first only when an interpolated body has a parent. The host's
 `updateWorldTransforms` after interpolation then carries the bodies' poses to
 their children (`Engine::run` calls it once per frame).
 
+### Transforms and body ownership
+
+Physics uses ECS entities and Zenith domain types at its public boundary.
+Jolt bodies are owned by `PhysicsWorld`, keyed by EnTT entity. Destroying an
+ECS entity does not directly call Jolt; the next physics step notices it is
+absent from the component view and removes the corresponding body. At the
+beginning of a step `PhysicsWorld` updates world transforms before scanning
+for the three required physical components.
+
+Physics decomposes world transforms into translation, rotation, and absolute
+scale. Scale is baked into collision shapes. Dynamic simulation writes
+translation and rotation back while preserving scale, converting the result to
+parent-local space when necessary. Kinematic bodies flow the other direction:
+ECS world poses are sent to Jolt each step. Changing a collider or rigid-body
+creation setting does not mutate an existing Jolt body automatically: call
+`refreshBody`, which removes and rebuilds the body from current components.
+Forces, impulses, and velocity operations require a body already discovered by
+a step or an explicit refresh, and return `false` when no managed body exists.
+
+Jolt may report contacts from worker threads. The contact listener collects
+them under a mutex, then the step resolves body IDs to ECS entities and
+exposes a stable per-step span. Read `contactEvents()` before the next step
+replaces it.
+
 It exposes forces, impulses, velocity, and begin/persist/end contacts in terms
 of ECS entities, and these queries:
 
@@ -181,12 +205,18 @@ project's names.
 Private reference-counted owner of Jolt's process-wide state (factory,
 registered types, the one debug renderer, and in Debug builds the assert
 handler that lets a step's capacity error continue). Each initialized
-`PhysicsWorld` holds a move-only `JoltRuntimeLease`; worlds coexist and shut
-down in any order.
+`PhysicsWorld` holds a move-only `JoltRuntimeLease`: the first lease creates
+the runtime and the last one released destroys it, so any number of worlds (an
+edit scene and its Play or Simulate copy, tests) coexist and shut down in any
+order. The lease count and the debug renderer, behind one mutex, are the only
+process-wide state Zenith adds to Jolt's own.
 
 ## `src/engine/physics/JoltDebugDraw.*`
 
 Private adapter from Jolt's `DebugRendererSimple` to `DebugDraw`: lines and
 triangle edges become debug lines, 3D text becomes labels. It needs Jolt's
 `JPH_DEBUG_RENDERER`, which `cmake/Dependencies.cmake` enables in every
-configuration.
+configuration (`DEBUG_RENDERER_IN_DISTRIBUTION`); Jolt publishes that
+definition to its users, so the library and the engine agree on it. Physics
+depends only on the renderer-independent `graphics/DebugDraw.hpp` recording
+type (see [Graphics](graphics.md#srcenginegraphicsdebugdraw)).

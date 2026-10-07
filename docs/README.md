@@ -34,7 +34,7 @@ which builds a complete target range from the First-Person Shooter template.
 | [Code map](CODE_MAP.md) | Feature → file → symbol → test lookup. The fastest way to find an implementation. |
 | [Contributor playbook](CONTRIBUTOR_PLAYBOOK.md) | Step-by-step checklists for the common change types (new component, operator, render pass, test...). |
 | [Repository guide](REPOSITORY_GUIDE.md) | Directory map, build targets, dependencies, and the index of subsystem docs. |
-| [Architecture](ARCHITECTURE.md) | Dependency direction, ownership, startup, the frame, render flow, error model. |
+| [Architecture](ARCHITECTURE.md) | Overview: dependency direction, ownership, startup, the frame, a summary of each data flow with links to the subsystem pages, error model. |
 | [Development](DEVELOPMENT.md) | Configure, build, test, smoke, benchmark, format. |
 | [Editor extensions](EDITOR_EXTENSIONS.md) | Operators, panels, sidebar tabs, inspectors, and menus from a game module. |
 | [Releasing](RELEASING.md) | Release artifacts, packaging, and verification. |
@@ -46,12 +46,21 @@ Subsystem reference pages live in [`engine/`](REPOSITORY_GUIDE.md#subsystem-docs
 
 | Document | Purpose |
 | --- | --- |
-| [Gameplay roadmap](GAMEPLAY_ROADMAP.md) | Phased plan and status for gameplay programming. |
+| [Gameplay roadmap](GAMEPLAY_ROADMAP.md) | Open gameplay follow-ups, standing decisions, and conventions (every phase is done). |
 | [Roguelike readiness review](ROGUELIKE_READINESS_REVIEW.md) | Prioritised gaps before the roguelike project. |
 | [Performance roadmap](PERFORMANCE_ROADMAP.md) | Measured CPU/GPU objectives and their gates. |
-| [Renderer validation](RENDERER_VALIDATION.md) | Image-regression, performance, and Vulkan smoke gates. |
+| [Renderer validation](RENDERER_VALIDATION.md) | Current renderer gates: performance A/B, image regression and reference captures, Vulkan smokes, strict validation, diagnostic variables, GPU pass metrics. |
 | [Streaming validation](STREAMING_VALIDATION.md) | Streaming measurement procedure. |
-| [Next steps](NEXT_STEPS.md) | Milestone history and the recommended next slice. |
+| [Next steps](NEXT_STEPS.md) | Open milestone items, test follow-ups, and the recommended next slice. |
+
+Finished plans and dated measurement logs are archived in `history/`; they are
+kept for reference and are not updated:
+
+| Document | Purpose |
+| --- | --- |
+| [Gameplay roadmap 2026](history/gameplay-roadmap-2026.md) | Decisions, status, and every item of gameplay roadmap Phases A to E. |
+| [Completed milestones](history/milestones.md) | The finished milestones of Next steps. |
+| [Renderer measurements](history/renderer-measurements.md) | Dated renderer A/B measurements behind the validation gates and defaults. |
 
 ## Screenshots
 

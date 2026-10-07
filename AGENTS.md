@@ -12,6 +12,11 @@
   one for the subsystem you change.
 - Feature details belong in the subsystem doc. Change a directory-map row only
   when a folder is added, removed or changes purpose.
+- Feature contracts live in the subsystem doc; `docs/ARCHITECTURE.md` is an
+  overview that links to them. Live planning docs (`docs/NEXT_STEPS.md`,
+  `docs/GAMEPLAY_ROADMAP.md`, `docs/RENDERER_VALIDATION.md`, and the like)
+  hold only open work and current gates; move finished plans and dated
+  measurement logs to `docs/history/`.
 - Read the nearest nested `AGENTS.md` before editing `src/engine/`,
   `src/editor/`, `src/game/`, or `tests/`; those files add local guidance to
   this root policy.
