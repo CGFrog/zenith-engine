@@ -36,8 +36,8 @@
   ],
   "testPresets": [
     {
-      "name": "debug",
-      "displayName": "Debug, every test",
+      "name": "tests-base",
+      "hidden": true,
       "configurePreset": "default",
       "configuration": "Debug",
       "output": {
@@ -48,14 +48,55 @@
       }
     },
     {
-      "name": "debug-cpu",
-      "displayName": "Debug, CPU-only tests",
-      "inherits": "debug",
+      "name": "unit",
+      "displayName": "Unit tests: CPU-only, fast (the everyday loop)",
+      "inherits": "tests-base",
       "filter": {
-        "exclude": {
-          "label": "vulkan|benchmark|slow"
+        "include": {
+          "label": "^unit$"
         }
       }
+    },
+    {
+      "name": "cpu",
+      "displayName": "CPU tests: unit and slow (what CI runs without a GPU)",
+      "inherits": "tests-base",
+      "filter": {
+        "include": {
+          "label": "^(unit|slow)$"
+        },
+        "exclude": {
+          "label": "^benchmark$"
+        }
+      }
+    },
+    {
+      "name": "gpu",
+      "displayName": "GPU tests: smokes, validation, captures (needs a Vulkan device)",
+      "inherits": "tests-base",
+      "filter": {
+        "include": {
+          "label": "^vulkan$"
+        },
+        "exclude": {
+          "label": "^benchmark$"
+        }
+      }
+    },
+    {
+      "name": "benchmark",
+      "displayName": "Benchmarks: run for their numbers",
+      "inherits": "tests-base",
+      "filter": {
+        "include": {
+          "label": "^benchmark$"
+        }
+      }
+    },
+    {
+      "name": "all",
+      "displayName": "Every test",
+      "inherits": "tests-base"
     }
   ]
 }

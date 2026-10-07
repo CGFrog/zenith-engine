@@ -158,18 +158,24 @@ component it is given; the view propagates to multi-selection).
 
 ## Add a test
 
-1. A `tests/<area>/<Thing>Tests.cpp` with an `expect(condition, message)`
-   helper and `int main()` returning nonzero on failure (no test framework;
-   see `tests/engine/VersionedJsonTests.cpp` for the pattern).
-2. Register it in that folder's `CMakeLists.txt`:
-   `zenith_add_test(<ctest_name> SOURCES <File>.cpp LIBS zenith_engine [NEEDS_ASSETS])`
-   (`cmake/ZenithTesting.cmake`). Share an executable between CTests with
-   `EXECUTABLE` and `COMMAND_ARGS`.
-3. Tests run in parallel: own your temporary paths, never sleep a fixed
-   time (poll with a deadline), label GPU tests `vulkan` and give them
-   `PROCESSORS 2`.
-4. Editor tests build contexts from `tests/editor/EditorTestFixture.hpp`.
-5. Run it: `ctest --test-dir build -C Debug -R <ctest_name> --output-on-failure`.
+[Testing](TESTING.md) has the rules; this is the checklist.
+
+1. **Unit test** (most tests):
+   - Add doctest cases to `tests/<area>/<Thing>Tests.cpp`. It opens with
+     `TEST_SUITE_BEGIN("<Thing>")`, its cases are named `"<Thing>: <behaviour>"`,
+     and it includes `support/Doctest.hpp`. See
+     `tests/engine/VersionedJsonTests.cpp`.
+   - A new file goes in the `SOURCES` of its area's `zenith_add_test_suite` in
+     `tests/<area>/CMakeLists.txt`.
+   - Files go under a `testsupport::TempDirectory`.
+2. **Standalone test** (GPU smoke, benchmark, argument-driven run): its own
+   executable, registered with
+   `zenith_add_test(<ctest_name> SOURCES <File>.cpp LIBS ... LABELS <tier>)`.
+   A `vulkan` test returns 77 without a device.
+3. Editor tests build contexts from `tests/editor/EditorTestFixture.hpp`.
+4. A bug fix: the test fails before the fix.
+5. Run it: `ctest --preset unit -R "<area>.<Thing>"`, or
+   `zenith_<area>_tests -tc="<Thing>: *"`. Then `python tools/tests/check_tests.py`.
 
 ## Add a project template
 
@@ -192,7 +198,7 @@ component it is given; the view propagates to multi-selection).
 
 ## Before handing off
 
-- [ ] `tools/check.ps1` (or `cmake --build --preset debug`, `ctest --preset debug-cpu`, clang-format on changed files) passes with no new warnings.
+- [ ] `tools/check.ps1` (or `cmake --build --preset debug`, `python tools/tests/check_tests.py`, `ctest --preset unit`, clang-format on changed files) passes with no new warnings; `ctest --preset cpu` before pushing.
 - [ ] Graphics/window changes: a bounded smoke run where Vulkan is available, or state that it could not be run.
 - [ ] Engine code has no game/editor knowledge; no upward includes.
 - [ ] Subsystem doc updated; if a file was added, moved, or removed, `python tools/docs/code_index.py` run (and a *Find it fast* row added for a new capability).

@@ -53,7 +53,7 @@ link (`python tools/docs/check_links.py`) or a stale generated file.
 
 - Primary development is Windows (MSVC, PowerShell 7, `tools/check.ps1`).
   On Linux use the same steps directly:
-  `cmake --preset default && cmake --build --preset debug && ctest --preset debug-cpu`.
+  `cmake --preset default && cmake --build --preset debug && ctest --preset unit`.
 - The first configure downloads dependencies and needs network access; a
   build of everything is slow, so build the specific target you changed
   (`cmake --build build --target <target>`) and run the matching CTest (`-R`).

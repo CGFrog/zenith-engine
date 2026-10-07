@@ -14,6 +14,8 @@
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -25,15 +27,9 @@
 #include <string_view>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("GameServices");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 struct DoorOpened {
     static constexpr std::string_view eventKey = "test.door_opened";
@@ -65,7 +61,7 @@ struct ServicesFixture {
     GameServices services;
 };
 
-void testCommandsApplyAtFlush() {
+TEST_CASE("GameServices: commands apply at flush") {
     ServicesFixture fixture;
     Scene& scene = fixture.scene;
     const Entity parent = scene.createEntity("Parent");
@@ -83,24 +79,24 @@ void testCommandsApplyAtFlush() {
     commands.destroy(scene.id(doomed));
     const SceneEntityId childId = scene.id(child);
     const SceneEntityId doomedId = scene.id(doomed);
-    expect(commands.size() == 2 && findNamed(scene, "Spawned") == entt::null &&
-               scene.findEntity(doomedId) != entt::null,
-           "recording commands leaves the scene unchanged");
+    CHECK_MESSAGE(
+        (commands.size() == 2 && findNamed(scene, "Spawned") == entt::null && scene.findEntity(doomedId) != entt::null),
+        "recording commands leaves the scene unchanged");
 
     fixture.services.flush(scene);
     const Entity spawned = findNamed(scene, "Spawned");
-    expect(spawned != entt::null && spawned == spawnedInCallback,
-           "a flush spawns and hands the entity to its callback");
-    expect(spawned != entt::null && scene.registry().get<RelationshipComponent>(spawned).parent == parent,
-           "a spawn goes under its parent");
+    CHECK_MESSAGE((spawned != entt::null && spawned == spawnedInCallback),
+                  "a flush spawns and hands the entity to its callback");
+    CHECK_MESSAGE((spawned != entt::null && scene.registry().get<RelationshipComponent>(spawned).parent == parent),
+                  "a spawn goes under its parent");
     scene.updateWorldTransforms();
-    expect(spawned != entt::null &&
-               glm::all(glm::equal(glm::vec3(scene.registry().get<TransformComponent>(spawned).world[3]),
-                                   glm::vec3(3.0f, 1.0f, 0.0f))),
-           "a spawn gets its placement's local transform");
-    expect(scene.findEntity(doomedId) == entt::null && scene.findEntity(childId) == entt::null,
-           "a flush destroys an entity with its descendants");
-    expect(commands.empty(), "a flush forgets the commands it applied");
+    CHECK_MESSAGE((spawned != entt::null &&
+                   glm::all(glm::equal(glm::vec3(scene.registry().get<TransformComponent>(spawned).world[3]),
+                                       glm::vec3(3.0f, 1.0f, 0.0f)))),
+                  "a spawn gets its placement's local transform");
+    CHECK_MESSAGE((scene.findEntity(doomedId) == entt::null && scene.findEntity(childId) == entt::null),
+                  "a flush destroys an entity with its descendants");
+    CHECK_MESSAGE(commands.empty(), "a flush forgets the commands it applied");
 
     // Commands for entities that are gone are skipped; a reparent keeps the
     // world transform.
@@ -108,27 +104,27 @@ void testCommandsApplyAtFlush() {
     commands.reparent(scene.id(spawned), {});
     fixture.services.flush(scene);
     scene.updateWorldTransforms();
-    expect(scene.registry().get<RelationshipComponent>(spawned).parent == entt::null &&
-               glm::all(glm::equal(glm::vec3(scene.registry().get<TransformComponent>(spawned).world[3]),
-                                   glm::vec3(3.0f, 1.0f, 0.0f))),
-           "a reparent to the root keeps the world transform");
+    CHECK_MESSAGE((scene.registry().get<RelationshipComponent>(spawned).parent == entt::null &&
+                   glm::all(glm::equal(glm::vec3(scene.registry().get<TransformComponent>(spawned).world[3]),
+                                       glm::vec3(3.0f, 1.0f, 0.0f)))),
+                  "a reparent to the root keeps the world transform");
 
     // A callback's own commands apply in the same flush.
     commands.spawnEmpty("Outer", {}, [&commands](Scene&, Entity) { commands.spawnEmpty("Inner"); });
     fixture.services.flush(scene);
-    expect(findNamed(scene, "Outer") != entt::null && findNamed(scene, "Inner") != entt::null,
-           "commands recorded by a callback apply in the same flush");
+    CHECK_MESSAGE((findNamed(scene, "Outer") != entt::null && findNamed(scene, "Inner") != entt::null),
+                  "commands recorded by a callback apply in the same flush");
 
     fixture.services.beginFrame();
     const std::span<const EntitySpawned> spawnedEvents = fixture.services.events().read<EntitySpawned>();
     const std::span<const EntityDestroyed> destroyedEvents = fixture.services.events().read<EntityDestroyed>();
-    expect(spawnedEvents.size() == 3 && spawnedEvents.front().entity == scene.id(spawned),
-           "each spawn publishes EntitySpawned");
-    expect(destroyedEvents.size() == 1 && destroyedEvents.front().entity == doomedId,
-           "each destroy publishes EntityDestroyed once");
+    CHECK_MESSAGE((spawnedEvents.size() == 3 && spawnedEvents.front().entity == scene.id(spawned)),
+                  "each spawn publishes EntitySpawned");
+    CHECK_MESSAGE((destroyedEvents.size() == 1 && destroyedEvents.front().entity == doomedId),
+                  "each destroy publishes EntityDestroyed once");
 }
 
-void testCommandsRunInPhases() {
+TEST_CASE("GameServices: commands run in phases") {
     ServicesFixture fixture;
     auto registry = std::make_shared<SystemRegistry>();
     size_t entitiesSeenBySecond = 0;
@@ -141,15 +137,13 @@ void testCommandsRunInPhases() {
     const SystemScheduler scheduler(registry);
     runGameplayPhase(scheduler, SystemPhase::Update,
                      {.scene = fixture.scene, .mode = SimulationMode::Play, .services = &fixture.services});
-    expect(entitiesSeenBySecond == 0, "a later system of the same phase does not see a deferred spawn");
-    expect(findNamed(fixture.scene, "From system") != entt::null, "the spawn applies when the phase ends");
+    CHECK_MESSAGE(entitiesSeenBySecond == 0, "a later system of the same phase does not see a deferred spawn");
+    CHECK_MESSAGE((findNamed(fixture.scene, "From system") != entt::null), "the spawn applies when the phase ends");
 }
 
-void testPrefabSpawn() {
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith_game_services_tests";
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
-    std::filesystem::create_directories(root, error);
+TEST_CASE("GameServices: prefab spawn") {
+    const testsupport::TempDirectory rootDirectory("zenith_game_services_tests");
+    const std::filesystem::path root = rootDirectory.path();
     {
         ServicesFixture authoring(root);
         const Entity crate = authoring.scene.createEntity("Crate");
@@ -157,18 +151,18 @@ void testPrefabSpawn() {
         PrefabCapture capture;
         const PrefabResult captured =
             authoring.services.world().prefabs().capture(authoring.scene, crate, "crate.zprefab", capture);
-        expect(captured.success && savePrefab(root / "crate.zprefab", capture.document).success,
-               "a test prefab is written");
+        CHECK_MESSAGE((captured.success && savePrefab(root / "crate.zprefab", capture.document).success),
+                      "a test prefab is written");
     }
     ServicesFixture fixture(root);
     fixture.services.world().commands().spawn("crate.zprefab");
     fixture.services.world().commands().spawn("missing.zprefab");
     fixture.services.flush(fixture.scene);
     const Entity crate = findNamed(fixture.scene, "Crate");
-    expect(crate != entt::null && fixture.scene.registry().get<RelationshipComponent>(crate).children.size() == 1,
-           "a prefab spawn instantiates the whole prefab");
-    expect(fixture.services.world().commands().empty(), "a failing spawn is skipped without stopping the flush");
-    std::filesystem::remove_all(root, error);
+    CHECK_MESSAGE(
+        (crate != entt::null && fixture.scene.registry().get<RelationshipComponent>(crate).children.size() == 1),
+        "a prefab spawn instantiates the whole prefab");
+    CHECK_MESSAGE(fixture.services.world().commands().empty(), "a failing spawn is skipped without stopping the flush");
 }
 
 // Writes a prefab whose root has the emitter.
@@ -180,15 +174,13 @@ void writeEffectPrefab(const std::filesystem::path& root, const std::string& nam
     PrefabCapture capture;
     const PrefabResult captured =
         authoring.services.world().prefabs().capture(authoring.scene, effect, name + ".zprefab", capture);
-    expect(captured.success && savePrefab(root / (name + ".zprefab"), capture.document).success,
-           "an effect prefab is written");
+    CHECK_MESSAGE((captured.success && savePrefab(root / (name + ".zprefab"), capture.document).success),
+                  "an effect prefab is written");
 }
 
-void testEffects() {
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith_game_services_effects";
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
-    std::filesystem::create_directories(root, error);
+TEST_CASE("GameServices: effects") {
+    const testsupport::TempDirectory rootDirectory("zenith_game_services_effects");
+    const std::filesystem::path root = rootDirectory.path();
     writeEffectPrefab(root, "Spark", {.spawnRate = 0.0f, .burstCount = 10, .lifetimeMin = 0.25f, .lifetimeMax = 0.5f});
     writeEffectPrefab(root, "Smoke", {.spawnRate = 10.0f, .lifetimeMax = 2.0f});
 
@@ -200,38 +192,39 @@ void testEffects() {
     scene.registry().emplace<ParticleEmitterComponent>(
         child, ParticleEmitterComponent{.spawnRate = 0.0f, .burstCount = 1, .lifetimeMax = 3.0f});
     scene.setParent(child, spark);
-    expect(derivedEffectLifetime(scene, spark, message) == 3.0f,
-           "a one-shot effect lasts its longest particle lifetime");
+    CHECK_MESSAGE(derivedEffectLifetime(scene, spark, message) == 3.0f,
+                  "a one-shot effect lasts its longest particle lifetime");
     scene.registry().get<ParticleEmitterComponent>(child).burstInterval = 1.0f;
-    expect(!derivedEffectLifetime(scene, spark, message) && !message.empty(),
-           "a repeating emitter has no derived lifetime");
+    CHECK_MESSAGE((!derivedEffectLifetime(scene, spark, message) && !message.empty()),
+                  "a repeating emitter has no derived lifetime");
 
     ServicesFixture fixture(root);
     Effects& effects = fixture.services.world().effects();
     effects.spawn("Spark.zprefab", glm::translate(glm::mat4(1.0f), {1.0f, 2.0f, 3.0f}));
-    expect(findNamed(fixture.scene, "Spark") == entt::null, "an effect spawns at the next flush");
+    CHECK_MESSAGE((findNamed(fixture.scene, "Spark") == entt::null), "an effect spawns at the next flush");
     fixture.services.flush(fixture.scene);
     const Entity spawned = findNamed(fixture.scene, "Spark");
-    expect(spawned != entt::null && effects.activeCount() == 1 &&
-               fixture.scene.registry().get<TransformComponent>(spawned).local[3] == glm::vec4(1.0f, 2.0f, 3.0f, 1.0f),
-           "an effect plays at its transform");
+    CHECK_MESSAGE(
+        (spawned != entt::null && effects.activeCount() == 1 &&
+         fixture.scene.registry().get<TransformComponent>(spawned).local[3] == glm::vec4(1.0f, 2.0f, 3.0f, 1.0f)),
+        "an effect plays at its transform");
     fixture.services.advanceTimers(fixture.scene, 0.0f);
     fixture.services.advanceTimers(fixture.scene, 0.4f);
-    expect(findNamed(fixture.scene, "Spark") != entt::null, "an effect lasts its derived lifetime");
+    CHECK_MESSAGE((findNamed(fixture.scene, "Spark") != entt::null), "an effect lasts its derived lifetime");
     fixture.services.advanceTimers(fixture.scene, 0.2f);
-    expect(findNamed(fixture.scene, "Spark") == entt::null && effects.activeCount() == 0,
-           "an effect is destroyed when it ends");
+    CHECK_MESSAGE((findNamed(fixture.scene, "Spark") == entt::null && effects.activeCount() == 0),
+                  "an effect is destroyed when it ends");
 
     effects.spawn("Smoke.zprefab", glm::mat4(1.0f));
     fixture.services.flush(fixture.scene);
-    expect(findNamed(fixture.scene, "Smoke") == entt::null && effects.activeCount() == 0,
-           "a continuous effect without a lifetime is refused and destroyed");
+    CHECK_MESSAGE((findNamed(fixture.scene, "Smoke") == entt::null && effects.activeCount() == 0),
+                  "a continuous effect without a lifetime is refused and destroyed");
     effects.spawn("Smoke.zprefab", glm::mat4(1.0f), {.lifetime = 1.0f});
     fixture.services.flush(fixture.scene);
     fixture.services.advanceTimers(fixture.scene, 0.9f);
-    expect(findNamed(fixture.scene, "Smoke") != entt::null, "an explicit lifetime keeps a continuous effect");
+    CHECK_MESSAGE((findNamed(fixture.scene, "Smoke") != entt::null), "an explicit lifetime keeps a continuous effect");
     fixture.services.advanceTimers(fixture.scene, 0.2f);
-    expect(findNamed(fixture.scene, "Smoke") == entt::null, "an explicit lifetime ends a continuous effect");
+    CHECK_MESSAGE((findNamed(fixture.scene, "Smoke") == entt::null), "an explicit lifetime ends a continuous effect");
 
     effects.spawn("Spark.zprefab", glm::mat4(1.0f), {.pooled = true});
     fixture.services.flush(fixture.scene);
@@ -239,50 +232,50 @@ void testEffects() {
     const SceneEntityId pooledId = fixture.scene.id(pooled);
     fixture.services.advanceTimers(fixture.scene, 0.6f);
     const auto* parkedEmitter = fixture.scene.registry().try_get<ParticleEmitterComponent>(pooled);
-    expect(parkedEmitter != nullptr && !parkedEmitter->emitting && effects.parkedCount("Spark.zprefab") == 1,
-           "a pooled effect that ends is parked with its emitters stopped");
+    CHECK_MESSAGE((parkedEmitter != nullptr && !parkedEmitter->emitting && effects.parkedCount("Spark.zprefab") == 1),
+                  "a pooled effect that ends is parked with its emitters stopped");
     const uint32_t generation = parkedEmitter != nullptr ? parkedEmitter->restartGeneration : 0;
     effects.spawn("Spark.zprefab", glm::translate(glm::mat4(1.0f), {5.0f, 0.0f, 0.0f}), {.pooled = true});
     fixture.services.flush(fixture.scene);
     const Entity reused = fixture.scene.findEntity(pooledId);
     const auto* restarted =
         reused != entt::null ? fixture.scene.registry().try_get<ParticleEmitterComponent>(reused) : nullptr;
-    expect(reused == pooled && restarted != nullptr && restarted->emitting &&
-               restarted->restartGeneration == generation + 1 && effects.parkedCount("Spark.zprefab") == 0 &&
-               fixture.scene.registry().get<TransformComponent>(reused).local[3].x == 5.0f,
-           "a pooled spawn reuses the parked instance, moved and restarted");
-    expect(fixture.scene.registry().view<ParticleEmitterComponent>().size() == 1,
-           "reusing an instance spawns nothing new");
+    CHECK_MESSAGE((reused == pooled && restarted != nullptr && restarted->emitting &&
+                   restarted->restartGeneration == generation + 1 && effects.parkedCount("Spark.zprefab") == 0 &&
+                   fixture.scene.registry().get<TransformComponent>(reused).local[3].x == 5.0f),
+                  "a pooled spawn reuses the parked instance, moved and restarted");
+    CHECK_MESSAGE((fixture.scene.registry().view<ParticleEmitterComponent>().size() == 1),
+                  "reusing an instance spawns nothing new");
     fixture.services.advanceTimers(fixture.scene, 0.6f);
-    expect(effects.parkedCount("Spark.zprefab") == 1 && effects.activeCount() == 0, "the reused instance parks again");
-    std::filesystem::remove_all(root, error);
+    CHECK_MESSAGE((effects.parkedCount("Spark.zprefab") == 1 && effects.activeCount() == 0),
+                  "the reused instance parks again");
 }
 
-void testEventsLastOneFrame() {
+TEST_CASE("GameServices: events last one frame") {
     EventQueue events;
     events.publish(DoorOpened{1});
-    expect(events.read<DoorOpened>().empty(), "an event is not readable in the frame it was published");
+    CHECK_MESSAGE((events.read<DoorOpened>().empty()), "an event is not readable in the frame it was published");
     events.advanceFrame();
     events.publish(DoorOpened{2});
     events.publish(ScoreChanged{10});
-    expect(events.read<DoorOpened>().size() == 1 && events.read<DoorOpened>().front().door == 1,
-           "an event is readable in the next frame");
-    expect(events.read<ScoreChanged>().empty(), "event types are independent");
+    CHECK_MESSAGE((events.read<DoorOpened>().size() == 1 && events.read<DoorOpened>().front().door == 1),
+                  "an event is readable in the next frame");
+    CHECK_MESSAGE((events.read<ScoreChanged>().empty()), "event types are independent");
     events.advanceFrame();
-    expect(events.read<DoorOpened>().size() == 1 && events.read<DoorOpened>().front().door == 2,
-           "last frame's events replace the ones before");
-    expect(events.read<ScoreChanged>().size() == 1 && events.read<ScoreChanged>().front().score == 10,
-           "each type keeps publication order");
+    CHECK_MESSAGE((events.read<DoorOpened>().size() == 1 && events.read<DoorOpened>().front().door == 2),
+                  "last frame's events replace the ones before");
+    CHECK_MESSAGE((events.read<ScoreChanged>().size() == 1 && events.read<ScoreChanged>().front().score == 10),
+                  "each type keeps publication order");
     events.advanceFrame();
-    expect(events.read<DoorOpened>().empty() && events.read<ScoreChanged>().empty(),
-           "events are dropped after one frame");
+    CHECK_MESSAGE((events.read<DoorOpened>().empty() && events.read<ScoreChanged>().empty()),
+                  "events are dropped after one frame");
     events.publish(DoorOpened{3});
     events.clear();
     events.advanceFrame();
-    expect(events.read<DoorOpened>().empty(), "clear drops pending events");
+    CHECK_MESSAGE((events.read<DoorOpened>().empty()), "clear drops pending events");
 }
 
-void testTimers() {
+TEST_CASE("GameServices: timers") {
     Scene scene;
     Timers timers;
     const LogChannel log;
@@ -291,28 +284,29 @@ void testTimers() {
     timers.start(0.75f, TimerRepeat::Once, [&fired](TimerContext&) { fired.push_back("once"); });
     const TimerHandle repeating =
         timers.start(0.5f, TimerRepeat::Repeat, [&fired](TimerContext&) { fired.push_back("repeat"); });
-    expect(!timers.start(0.0f, TimerRepeat::Repeat, [](TimerContext&) {}), "a repeating timer needs an interval");
+    CHECK_MESSAGE(!timers.start(0.0f, TimerRepeat::Repeat, [](TimerContext&) {}),
+                  "a repeating timer needs an interval");
 
     timers.advance(scene, 0.25f, log);
-    expect(fired.empty(), "nothing fires before its time");
+    CHECK_MESSAGE(fired.empty(), "nothing fires before its time");
     // Time scale 2: a 0.25 s frame advances 0.5 s of simulated time.
     timers.advance(scene, 0.25f * 2.0f, log);
-    expect(fired == std::vector<std::string>{"repeat", "once"}, "due timers fire earliest first");
+    CHECK_MESSAGE((fired == std::vector<std::string>{"repeat", "once"}), "due timers fire earliest first");
     // Paused: no simulated time passes.
     timers.advance(scene, 0.0f, log);
-    expect(fired.size() == 2, "a paused clock fires nothing");
+    CHECK_MESSAGE(fired.size() == 2, "a paused clock fires nothing");
     timers.advance(scene, 1.0f, log);
-    expect(fired.size() == 4 && fired[2] == "repeat" && fired[3] == "repeat",
-           "a repeating timer fires once per elapsed interval");
-    expect(timers.cancel(repeating) && !timers.active(repeating) && timers.size() == 0,
-           "a cancelled timer stops; a finished one-shot is gone");
+    CHECK_MESSAGE((fired.size() == 4 && fired[2] == "repeat" && fired[3] == "repeat"),
+                  "a repeating timer fires once per elapsed interval");
+    CHECK_MESSAGE((timers.cancel(repeating) && !timers.active(repeating) && timers.size() == 0),
+                  "a cancelled timer stops; a finished one-shot is gone");
 
     const Entity owner = scene.createEntity("Owner");
     bool ownerFired = false;
     timers.start(1.0f, TimerRepeat::Once, [&ownerFired](TimerContext&) { ownerFired = true; }, scene.id(owner));
     scene.destroyEntity(owner);
     timers.advance(scene, 2.0f, log);
-    expect(!ownerFired && timers.size() == 0, "a timer whose owner is gone is dropped without firing");
+    CHECK_MESSAGE((!ownerFired && timers.size() == 0), "a timer whose owner is gone is dropped without firing");
 
     // A callback may cancel itself.
     TimerHandle self;
@@ -322,7 +316,7 @@ void testTimers() {
         timers.cancel(context.timer);
     });
     timers.advance(scene, 1.0f, log);
-    expect(selfRuns == 1 && !timers.active(self), "a repeating timer can cancel itself from its callback");
+    CHECK_MESSAGE((selfRuns == 1 && !timers.active(self)), "a repeating timer can cancel itself from its callback");
 }
 
 // Errors the fixture's logger received, oldest first.
@@ -340,7 +334,7 @@ bool contains(std::string_view text, std::string_view part) {
     return text.find(part) != std::string_view::npos;
 }
 
-void testThrowingTimersAreContained() {
+TEST_CASE("GameServices: throwing timers are contained") {
     Logger logger{LoggerConfig{.echoToStderr = false}};
     const LogChannel log(&logger, "gameplay");
     Scene scene;
@@ -356,16 +350,16 @@ void testThrowingTimersAreContained() {
 
     timers.advance(scene, 0.5f, log);
     timers.advance(scene, 1.0f, log);
-    expect(faultyRuns == 1 && !timers.active(faulty) && !timers.active(unknown),
-           "a throwing timer is dropped, even a repeating one");
-    expect(healthyRuns == 3, "the other timers keep running after one throws");
+    CHECK_MESSAGE((faultyRuns == 1 && !timers.active(faulty) && !timers.active(unknown)),
+                  "a throwing timer is dropped, even a repeating one");
+    CHECK_MESSAGE(healthyRuns == 3, "the other timers keep running after one throws");
     const std::vector<std::string> errors = loggedErrors(logger);
-    expect(errors.size() == 2 && contains(errors[0], "timer exploded") && contains(errors[0], "cancelled") &&
-               contains(errors[1], "an unknown exception"),
-           "each throwing timer is logged once with what it threw");
+    CHECK_MESSAGE((errors.size() == 2 && contains(errors[0], "timer exploded") && contains(errors[0], "cancelled") &&
+                   contains(errors[1], "an unknown exception")),
+                  "each throwing timer is logged once with what it threw");
 }
 
-void testThrowingSpawnCallbacksAreContained() {
+TEST_CASE("GameServices: throwing spawn callbacks are contained") {
     ServicesFixture fixture;
     Scene& scene = fixture.scene;
     EntityCommandBuffer& commands = fixture.services.world().commands();
@@ -373,11 +367,12 @@ void testThrowingSpawnCallbacksAreContained() {
     bool laterCallbackRan = false;
     commands.spawnEmpty("Healthy", {}, [&laterCallbackRan](Scene&, Entity) { laterCallbackRan = true; });
     fixture.services.flush(scene);
-    expect(findNamed(scene, "Faulty") != entt::null && findNamed(scene, "Healthy") != entt::null && laterCallbackRan,
-           "a throwing spawn callback keeps its entity and the commands after it");
+    CHECK_MESSAGE(
+        (findNamed(scene, "Faulty") != entt::null && findNamed(scene, "Healthy") != entt::null && laterCallbackRan),
+        "a throwing spawn callback keeps its entity and the commands after it");
     const std::vector<std::string> errors = loggedErrors(fixture.logger);
-    expect(errors.size() == 1 && contains(errors[0], "spawn callback exploded"),
-           "a throwing spawn callback is logged with what it threw");
+    CHECK_MESSAGE((errors.size() == 1 && contains(errors[0], "spawn callback exploded")),
+                  "a throwing spawn callback is logged with what it threw");
 
     // Through the services: a throwing timer during advanceTimers is logged
     // and the commands other timers recorded still apply.
@@ -386,49 +381,49 @@ void testThrowingSpawnCallbacksAreContained() {
     fixture.services.time().timers().start(0.1f, TimerRepeat::Once,
                                            [&commands](TimerContext&) { commands.spawnEmpty("From timer"); });
     fixture.services.advanceTimers(scene, 1.0f);
-    expect(findNamed(scene, "From timer") != entt::null && loggedErrors(fixture.logger).size() == 2,
-           "advanceTimers contains a throwing timer and flushes the others' commands");
+    CHECK_MESSAGE((findNamed(scene, "From timer") != entt::null && loggedErrors(fixture.logger).size() == 2),
+                  "advanceTimers contains a throwing timer and flushes the others' commands");
 }
 } // namespace
 
-void testLogChannels() {
+TEST_CASE("GameServices: log channels") {
     ServicesFixture fixture;
-    expect(fixture.services.log().category() == "gameplay", "the game's own channel is gameplay");
+    CHECK_MESSAGE(fixture.services.log().category() == "gameplay", "the game's own channel is gameplay");
     const LogChannel weapons = fixture.services.log("weapons");
-    expect(weapons.category() == "gameplay.weapons" && weapons.logger() == &fixture.logger,
-           "a named channel is gameplay.<name> on the same logger");
+    CHECK_MESSAGE((weapons.category() == "gameplay.weapons" && weapons.logger() == &fixture.logger),
+                  "a named channel is gameplay.<name> on the same logger");
 }
 
-void testGameClock() {
+TEST_CASE("GameServices: game clock") {
     ServicesFixture fixture;
     GameServices& services = fixture.services;
-    expect(!services.time().paused() && services.time().timeScale() == 1.0f,
-           "a session starts running at normal speed");
+    CHECK_MESSAGE((!services.time().paused() && services.time().timeScale() == 1.0f),
+                  "a session starts running at normal speed");
     const SimulationClock idle = services.time().simulationClock();
-    expect(!idle.paused && idle.timeScale == 1.0f, "an idle game leaves the host's clock as it is");
+    CHECK_MESSAGE((!idle.paused && idle.timeScale == 1.0f), "an idle game leaves the host's clock as it is");
 
     services.time().setTimeScale(0.5f);
-    expect(services.time().simulationClock({.timeScale = 2.0f}).timeScale == 1.0f,
-           "the game's time scale multiplies the host's");
+    CHECK_MESSAGE(services.time().simulationClock({.timeScale = 2.0f}).timeScale == 1.0f,
+                  "the game's time scale multiplies the host's");
     services.time().setTimeScale(100.0f);
-    expect(services.time().timeScale() == SimulationClock::maximumTimeScale, "the game's time scale is clamped");
-    expect(services.time().simulationClock({.timeScale = 4.0f}).timeScale == SimulationClock::maximumTimeScale,
-           "the combined time scale is clamped");
+    CHECK_MESSAGE(services.time().timeScale() == SimulationClock::maximumTimeScale, "the game's time scale is clamped");
+    CHECK_MESSAGE(services.time().simulationClock({.timeScale = 4.0f}).timeScale == SimulationClock::maximumTimeScale,
+                  "the combined time scale is clamped");
     services.time().setTimeScale(std::numeric_limits<float>::quiet_NaN());
-    expect(services.time().timeScale() == 1.0f, "a NaN time scale becomes 1");
+    CHECK_MESSAGE(services.time().timeScale() == 1.0f, "a NaN time scale becomes 1");
 
     services.time().setPaused(true);
     const SimulationClock paused = services.time().simulationClock();
-    expect(paused.paused && simulatedSeconds(paused, 0.016f) == 0.0f && audioPlaybackRate(paused) == 0.0f,
-           "a paused game holds simulated time and audio still");
+    CHECK_MESSAGE((paused.paused && simulatedSeconds(paused, 0.016f) == 0.0f && audioPlaybackRate(paused) == 0.0f),
+                  "a paused game holds simulated time and audio still");
     const SimulationClock stepping =
         services.time().simulationClock({.paused = true, .frameStepSeconds = 1.0f / 60.0f});
-    expect(stepping.paused && simulatedSeconds(stepping, 0.016f) == 0.0f,
-           "the game's pause holds through the editor's frame step");
+    CHECK_MESSAGE((stepping.paused && simulatedSeconds(stepping, 0.016f) == 0.0f),
+                  "the game's pause holds through the editor's frame step");
     services.time().setPaused(false);
-    expect(simulatedSeconds(services.time().simulationClock({.paused = true, .frameStepSeconds = 0.25f}), 0.016f) ==
-               0.25f,
-           "a running game keeps the host's frame step");
+    CHECK_MESSAGE(
+        simulatedSeconds(services.time().simulationClock({.paused = true, .frameStepSeconds = 0.25f}), 0.016f) == 0.25f,
+        "a running game keeps the host's frame step");
 }
 
 namespace {
@@ -467,37 +462,37 @@ struct ScoreBoard {
     int best{0};
 };
 
-void testSessionResources() {
+TEST_CASE("GameServices: session resources") {
     std::vector<std::string> destroyed;
     destroyedResources = &destroyed;
     {
         ServicesFixture fixture;
         GameServices& services = fixture.services;
-        expect(services.content().resources().find<RunState>() == nullptr, "a new session has no resources");
+        CHECK_MESSAGE((services.content().resources().find<RunState>() == nullptr), "a new session has no resources");
         RunState& state = services.content().resource<RunState>();
-        expect(state.floor == 1 && &services.content().resource<RunState>() == &state,
-               "a resource is default-constructed once and found again");
+        CHECK_MESSAGE((state.floor == 1 && &services.content().resource<RunState>() == &state),
+                      "a resource is default-constructed once and found again");
         state.floor = 3;
         services.content().resources().get<ScoreBoard>().best = 40;
         const RunState& replaced = services.content().resources().emplace<RunState>(7u);
-        expect(replaced.floor == 7 && destroyed == std::vector<std::string>{"run state 3"},
-               "emplacing a resource replaces (destroys) the previous value");
-        expect(services.content().resources().erase<ScoreBoard>() &&
-                   !services.content().resources().erase<ScoreBoard>() &&
-                   services.content().resources().find<ScoreBoard>() == nullptr,
-               "erasing a resource destroys it once");
+        CHECK_MESSAGE((replaced.floor == 7 && destroyed == std::vector<std::string>{"run state 3"}),
+                      "emplacing a resource replaces (destroys) the previous value");
+        CHECK_MESSAGE((services.content().resources().erase<ScoreBoard>() &&
+                       !services.content().resources().erase<ScoreBoard>() &&
+                       services.content().resources().find<ScoreBoard>() == nullptr),
+                      "erasing a resource destroys it once");
         services.content().resources().get<ScoreBoard>();
         destroyed.clear();
     }
-    expect((destroyed == std::vector<std::string>{"score board", "run state 7"}),
-           "destroying the services destroys their resources, newest first");
+    CHECK_MESSAGE((destroyed == std::vector<std::string>{"score board", "run state 7"}),
+                  "destroying the services destroys their resources, newest first");
     destroyedResources = nullptr;
 }
 
 // The session's resources end with the session: stopping gameplay destroys
 // them (the editor stops it before a module unloads or reloads), and the next
 // session starts empty.
-void testResourcesEndWithTheSession() {
+TEST_CASE("GameServices: resources end with the session") {
     std::vector<std::string> destroyed;
     destroyedResources = &destroyed;
     Logger logger;
@@ -513,10 +508,11 @@ void testResourcesEndWithTheSession() {
     runner.start(application, {});
     runner.services()->content().resource<RunState>().floor = 4;
     runner.stop(application);
-    expect(destroyed == std::vector<std::string>{"run state 4"}, "stopping gameplay destroys the session's resources");
+    CHECK_MESSAGE((destroyed == std::vector<std::string>{"run state 4"}),
+                  "stopping gameplay destroys the session's resources");
     runner.start(application, {});
-    expect(runner.services()->content().resources().find<RunState>() == nullptr,
-           "a new session starts without resources");
+    CHECK_MESSAGE((runner.services()->content().resources().find<RunState>() == nullptr),
+                  "a new session starts without resources");
     runner.stop(application);
     destroyedResources = nullptr;
 }
@@ -533,10 +529,9 @@ struct ItemTable {
     DefinitionTable<ItemDef> table{Fields<ItemDef>().add("id", &ItemDef::id).add("damage", &ItemDef::damage)};
 };
 
-void testAssetPaths() {
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith_game_services_asset_paths";
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
+TEST_CASE("GameServices: asset paths") {
+    const testsupport::TempDirectory rootDirectory("zenith_game_services_asset_paths");
+    const std::filesystem::path root = rootDirectory.path();
     std::filesystem::create_directories(root / "data");
     {
         std::ofstream output(root / "data" / "items.json");
@@ -545,20 +540,21 @@ void testAssetPaths() {
     {
         ServicesFixture fixture(root);
         GameServices& services = fixture.services;
-        expect(services.content().assetPath("data/items.json") == root / "data" / "items.json",
-               "an asset path resolves against the session's asset root");
-        expect(services.content().assetPath("data/../data/items.json") == root / "data" / "items.json",
-               "an asset path is normalized");
-        expect(services.content().assetPath("").empty() && services.content().assetPath("../outside.json").empty() &&
-                   services.content().assetPath("data/../../outside.json").empty() &&
-                   services.content().assetPath((root / "data" / "items.json").generic_string()).empty(),
-               "empty, escaping, and absolute asset paths give no path");
+        CHECK_MESSAGE(services.content().assetPath("data/items.json") == root / "data" / "items.json",
+                      "an asset path resolves against the session's asset root");
+        CHECK_MESSAGE(services.content().assetPath("data/../data/items.json") == root / "data" / "items.json",
+                      "an asset path is normalized");
+        CHECK_MESSAGE((services.content().assetPath("").empty() &&
+                       services.content().assetPath("../outside.json").empty() &&
+                       services.content().assetPath("data/../../outside.json").empty() &&
+                       services.content().assetPath((root / "data" / "items.json").generic_string()).empty()),
+                      "empty, escaping, and absolute asset paths give no path");
         ItemTable& items = services.content().resource<ItemTable>();
         const DefinitionTableResult loaded = items.table.load(services.content().assetPath("data/items.json"));
-        expect(loaded.success && items.table.find("sword") != nullptr && items.table.find("sword")->damage == 4.0f,
-               "a definition table loads from an asset path into a session resource");
+        CHECK_MESSAGE(
+            (loaded.success && items.table.find("sword") != nullptr && items.table.find("sword")->damage == 4.0f),
+            "a definition table loads from an asset path into a session resource");
     }
-    std::filesystem::remove_all(root, error);
 }
 } // namespace
 
@@ -567,58 +563,44 @@ void testAssetPaths() {
 // applies (a timer's spawn command lands at the flush after it fires; the
 // outside draws on the host's DebugDraw; the content resolves against the
 // session's asset root).
-void testServiceGroups() {
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith_game_service_groups";
+TEST_CASE("GameServices: service groups") {
+    const testsupport::TempDirectory rootDirectory("zenith_game_service_groups");
+    const std::filesystem::path root = rootDirectory.path();
     ServicesFixture fixture(root);
     GameServices& services = fixture.services;
     const GameServices& constServices = services;
 
-    expect(&services.world() == &services.world() && &services.world().commands() == &services.world().commands() &&
-               &services.world().prefabs() == &services.world().prefabs() &&
-               &services.world().effects() == &services.world().effects(),
-           "the world group and its parts are the session's own");
-    expect(&constServices.time() == &services.time() && &services.time().timers() == &services.time().timers(),
-           "time is one group, const or not");
-    expect(&constServices.outside() == &services.outside() && &services.outside().debugDraw() == &fixture.debugDraw,
-           "the outside group draws on the host's DebugDraw");
-    expect(&services.content().resources() == &services.content().resources() &&
-               &services.content().random("loot") == &services.content().randomStreams().stream("loot"),
-           "the content group's streams are its random streams");
-    expect(services.content().assetPath("data/items.json") == root / "data/items.json",
-           "the content group resolves against the session's asset root");
-    expect(services.outside().saveGames() == nullptr && services.outside().audio() == nullptr,
-           "a session without a host's saves or audio has none");
+    CHECK_MESSAGE((&services.world() == &services.world() &&
+                   &services.world().commands() == &services.world().commands() &&
+                   &services.world().prefabs() == &services.world().prefabs() &&
+                   &services.world().effects() == &services.world().effects()),
+                  "the world group and its parts are the session's own");
+    CHECK_MESSAGE((&constServices.time() == &services.time() && &services.time().timers() == &services.time().timers()),
+                  "time is one group, const or not");
+    CHECK_MESSAGE(
+        (&constServices.outside() == &services.outside() && &services.outside().debugDraw() == &fixture.debugDraw),
+        "the outside group draws on the host's DebugDraw");
+    CHECK_MESSAGE((&services.content().resources() == &services.content().resources() &&
+                   &services.content().random("loot") == &services.content().randomStreams().stream("loot")),
+                  "the content group's streams are its random streams");
+    CHECK_MESSAGE(services.content().assetPath("data/items.json") == root / "data/items.json",
+                  "the content group resolves against the session's asset root");
+    CHECK_MESSAGE((services.outside().saveGames() == nullptr && services.outside().audio() == nullptr),
+                  "a session without a host's saves or audio has none");
 
     services.time().timers().start(0.5f, TimerRepeat::Once,
                                    [&services](TimerContext&) { services.world().commands().spawnEmpty("Late"); });
     services.advanceTimers(fixture.scene, 0.25f);
-    expect(findNamed(fixture.scene, "Late") == entt::null, "nothing is spawned before the timer fires");
+    CHECK_MESSAGE((findNamed(fixture.scene, "Late") == entt::null), "nothing is spawned before the timer fires");
     services.advanceTimers(fixture.scene, 0.25f);
-    expect(findNamed(fixture.scene, "Late") != entt::null, "a timer's world command applies when the timers advance");
+    CHECK_MESSAGE((findNamed(fixture.scene, "Late") != entt::null),
+                  "a timer's world command applies when the timers advance");
 
     services.time().setPaused(true);
     services.time().setTimeScale(0.5f);
     const SimulationClock clock = constServices.time().simulationClock({.timeScale = 2.0f});
-    expect(clock.paused && clock.timeScale == 1.0f, "the time group combines the game's clock with the host's");
+    CHECK_MESSAGE((clock.paused && clock.timeScale == 1.0f),
+                  "the time group combines the game's clock with the host's");
 }
 
-int main() {
-    testCommandsApplyAtFlush();
-    testCommandsRunInPhases();
-    testPrefabSpawn();
-    testEffects();
-    testEventsLastOneFrame();
-    testTimers();
-    testThrowingTimersAreContained();
-    testThrowingSpawnCallbacksAreContained();
-    testLogChannels();
-    testGameClock();
-    testSessionResources();
-    testResourcesEndWithTheSession();
-    testAssetPaths();
-    testServiceGroups();
-    if (failures == 0) {
-        std::cout << "Game services tests passed\n";
-    }
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

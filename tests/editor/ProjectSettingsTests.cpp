@@ -39,11 +39,6 @@ void expect(bool condition, std::string_view message) {
     }
 }
 
-std::string readText(const fs::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-}
-
 fs::path makeProject(const fs::path& directory) {
     fs::remove_all(directory);
     fs::create_directories(directory / "assets");

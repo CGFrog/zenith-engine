@@ -8,9 +8,10 @@
     1. Configures with the given configure preset if build/CMakeCache.txt is
        missing.
     2. cmake --build --preset debug
-    3. ctest --preset debug-cpu (CPU-only tests), or ctest --preset debug
-       (every test) with -Full.
-    4. clang-format -i on the *.cpp and *.hpp files under src/ and tests/ that
+    3. tools/tests/check_tests.py: every test follows docs/TESTING.md.
+    4. ctest --preset unit (the unit tier), or the tier -Tests names; -Full
+       runs every test (the 'all' preset).
+    5. clang-format -i on the *.cpp and *.hpp files under src/ and tests/ that
        differ from master (committed, uncommitted, or untracked), unless
        -NoFormat. clang-format is taken from PATH, else from the newest Visual
        Studio's bundled LLVM (found with vswhere).
@@ -22,7 +23,11 @@
 #>
 [CmdletBinding()]
 param(
-    # Run every test (Vulkan, benchmark, and slow ones too).
+    # The test preset (docs/TESTING.md): unit, cpu (unit and slow), gpu,
+    # benchmark, or all.
+    [ValidateSet('unit', 'cpu', 'gpu', 'benchmark', 'all')]
+    [string]$Tests = 'unit',
+    # Run every test; the same as -Tests all.
     [switch]$Full,
     # Skip formatting.
     [switch]$NoFormat,
@@ -78,7 +83,8 @@ try {
         Invoke-Step "Configure (preset $Preset)" { cmake --preset $Preset }
     }
     Invoke-Step 'Build (Debug)' { cmake --build --preset debug }
-    $testPreset = if ($Full) { 'debug' } else { 'debug-cpu' }
+    Invoke-Step 'Check the tests follow docs/TESTING.md' { python tools/tests/check_tests.py }
+    $testPreset = if ($Full) { 'all' } else { $Tests }
     Invoke-Step "Test (preset $testPreset)" { ctest --preset $testPreset }
 
     if (-not $NoFormat) {

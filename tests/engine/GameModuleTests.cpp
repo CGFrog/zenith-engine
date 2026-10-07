@@ -43,10 +43,13 @@ bool directoryEmpty(const std::filesystem::path& directory) {
     return !std::filesystem::exists(directory, error) || std::filesystem::is_empty(directory, error);
 }
 
+#if defined(ZENITH_TEST_GAME_MODULE_PDB)
+// Only the debug-symbols check (MSVC builds) reads a file whole.
 std::string readBytes(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
+#endif
 
 int32_t intField(const ComponentType& type, const void* component, std::string_view key) {
     for (const FieldDescriptor& field : type.fields()) {
