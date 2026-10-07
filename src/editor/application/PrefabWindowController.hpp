@@ -112,6 +112,9 @@ class PrefabWindowController final : public EditorPrefabWindowCommands {
     void clearFocus();
     // window's viewport panel, or null.
     ViewportPanel* viewport(uint64_t window) const;
+    // Whether window's panels are docked in the window's own dockspace (the
+    // editor smoke checks it); false before the window was first drawn.
+    bool panelsDocked(uint64_t window) const;
     // Runs draw with the EditorContext window's panels get.
     void withEditorContext(ApplicationContext& context, PrefabWindowDocument& window,
                            const std::function<void(EditorContext&)>& draw);
@@ -161,6 +164,12 @@ class PrefabWindowController final : public EditorPrefabWindowCommands {
         std::shared_ptr<EditorPanel> viewport;
         std::shared_ptr<EditorPanel> inspector;
         bool layoutBuilt{false};
+        // The window's dockspace, once it was first drawn, and the nodes its
+        // layout gives each panel.
+        unsigned int dockspaceId{0};
+        unsigned int hierarchyDock{0};
+        unsigned int viewportDock{0};
+        unsigned int inspectorDock{0};
         // Bring the window to the front at the next draw.
         bool focusRequest{true};
     };
@@ -186,7 +195,8 @@ class PrefabWindowController final : public EditorPrefabWindowCommands {
     void releaseWindow(ApplicationContext& context, const PrefabWindowDocument& window);
     void refreshAfterSave(ApplicationContext& context, PrefabWindowDocument& window, const SavedPrefabDocument& saved);
     void drawWindow(ApplicationContext& context, PrefabWindowDocument& window, View& view);
-    void buildLayout(const PrefabWindowDocument& window, unsigned int dockspaceId);
+    // Splits the window's dockspace into the panels' nodes, kept in view.
+    void buildLayout(View& view, unsigned int dockspaceId);
     void drawToolbar(ApplicationContext& context, PrefabWindowDocument& window);
     void drawPrompt(ApplicationContext& context);
 

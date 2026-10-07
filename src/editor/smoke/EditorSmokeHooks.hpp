@@ -60,6 +60,8 @@ class EditorSmokeHooks {
     virtual ViewportPanel* prefabWindowViewport(uint64_t window) = 0;
     virtual std::optional<SceneEditing> prefabWindowEditing(uint64_t window) = 0;
     virtual bool savePrefabWindow(uint64_t window) = 0;
+    // Whether the window's panels are docked in the window itself.
+    virtual bool prefabWindowPanelsDocked(uint64_t window) const = 0;
     virtual void closePrefabWindow(uint64_t window) = 0;
     virtual EditorMenus& menus() = 0;
     virtual ViewportRegistry& viewports() = 0;

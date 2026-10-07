@@ -119,6 +119,9 @@ class PrefabWindowSmokeStep final : public SmokeStep {
         if (view && view != rendering.defaultView() && rendering.viewScene(view) == window->renderScene) {
             const RenderViewStats stats = rendering.viewStats(view);
             if (stats.rendered && stats.visibleCount > 0 && rendering.viewTexture(view)) {
+                if (!context.editor.prefabWindowPanelsDocked(m_window)) {
+                    return SmokeStepResult::failed("the prefab window's panels are not docked in it");
+                }
                 m_rendered = true;
                 return SmokeStepResult::running();
             }

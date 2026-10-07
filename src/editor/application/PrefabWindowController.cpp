@@ -147,6 +147,28 @@ ViewportPanel* PrefabWindowController::viewport(uint64_t window) const {
     return found != nullptr ? dynamic_cast<ViewportPanel*>(found->viewport.get()) : nullptr;
 }
 
+bool PrefabWindowController::panelsDocked(uint64_t window) const {
+    const View* found = findView(window);
+    const PrefabWindowDocument* document = m_windows.find(window);
+    if (found == nullptr || document == nullptr || found->dockspaceId == 0) {
+        return false;
+    }
+    const std::pair<const std::shared_ptr<EditorPanel>&, std::string_view> panels[] = {
+        {found->hierarchy, "hierarchy"}, {found->viewport, "viewport"}, {found->inspector, "inspector"}};
+    for (const auto& [panel, part] : panels) {
+        if (!panel) {
+            continue;
+        }
+        const ImGuiWindow* panelWindow =
+            ImGui::FindWindowByName(windowPartName(*document, panel->title(), part).c_str());
+        if (panelWindow == nullptr || panelWindow->DockNode == nullptr ||
+            ImGui::DockNodeGetRootNode(panelWindow->DockNode)->ID != found->dockspaceId) {
+            return false;
+        }
+    }
+    return true;
+}
+
 PrefabWindowDocument* PrefabWindowController::focused() const {
     return m_focused == 0 ? nullptr : m_windows.find(m_focused);
 }
@@ -423,14 +445,23 @@ void PrefabWindowController::drawWindow(ApplicationContext& context, PrefabWindo
         m_focused = window.id;
     }
     const ImGuiID dockspaceId = ImGui::GetID("##PrefabDockspace");
+    view.dockspaceId = dockspaceId;
+    // The window's panels dock only into its own dockspace, which takes
+    // nothing else, and cannot be torn out of it: the window stays one piece.
+    ImGuiWindowClass windowClass;
+    windowClass.ClassId = ImHashStr(("prefab." + std::to_string(window.id)).c_str());
+    windowClass.DockingAllowUnclassed = false;
     if (visible) {
         m_services.themeChrome.paintAreaWindow();
         drawToolbar(context, window);
         if (!view.layoutBuilt) {
-            buildLayout(window, dockspaceId);
+            buildLayout(view, dockspaceId);
             view.layoutBuilt = true;
         }
-        ImGui::DockSpace(dockspaceId, {0.0f, 0.0f}, ImGuiDockNodeFlags_NoWindowMenuButton);
+        ImGui::DockSpace(dockspaceId, {0.0f, 0.0f},
+                         ImGuiDockNodeFlags_NoWindowMenuButton |
+                             static_cast<ImGuiDockNodeFlags>(ImGuiDockNodeFlags_NoUndocking),
+                         &windowClass);
     }
     ImGui::End();
     if (!open) {
@@ -447,11 +478,15 @@ void PrefabWindowController::drawWindow(ApplicationContext& context, PrefabWindo
         }
         return;
     }
-    const auto drawPanel = [&](const std::shared_ptr<EditorPanel>& panel, std::string_view part) {
+    const auto drawPanel = [&](const std::shared_ptr<EditorPanel>& panel, std::string_view part, ImGuiID dock) {
         if (!panel) {
             return;
         }
         const std::string name = windowPartName(window, panel->title(), part);
+        // Docked directly: the panels keep no saved settings, which is where
+        // DockBuilderDockWindow would have put a window not created yet.
+        ImGui::SetNextWindowClass(&windowClass);
+        ImGui::SetNextWindowDockID(dock, ImGuiCond_FirstUseEver);
         // The theme paints the pane in place of the window background.
         ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
         const bool panelVisible =
@@ -469,22 +504,20 @@ void PrefabWindowController::drawWindow(ApplicationContext& context, PrefabWindo
         }
         ImGui::End();
     };
-    drawPanel(view.hierarchy, "hierarchy");
-    drawPanel(view.viewport, "viewport");
-    drawPanel(view.inspector, "inspector");
+    drawPanel(view.hierarchy, "hierarchy", view.hierarchyDock);
+    drawPanel(view.viewport, "viewport", view.viewportDock);
+    drawPanel(view.inspector, "inspector", view.inspectorDock);
 }
 
-void PrefabWindowController::buildLayout(const PrefabWindowDocument& window, ImGuiID dockspaceId) {
+void PrefabWindowController::buildLayout(View& view, ImGuiID dockspaceId) {
     const ImVec2 size = ImGui::GetContentRegionAvail();
     ImGui::DockBuilderRemoveNode(dockspaceId);
     ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspaceId, {std::max(size.x, 1.0f), std::max(size.y, 1.0f)});
     ImGuiID center = dockspaceId;
-    const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.25f, nullptr, &center);
-    const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.35f, nullptr, &center);
-    ImGui::DockBuilderDockWindow(windowPartName(window, "Hierarchy", "hierarchy").c_str(), left);
-    ImGui::DockBuilderDockWindow(windowPartName(window, "Viewport", "viewport").c_str(), center);
-    ImGui::DockBuilderDockWindow(windowPartName(window, "Inspector", "inspector").c_str(), right);
+    view.hierarchyDock = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.25f, nullptr, &center);
+    view.inspectorDock = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.35f, nullptr, &center);
+    view.viewportDock = center;
     ImGui::DockBuilderFinish(dockspaceId);
 }
 

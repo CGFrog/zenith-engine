@@ -85,6 +85,10 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
         return document != nullptr && m_session.m_prefabWindows.save(m_context, *document);
     }
 
+    bool prefabWindowPanelsDocked(uint64_t window) const override {
+        return m_session.m_prefabWindows.panelsDocked(window);
+    }
+
     void closePrefabWindow(uint64_t window) override {
         m_session.m_prefabWindows.requestClose(window);
     }
