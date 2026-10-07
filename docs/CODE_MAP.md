@@ -190,12 +190,14 @@ capability. `--check` fails when the generated index is stale.
 | --- | --- | --- |
 | Third-party dependency pins | `cmake/Dependencies.cmake` | FetchContent; `ZENITH_SHARED_DEPS_DIR` reuses another checkout's sources. |
 | Warnings and exports | `cmake/CompilerSettings.cmake`, `cmake/WindowsExports.cmake`, `tools/export_definitions/` | `zenith_target_warnings`, `zenith_export_defined_symbols`. |
-| Registering tests | `cmake/ZenithTesting.cmake`, `tests/*/CMakeLists.txt` | `zenith_add_test`, `zenith_add_test_executable`, `zenith_add_test_module`. |
+| Registering tests | `cmake/ZenithTesting.cmake`, `tests/*/CMakeLists.txt` | `zenith_add_test_suite` (doctest unit binaries), `zenith_add_test` (standalone), `zenith_add_test_executable`, `zenith_add_test_module`; tier defaults ([Testing](TESTING.md)). |
+| Test helpers | `tests/support/` | `support/Doctest.hpp`, `testsupport::TempDirectory`, `readText`/`writeText`, `approxEqual`, `skipExitCode`, `zenith_test_main`. |
+| Test rules check | `tools/tests/check_tests.py`, `tools/tests/legacy_tests.txt` | Enforces [Testing](TESTING.md); CI's `docs` job and `tools/check.ps1` run it. |
 | Game modules built outside the tree | `cmake/ZenithEngineConfig.cmake.in`, `templates/*/CMakeLists.txt` | Templates `include("${ZENITH_ROOT}/ZenithEngineConfig.cmake")` written by the engine build. |
 | Packaging | `cmake/PackageProject.cmake`, root `CMakeLists.txt` (CPack) | [Releasing](RELEASING.md). |
-| Presets | `CMakePresets.json` | `default`/`worktree` configure, `debug` build, `debug`/`debug-cpu` test. |
-| One-step local check | `tools/check.ps1` | Build, CPU tests, clang-format of changed files. |
-| Doc tooling | `tools/docs/check_links.py`, `tools/docs/code_index.py`, `tools/docs/screenshot_checklist.py` | The generators take `--check`; CI's `docs` job (`.github/workflows/ci.yml`) runs all three. |
+| Presets | `CMakePresets.json` | `default`/`worktree` configure, `debug` build, `unit`/`cpu`/`gpu`/`benchmark`/`all` test ([Testing](TESTING.md)). |
+| One-step local check | `tools/check.ps1` | Build, the test-rules check, a test tier (`-Tests`, default `unit`), clang-format of changed files. |
+| Doc tooling | `tools/docs/check_links.py`, `tools/docs/code_index.py`, `tools/docs/screenshot_checklist.py` | The generators take `--check`; CI's `docs` job (`.github/workflows/ci.yml`) runs all three, and `tools/tests/check_tests.py`. |
 | Content generators | `tools/showcase/`, `tools/irradiance_room/`, `tools/color_grading/` | Regenerate checked-in content. |
 
 ## Call chains
@@ -309,11 +311,17 @@ Function names are real; follow them in the files named.
 | `tests/capture/`, `tests/references/` | Reference image captures per view (label `capture`). | [Renderer validation](RENDERER_VALIDATION.md) |
 | `tests/validation/` | Strict Vulkan validation matrix. | [Renderer validation](RENDERER_VALIDATION.md) |
 
-Rules: no test framework (an `expect(condition, message)` helper and a nonzero
-exit), `zenith_add_test(<name> SOURCES <File>.cpp LIBS ...)` registers CTest
-`<name>` with executable `<name>_tests` unless `EXECUTABLE` says otherwise;
-labels `vulkan`, `benchmark`, `slow` are excluded by `ctest --preset debug-cpu`.
-Editor tests build contexts from `tests/editor/EditorTestFixture.hpp`.
+Rules ([Testing](TESTING.md)):
+- Unit tests are doctest cases in the area binary `zenith_<area>_tests`
+  (`zenith_add_test_suite` in `tests/<area>/CMakeLists.txt`). Each case is
+  the CTest `<area>.<case name>`.
+- Standalone executables (smokes, benchmarks, captures) use
+  `zenith_add_test(<name> SOURCES ...)`.
+- Tiers are labels: `unit`, `slow`, `vulkan`, `benchmark`, each with a test
+  preset of that name, plus `cpu` (unit and slow) and `all`.
+- Shared helpers are in `tests/support/`. Files not converted yet are listed
+  in `tools/tests/legacy_tests.txt`.
+- Editor tests build contexts from `tests/editor/EditorTestFixture.hpp`.
 
 ## Source index
 

@@ -21,6 +21,8 @@ jobs:
         run: python tools/docs/code_index.py --check
       - name: Check the screenshot checklist is current
         run: python tools/docs/screenshot_checklist.py --check
+      - name: Check the tests follow docs/TESTING.md
+        run: python tools/tests/check_tests.py
   build-test-package:
     strategy:
       fail-fast: false
@@ -45,10 +47,10 @@ jobs:
         run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DZENITH_WINDOWS_INSTALLER=${{ runner.os == 'Windows' }} -DZENITH_TEST_TIMEOUT_SCALE=${{ runner.os == 'Linux' && 4 || 1 }}
       - name: Build
         run: cmake --build build --config Release --parallel 4
-      # Every GPU test carries the vulkan label, including the vulkan;validation
-      # strict matrix, so runners without a GPU only run CPU coverage here.
+      # The cpu tier (docs/TESTING.md, the `cpu` test preset): unit and slow
+      # tests, never vulkan or benchmark ones.
       - name: Run CPU tests
-        run: ctest --test-dir build -C Release --output-on-failure -LE vulkan
+        run: ctest --test-dir build -C Release --output-on-failure -L "^(unit|slow)$" -LE "^benchmark$"
       # Linux runners have no GPU: Mesa's lavapipe runs the Vulkan tests on the
       # CPU under Xvfb. The validation layer comes from the LunarG SDK, since
       # Ubuntu 24.04's packaged one (1.3.275) crashes on Vulkan 1.4 core push

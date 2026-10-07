@@ -36,6 +36,7 @@ which builds a complete target range from the First-Person Shooter template.
 | [Repository guide](REPOSITORY_GUIDE.md) | Directory map, build targets, dependencies, and the index of subsystem docs. |
 | [Architecture](ARCHITECTURE.md) | Overview: dependency direction, ownership, startup, the frame, a summary of each data flow with links to the subsystem pages, error model. |
 | [Development](DEVELOPMENT.md) | Configure, build, test, smoke, benchmark, format. |
+| [Testing](TESTING.md) | The rule book for tests: tiers, writing a unit test, running one, standalone tests. |
 | [Editor extensions](EDITOR_EXTENSIONS.md) | Operators, panels, sidebar tabs, inspectors, and menus from a game module. |
 | [Releasing](RELEASING.md) | Release artifacts, packaging, and verification. |
 

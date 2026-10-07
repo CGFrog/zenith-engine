@@ -12,6 +12,7 @@ set(ZENITH_EDITOR_TEST_SETTINGS_DIR "${PROJECT_BINARY_DIR}/editor-test-settings"
 file(READ "${PROJECT_SOURCE_DIR}/projects/demo.zenith-project" ZENITH_DEMO_PROJECT_JSON)
 string(JSON ZENITH_DEMO_RENDER_SETTINGS GET "${ZENITH_DEMO_PROJECT_JSON}" renderSettings)
 
+add_subdirectory(support)
 add_subdirectory(engine)
 add_subdirectory(game)
 add_subdirectory(editor)

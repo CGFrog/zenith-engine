@@ -17,6 +17,9 @@
   `docs/GAMEPLAY_ROADMAP.md`, `docs/RENDERER_VALIDATION.md`, and the like)
   hold only open work and current gates; move finished plans and dated
   measurement logs to `docs/history/`.
+- Tests follow [`docs/TESTING.md`](docs/TESTING.md): doctest unit tests in
+  the area binaries, one tier label per test, shared helpers from
+  `tests/support/`, enforced by `tools/tests/check_tests.py`.
 - Read the nearest nested `AGENTS.md` before editing `src/engine/`,
   `src/editor/`, `src/game/`, or `tests/`; those files add local guidance to
   this root policy.
@@ -137,8 +140,9 @@ tools/check.ps1 -Full            # every test, Vulkan, benchmark, and slow ones 
 tools/check.ps1 -NoFormat
 ```
 
-The steps it runs are `cmake --build --preset debug`, `ctest --preset debug-cpu`
-(or `ctest --preset debug` for every test), and `clang-format -i --style=file`
+The steps it runs are `cmake --build --preset debug`,
+`python tools/tests/check_tests.py`, `ctest --preset unit` (`-Tests cpu|gpu|benchmark|all`
+picks another tier; `-Full` is `all`), and `clang-format -i --style=file`
 on changed `src/` and `tests/` sources; clang-format comes from `PATH` or Visual
 Studio's bundled LLVM. GPU tests count double against `-j`, so at most half the
 test slots launch the engine at once.

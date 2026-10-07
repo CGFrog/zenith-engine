@@ -53,10 +53,10 @@ Play a project outside the editor with the game runner:
 build/Debug/zenith.exe --project projects/demo.zenith-project
 ```
 
-Run the fast CPU-only tests:
+Run the fast CPU-only tests ([Testing](docs/TESTING.md) has the other tiers):
 
 ```powershell
-ctest --preset debug-cpu
+ctest --preset unit
 ```
 
 `tools/check.ps1` builds, runs those tests, and formats changed C++ files in

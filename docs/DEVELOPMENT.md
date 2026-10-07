@@ -94,14 +94,18 @@ covers only the third-party and test sources.
 
 ## Tests
 
+[Testing](TESTING.md) is the rule book: the tiers, how to write a test, and
+how to run one. In short:
+
 ```powershell
-ctest --test-dir build -C Debug --output-on-failure -j 8
+ctest --preset unit    # the everyday loop: CPU-only unit tests
+ctest --preset cpu     # unit and slow: what CI runs; before pushing
+ctest --preset gpu     # smokes, validation, captures (needs a Vulkan device)
+ctest --preset all     # everything
 ```
 
-`CMakePresets.json` carries the same settings: `ctest --preset debug` runs
-everything in parallel and `ctest --preset debug-cpu` skips the Vulkan,
-benchmark, and slow tests for a fast CPU-only loop. GPU tests set `PROCESSORS 2`, so
-`-j 8` runs at most four engine instances on the GPU at once.
+GPU tests set `PROCESSORS 2`, so `-j 8` runs at most four engine instances on
+the GPU at once.
 
 On a much slower machine, such as Linux CI running the Vulkan tests on Mesa's
 lavapipe (a CPU Vulkan driver) under Xvfb, configure with
@@ -111,18 +115,13 @@ on core push descriptors, so CI takes `VkLayer_khronos_validation` from the
 LunarG SDK and points `VK_ADD_LAYER_PATH` at it. Reference captures skip
 themselves without a hardware device.
 
-Run one test by name:
+Run one test or case by name:
 
 ```powershell
-ctest --test-dir build -C Debug -R zenith_asset_scene --output-on-failure
-ctest --test-dir build -C Debug -R zenith_physics --output-on-failure
-ctest --test-dir build -C Debug -R zenith_application_lifecycle --output-on-failure
+ctest --preset unit -R "engine.GameServices"            # a file's cases
+build/Debug/zenith_engine_tests -tc="GameServices: timers"  # one case, directly
+ctest --test-dir build -C Debug -R zenith_asset_scene    # a standalone test
 ```
-
-Tests are deterministic CPU-side contracts. Add one when changing importer
-behavior, hierarchy semantics, component contracts, physics synchronization,
-or failure handling. Keep GPU behavior in a bounded smoke test unless it
-intrinsically requires a GPU-aware test harness.
 
 ## GPU smoke test
 

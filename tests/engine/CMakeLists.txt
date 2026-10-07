@@ -1,3 +1,12 @@
+# The engine's unit tests: doctest cases in one binary, zenith_engine_tests,
+# each case its own CTest test "engine.<case>" (docs/TESTING.md). Files move
+# here from the standalone registrations below as they are converted.
+zenith_add_test_suite(engine
+    SOURCES
+        GameServicesTests.cpp
+        VersionedJsonTests.cpp
+    LIBS zenith_engine)
+
 # meshoptimizer is private to the engine library; this test calls it directly.
 zenith_add_test(zenith_milestones_19_21 EXECUTABLE zenith_milestone_19_21_tests
     SOURCES Milestone19And21Tests.cpp
@@ -13,7 +22,6 @@ foreach(file_watcher_backend IN ITEMS native polling)
     zenith_add_test(zenith_file_watcher_${file_watcher_backend}
         EXECUTABLE zenith_file_watcher_tests COMMAND_ARGS ${file_watcher_backend} TIMEOUT 60)
 endforeach()
-zenith_add_test(zenith_versioned_json SOURCES VersionedJsonTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_crash_handler SOURCES CrashHandlerTests.cpp LIBS zenith_engine)
 
 zenith_add_test(zenith_asset_scene EXECUTABLE zenith_asset_tests
@@ -33,7 +41,6 @@ zenith_add_test(zenith_runtime_content SOURCES RuntimeContentTests.cpp LIBS zeni
 zenith_add_test(zenith_physics_queries SOURCES PhysicsQueryTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_system_scheduler SOURCES SystemSchedulerTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_behaviours SOURCES BehaviourTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_game_services SOURCES GameServicesTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_asset_collection SOURCES AssetCollectionTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_material_assets SOURCES MaterialAssetTests.cpp LIBS zenith_engine NEEDS_ASSETS)
 zenith_add_test(zenith_asset_reload SOURCES AssetReloadTests.cpp LIBS zenith_engine NEEDS_ASSETS)

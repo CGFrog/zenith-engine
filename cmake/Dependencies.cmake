@@ -7,7 +7,7 @@ include_guard(GLOBAL)
 # Every FetchContent dependency, by its FetchContent_Declare name.
 set(ZENITH_FETCHED_DEPENDENCIES
     VulkanHeaders glslang SPIRV-Headers SPIRV-Tools shaderc volk glm SDL imgui imguizmo inter cgltf stb EnTT
-    nlohmann_json JoltPhysics VulkanMemoryAllocator meshoptimizer bc7enc_rdo recastnavigation)
+    nlohmann_json JoltPhysics VulkanMemoryAllocator meshoptimizer bc7enc_rdo recastnavigation doctest)
 
 # A configured build tree's _deps directory whose dependency sources this
 # build reuses read-only (FETCHCONTENT_SOURCE_DIR_<NAME> = <dir>/<name>-src),
@@ -237,6 +237,18 @@ FetchContent_Declare(
     GIT_TAG v3.4.0
     GIT_SHALLOW TRUE
 )
+
+# doctest, the test framework (docs/TESTING.md); only test builds need it.
+FetchContent_Declare(
+    doctest
+    GIT_REPOSITORY https://github.com/doctest/doctest.git
+    GIT_TAG v2.4.12
+    GIT_SHALLOW TRUE
+)
+if(BUILD_TESTING)
+    set(DOCTEST_NO_INSTALL ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(doctest)
+endif()
 
 # meshoptimizer reorders imported geometry for the GPU and builds LOD chains.
 FetchContent_Declare(
