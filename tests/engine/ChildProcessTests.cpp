@@ -96,9 +96,12 @@ void setParentVariable(const char* name, const char* value) {
 #endif
 }
 
+#ifdef _WIN32
+// Only the Windows case-insensitivity check needs it.
 bool startsWithAny(const std::vector<std::string>& lines, const std::string& prefix) {
     return std::ranges::any_of(lines, [&prefix](const std::string& line) { return line.starts_with(prefix); });
 }
+#endif
 
 TEST_CASE("ChildProcess: environment") {
     setParentVariable("ZENITH_CHILD_REPLACED", "parent");

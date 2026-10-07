@@ -8,6 +8,8 @@
 
 #include "engine/diagnostics/ImageComparison.hpp"
 #include "engine/diagnostics/RgbaImage.hpp"
+#include "support/Skip.hpp"
+#include "support/VulkanProbe.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -19,10 +21,8 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <volk.h>
 
 namespace {
-constexpr int skipExitCode = 77;
 
 struct CaptureView {
     std::string name;
@@ -134,38 +134,6 @@ bool loadManifest(const std::filesystem::path& path, CaptureManifest& manifest) 
         return false;
     }
     return true;
-}
-
-// The references come from a hardware GPU; software rasterizers and machines
-// without a Vulkan driver cannot reproduce them.
-bool hardwareVulkanDeviceAvailable(std::string& reason) {
-    if (volkInitialize() != VK_SUCCESS) {
-        reason = "no Vulkan loader";
-        return false;
-    }
-    const VkApplicationInfo application{.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-                                        .pApplicationName = "zenith_reference_capture",
-                                        .apiVersion = VK_API_VERSION_1_3};
-    const VkInstanceCreateInfo info{.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &application};
-    VkInstance instance = VK_NULL_HANDLE;
-    if (vkCreateInstance(&info, nullptr, &instance) != VK_SUCCESS) {
-        reason = "cannot create a Vulkan instance";
-        return false;
-    }
-    volkLoadInstanceOnly(instance);
-    uint32_t count = 0;
-    vkEnumeratePhysicalDevices(instance, &count, nullptr);
-    std::vector<VkPhysicalDevice> devices(count);
-    vkEnumeratePhysicalDevices(instance, &count, devices.data());
-    bool hardware = false;
-    for (VkPhysicalDevice device : devices) {
-        VkPhysicalDeviceProperties properties{};
-        vkGetPhysicalDeviceProperties(device, &properties);
-        hardware = hardware || properties.deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU;
-    }
-    vkDestroyInstance(instance, nullptr);
-    reason = "no hardware Vulkan device";
-    return hardware;
 }
 
 // Runs the engine for one view with a clean, deterministic capture
@@ -358,9 +326,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::string reason;
-    if (!hardwareVulkanDeviceAvailable(reason)) {
+    // The references come from a hardware GPU; software rasterizers and
+    // machines without a Vulkan driver cannot reproduce them.
+    if (!testsupport::vulkanDeviceAvailable(testsupport::VulkanDeviceKind::Hardware, reason)) {
         std::cout << "Skipping reference captures: " << reason << '\n';
-        return skipExitCode;
+        return testsupport::skipExitCode;
     }
     std::error_code error;
     std::filesystem::create_directories(options.outputDirectory, error);

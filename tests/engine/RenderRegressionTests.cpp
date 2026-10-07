@@ -1,18 +1,21 @@
+// CPU reference renders of shading features (colour space, shadows, skinning, UI, ...), each
+// compared with the hash of its approved image.
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <string_view>
 #include <vector>
+
+#include "support/Doctest.hpp"
 
 namespace {
 constexpr int width = 48;
 constexpr int height = 32;
 using Image = std::vector<uint8_t>;
-int failures = 0;
 
 uint8_t toByte(float value) {
     return static_cast<uint8_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
@@ -32,16 +35,17 @@ void writePpm(const std::filesystem::path& path, const Image& image) {
     output.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
 }
 
-void compare(std::string_view name, const Image& image, uint64_t expected) {
+// Checks the capture's hash; a mismatch keeps the capture as a PPM for
+// inspection (testsupport::failureArtifactPath) and names it.
+void checkCapture(std::string_view name, const Image& image, uint64_t expected) {
     const uint64_t actual = hash(image);
     if (actual != expected) {
-        const auto output =
-            std::filesystem::temp_directory_path() / (std::string("zenith-") + std::string(name) + ".ppm");
+        const std::filesystem::path output =
+            testsupport::failureArtifactPath("render-regression-" + std::string(name) + ".ppm");
         writePpm(output, image);
-        std::cerr << "FAILED: " << name << " screenshot hash " << actual << " expected " << expected
-                  << "; capture: " << output << '\n';
-        ++failures;
+        MESSAGE("the capture is in " << output.string());
     }
+    CHECK_MESSAGE(actual == expected, (std::string(name) + " screenshot hash"));
 }
 
 Image colorSpaceCapture() {
@@ -267,18 +271,54 @@ Image productionAssetFallbackCapture() {
 }
 } // namespace
 
-int main() {
-    compare("color-space", colorSpaceCapture(), 11920415357468837699ull);
-    compare("shadow", shadowCapture(), 9332500078490701299ull);
-    compare("antialiasing", antialiasingCapture(), 4834795595963545455ull);
-    compare("game-ui", gameUiCapture(), 2202593522406481215ull);
-    compare("skinning", skinningCapture(), 7791851272260930333ull);
-    compare("masked-edge", maskedEdgeCapture(), 10485245353354089817ull);
-    compare("blending-order", blendingOrderCapture(), 12337063544351879896ull);
-    compare("local-lights", localLightsCapture(), 18186517676014945946ull);
-    compare("reflection-probes", reflectionProbeCapture(), 14217588637060545381ull);
-    compare("hdr-environment", hdrEnvironmentCapture(), 9140372891774060003ull);
-    compare("quality-fallbacks", qualityFallbackCapture(), 7156661786147691523ull);
-    compare("production-asset-fallbacks", productionAssetFallbackCapture(), 6757895526051028569ull);
-    return failures == 0 ? 0 : 1;
+TEST_SUITE_BEGIN("RenderRegression");
+
+TEST_CASE("RenderRegression: color space capture matches its reference") {
+    checkCapture("color-space", colorSpaceCapture(), 11920415357468837699ull);
 }
+
+TEST_CASE("RenderRegression: shadow capture matches its reference") {
+    checkCapture("shadow", shadowCapture(), 9332500078490701299ull);
+}
+
+TEST_CASE("RenderRegression: antialiasing capture matches its reference") {
+    checkCapture("antialiasing", antialiasingCapture(), 4834795595963545455ull);
+}
+
+TEST_CASE("RenderRegression: game ui capture matches its reference") {
+    checkCapture("game-ui", gameUiCapture(), 2202593522406481215ull);
+}
+
+TEST_CASE("RenderRegression: skinning capture matches its reference") {
+    checkCapture("skinning", skinningCapture(), 7791851272260930333ull);
+}
+
+TEST_CASE("RenderRegression: masked edge capture matches its reference") {
+    checkCapture("masked-edge", maskedEdgeCapture(), 10485245353354089817ull);
+}
+
+TEST_CASE("RenderRegression: blending order capture matches its reference") {
+    checkCapture("blending-order", blendingOrderCapture(), 12337063544351879896ull);
+}
+
+TEST_CASE("RenderRegression: local lights capture matches its reference") {
+    checkCapture("local-lights", localLightsCapture(), 18186517676014945946ull);
+}
+
+TEST_CASE("RenderRegression: reflection probes capture matches its reference") {
+    checkCapture("reflection-probes", reflectionProbeCapture(), 14217588637060545381ull);
+}
+
+TEST_CASE("RenderRegression: hdr environment capture matches its reference") {
+    checkCapture("hdr-environment", hdrEnvironmentCapture(), 9140372891774060003ull);
+}
+
+TEST_CASE("RenderRegression: quality fallbacks capture matches its reference") {
+    checkCapture("quality-fallbacks", qualityFallbackCapture(), 7156661786147691523ull);
+}
+
+TEST_CASE("RenderRegression: production asset fallbacks capture matches its reference") {
+    checkCapture("production-asset-fallbacks", productionAssetFallbackCapture(), 6757895526051028569ull);
+}
+
+TEST_SUITE_END();

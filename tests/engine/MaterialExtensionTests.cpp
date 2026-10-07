@@ -7,25 +7,20 @@
 #include "engine/graphics/EnvironmentLighting.hpp"
 #include "engine/graphics/MaterialRecord.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
-#include <iostream>
 #include <limits>
 #include <string>
 #include <string_view>
 
-namespace {
-int failures = 0;
+using testsupport::TempDirectory;
+using testsupport::writeText;
 
-void expect(bool condition, std::string_view message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 bool near(float first, float second, float tolerance = 1.0e-5f) {
     return std::abs(first - second) <= tolerance;
@@ -113,86 +108,8 @@ bool hasUsage(const AssetManager& assets, TextureHandle handle, TextureUsage usa
     return texture != nullptr && texture->usage == usage;
 }
 
-void testImport() {
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith-material-extension-tests";
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
-    std::filesystem::create_directories(root);
-    const std::filesystem::path path = root / "extensions.gltf";
-    {
-        std::ofstream file(path, std::ios::binary);
-        file << extensionModel();
-    }
-    for (int index = 0; index < extensionImageCount; ++index) {
-        std::ofstream image(root / ("slot" + std::to_string(index) + ".png"), std::ios::binary);
-        image.write(reinterpret_cast<const char*>(pixelPng), sizeof(pixelPng));
-    }
-
-    AssetManager assets;
-    const AssetLoadResult<ModelHandle> loaded = assets.loadModel(path);
-    expect(static_cast<bool>(loaded), "a model using every material extension loads: " + loaded.error);
-    const MaterialAsset* layered = primitiveMaterial(assets, loaded.handle, 0);
-    const MaterialAsset* plain = primitiveMaterial(assets, loaded.handle, 1);
-    expect(layered && plain, "both primitives keep their materials");
-    if (layered) {
-        expect(near(layered->ior, 1.33f), "KHR_materials_ior imports the index of refraction");
-        expect(near(layered->clearcoat.factor, 0.8f) && near(layered->clearcoat.roughness, 0.1f) &&
-                   near(layered->clearcoat.normalScale, 0.5f),
-               "clearcoat factors and normal scale import");
-        expect(near(layered->sheen.color, {0.9f, 0.4f, 0.2f}) && near(layered->sheen.roughness, 0.3f),
-               "sheen color and roughness import");
-        expect(near(layered->specular.factor, 0.7f) && near(layered->specular.color, {1.0f, 0.5f, 0.25f}),
-               "specular factor and color import");
-        expect(near(layered->transmission.factor, 0.9f) && near(layered->transmission.thickness, 0.25f) &&
-                   near(layered->transmission.attenuationColor, {0.5f, 0.25f, 1.0f}) &&
-                   near(layered->transmission.attenuationDistance, 2.0f),
-               "transmission and volume factors import");
-        expect(layered->translucent(), "transmissive materials draw after opaque geometry");
-        expect(hasUsage(assets, layered->clearcoat.texture, TextureUsage::Data) &&
-                   hasUsage(assets, layered->clearcoat.roughnessTexture, TextureUsage::Data) &&
-                   hasUsage(assets, layered->clearcoat.normalTexture, TextureUsage::Normal),
-               "clearcoat textures are linear data and a normal map");
-        expect(hasUsage(assets, layered->sheen.colorTexture, TextureUsage::Color) &&
-                   hasUsage(assets, layered->sheen.roughnessTexture, TextureUsage::Data),
-               "sheen color is sRGB color and its roughness linear data");
-        expect(hasUsage(assets, layered->specular.texture, TextureUsage::Data) &&
-                   hasUsage(assets, layered->specular.colorTexture, TextureUsage::Color),
-               "specular strength is linear data and its color sRGB color");
-        expect(hasUsage(assets, layered->transmission.texture, TextureUsage::Data),
-               "the transmission texture is linear data");
-    }
-    if (plain) {
-        const MaterialAsset defaults;
-        expect(near(plain->ior, 1.5f) && plain->clearcoat.factor == 0.0f && plain->sheen.color == glm::vec3(0.0f) &&
-                   plain->specular.factor == 1.0f && plain->specular.color == glm::vec3(1.0f) &&
-                   plain->transmission.factor == 0.0f && plain->transmission.thickness == 0.0f &&
-                   std::isinf(plain->transmission.attenuationDistance) && !plain->clearcoat.texture &&
-                   !plain->sheen.colorTexture && !plain->specular.texture && !plain->transmission.texture,
-               "materials without extensions keep the neutral defaults");
-        expect(!plain->translucent(), "an opaque material without transmission is not translucent");
-        expect(materialLobeFlags(*plain) == 0u && materialLobeFlags(defaults) == 0u,
-               "materials without extensions enable no lobes");
-    }
-
-    if (layered) {
-        // A leased material keeps its extension textures through forced collection.
-        const MaterialHandle handle =
-            assets.model(loaded.handle)
-                ? assets.mesh(assets.model(loaded.handle)->nodes[0].mesh)->primitives[0].material
-                : MaterialHandle{};
-        const AssetLease<MaterialHandle> lease = assets.lease(handle);
-        const MaterialAsset extensionTextures = *layered;
-        assets.collectUnused(true);
-        bool kept = static_cast<bool>(lease);
-        for (TextureHandle texture : extensionTextures.textures()) {
-            kept &= !texture || assets.texture(texture) != nullptr;
-        }
-        expect(kept, "a material lease keeps every extension texture resident");
-    }
-
-    const ModelTextureSourcesResult sources = collectModelTextureSources(path);
-    expect(static_cast<bool>(sources), "texture source collection accepts extension textures");
-    std::filesystem::remove_all(root, error);
+std::string_view pixelPngBytes() {
+    return {reinterpret_cast<const char*>(pixelPng), sizeof(pixelPng)};
 }
 
 std::string base64(const unsigned char* bytes, size_t size) {
@@ -213,7 +130,7 @@ std::string base64(const unsigned char* bytes, size_t size) {
 // A quad whose only material samples a PNG embedded as a data URI. Bytes past
 // the PNG's end chunk are ignored by the decoder but change the base64
 // padding, so trailingBytes selects the padding case.
-void testEmbeddedImage(size_t trailingBytes, std::string_view label) {
+void checkEmbeddedImage(size_t trailingBytes, std::string_view label) {
     std::string png(reinterpret_cast<const char*>(pixelPng), sizeof(pixelPng));
     png.append(trailingBytes, '\0');
     const std::string uri =
@@ -237,36 +154,121 @@ void testEmbeddedImage(size_t trailingBytes, std::string_view label) {
     { "bufferView": 1, "componentType": 5123, "count": 12, "type": "SCALAR" }
   ]
 })";
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith-embedded-image-tests";
-    std::error_code error;
-    std::filesystem::create_directories(root, error);
+    const TempDirectory root("embedded-image");
     const std::filesystem::path path = root / ("embedded" + std::to_string(trailingBytes) + ".gltf");
-    {
-        std::ofstream file(path, std::ios::binary);
-        file << model;
-    }
+    writeText(path, model);
     AssetManager assets;
     const AssetLoadResult<ModelHandle> loaded = assets.loadModel(path);
     const std::string prefix = "a data-URI image " + std::string(label);
-    expect(static_cast<bool>(loaded), prefix + " loads: " + loaded.error);
+    CHECK_MESSAGE(static_cast<bool>(loaded), (prefix + " loads: " + loaded.error));
     const MaterialAsset* material = loaded ? primitiveMaterial(assets, loaded.handle, 0) : nullptr;
     const TextureAsset* texture = material ? assets.texture(material->baseColorTexture) : nullptr;
-    expect(texture != nullptr && texture->width == 1 && texture->height == 1,
-           prefix + " decodes to the embedded 1x1 texture");
-    std::filesystem::remove_all(root, error);
+    CHECK_MESSAGE((texture != nullptr && texture->width == 1 && texture->height == 1),
+                  (prefix + " decodes to the embedded 1x1 texture"));
 }
 
-void testRecordPacking() {
+} // namespace
+
+TEST_SUITE_BEGIN("MaterialExtension");
+
+TEST_CASE("MaterialExtension: import") {
+    const TempDirectory root("material-extensions");
+    const std::filesystem::path path = root / "extensions.gltf";
+    writeText(path, extensionModel());
+    for (int index = 0; index < extensionImageCount; ++index) {
+        writeText(root / ("slot" + std::to_string(index) + ".png"), pixelPngBytes());
+    }
+
+    AssetManager assets;
+    const AssetLoadResult<ModelHandle> loaded = assets.loadModel(path);
+    CHECK_MESSAGE(static_cast<bool>(loaded), ("a model using every material extension loads: " + loaded.error));
+    const MaterialAsset* layered = primitiveMaterial(assets, loaded.handle, 0);
+    const MaterialAsset* plain = primitiveMaterial(assets, loaded.handle, 1);
+    CHECK_MESSAGE((layered && plain), "both primitives keep their materials");
+    if (layered) {
+        CHECK_MESSAGE(near(layered->ior, 1.33f), "KHR_materials_ior imports the index of refraction");
+        CHECK_MESSAGE((near(layered->clearcoat.factor, 0.8f) && near(layered->clearcoat.roughness, 0.1f) &&
+                       near(layered->clearcoat.normalScale, 0.5f)),
+                      "clearcoat factors and normal scale import");
+        CHECK_MESSAGE((near(layered->sheen.color, {0.9f, 0.4f, 0.2f}) && near(layered->sheen.roughness, 0.3f)),
+                      "sheen color and roughness import");
+        CHECK_MESSAGE((near(layered->specular.factor, 0.7f) && near(layered->specular.color, {1.0f, 0.5f, 0.25f})),
+                      "specular factor and color import");
+        CHECK_MESSAGE((near(layered->transmission.factor, 0.9f) && near(layered->transmission.thickness, 0.25f) &&
+                       near(layered->transmission.attenuationColor, {0.5f, 0.25f, 1.0f}) &&
+                       near(layered->transmission.attenuationDistance, 2.0f)),
+                      "transmission and volume factors import");
+        CHECK_MESSAGE(layered->translucent(), "transmissive materials draw after opaque geometry");
+        CHECK_MESSAGE((hasUsage(assets, layered->clearcoat.texture, TextureUsage::Data) &&
+                       hasUsage(assets, layered->clearcoat.roughnessTexture, TextureUsage::Data) &&
+                       hasUsage(assets, layered->clearcoat.normalTexture, TextureUsage::Normal)),
+                      "clearcoat textures are linear data and a normal map");
+        CHECK_MESSAGE((hasUsage(assets, layered->sheen.colorTexture, TextureUsage::Color) &&
+                       hasUsage(assets, layered->sheen.roughnessTexture, TextureUsage::Data)),
+                      "sheen color is sRGB color and its roughness linear data");
+        CHECK_MESSAGE((hasUsage(assets, layered->specular.texture, TextureUsage::Data) &&
+                       hasUsage(assets, layered->specular.colorTexture, TextureUsage::Color)),
+                      "specular strength is linear data and its color sRGB color");
+        CHECK_MESSAGE(hasUsage(assets, layered->transmission.texture, TextureUsage::Data),
+                      "the transmission texture is linear data");
+    }
+    if (plain) {
+        const MaterialAsset defaults;
+        CHECK_MESSAGE((near(plain->ior, 1.5f) && plain->clearcoat.factor == 0.0f &&
+                       plain->sheen.color == glm::vec3(0.0f) && plain->specular.factor == 1.0f &&
+                       plain->specular.color == glm::vec3(1.0f) && plain->transmission.factor == 0.0f &&
+                       plain->transmission.thickness == 0.0f && std::isinf(plain->transmission.attenuationDistance) &&
+                       !plain->clearcoat.texture && !plain->sheen.colorTexture && !plain->specular.texture &&
+                       !plain->transmission.texture),
+                      "materials without extensions keep the neutral defaults");
+        CHECK_MESSAGE(!plain->translucent(), "an opaque material without transmission is not translucent");
+        CHECK_MESSAGE((materialLobeFlags(*plain) == 0u && materialLobeFlags(defaults) == 0u),
+                      "materials without extensions enable no lobes");
+    }
+
+    if (layered) {
+        // A leased material keeps its extension textures through forced collection.
+        const MaterialHandle handle =
+            assets.model(loaded.handle)
+                ? assets.mesh(assets.model(loaded.handle)->nodes[0].mesh)->primitives[0].material
+                : MaterialHandle{};
+        const AssetLease<MaterialHandle> lease = assets.lease(handle);
+        const MaterialAsset extensionTextures = *layered;
+        assets.collectUnused(true);
+        bool kept = static_cast<bool>(lease);
+        for (TextureHandle texture : extensionTextures.textures()) {
+            kept &= !texture || assets.texture(texture) != nullptr;
+        }
+        CHECK_MESSAGE(kept, "a material lease keeps every extension texture resident");
+    }
+
+    const ModelTextureSourcesResult sources = collectModelTextureSources(path);
+    CHECK_MESSAGE(static_cast<bool>(sources), "texture source collection accepts extension textures");
+}
+
+TEST_CASE("MaterialExtension: embedded image") {
+    SUBCASE("without base64 padding") {
+        checkEmbeddedImage(0, "without base64 padding");
+    }
+    SUBCASE("with two padding characters") {
+        checkEmbeddedImage(1, "with two padding characters");
+    }
+    SUBCASE("with one padding character") {
+        checkEmbeddedImage(2, "with one padding character");
+    }
+}
+
+TEST_CASE("MaterialExtension: record packing") {
     const MaterialAsset defaults;
     const MaterialRecord neutral = packMaterialRecord(defaults, {});
-    expect(neutral.surface.z == 1.5f && neutral.surface.w == 0.0f && neutral.extraTextures.y == 0u &&
-               neutral.specular == glm::vec4(1.0f) && neutral.clearcoat.x == 0.0f && neutral.sheen == glm::vec4(0.0f) &&
-               neutral.volume == glm::vec4(0.0f),
-           "the neutral record keeps the metallic-roughness model");
-    expect(offsetof(MaterialRecord, surface) == 48 && offsetof(MaterialRecord, extraTextures) == 80 &&
-               offsetof(MaterialRecord, clearcoat) == 96 && offsetof(MaterialRecord, volume) == 144 &&
-               offsetof(MaterialRecord, layerTextures) == 176,
-           "record members sit at their std430 offsets");
+    CHECK_MESSAGE((neutral.surface.z == 1.5f && neutral.surface.w == 0.0f && neutral.extraTextures.y == 0u &&
+                   neutral.specular == glm::vec4(1.0f) && neutral.clearcoat.x == 0.0f &&
+                   neutral.sheen == glm::vec4(0.0f) && neutral.volume == glm::vec4(0.0f)),
+                  "the neutral record keeps the metallic-roughness model");
+    CHECK_MESSAGE((offsetof(MaterialRecord, surface) == 48 && offsetof(MaterialRecord, extraTextures) == 80 &&
+                   offsetof(MaterialRecord, clearcoat) == 96 && offsetof(MaterialRecord, volume) == 144 &&
+                   offsetof(MaterialRecord, layerTextures) == 176),
+                  "record members sit at their std430 offsets");
 
     MaterialAsset layered;
     layered.ior = 0.5f;
@@ -296,25 +298,26 @@ void testRecordPacking() {
     const MaterialRecord record = packMaterialRecord(layered, slots);
     const uint32_t expectedFlags = material_lobes::clearcoat | material_lobes::sheen | material_lobes::transmission |
                                    material_lobes::specularTextures | material_lobes::volume;
-    expect(record.extraTextures.y == expectedFlags, "every configured lobe sets its flag");
-    expect(record.surface.z == 1.0f && record.clearcoat.x == 1.0f && record.specular.w == 1.0f,
-           "out-of-range ior, clearcoat and specular factors are clamped");
-    expect(near(record.volume.r, std::log(2.0f) / 2.0f) && near(record.volume.g, 0.0f) &&
-               near(record.volume.b, std::log(4.0f) / 2.0f) && record.volume.w == 0.5f,
-           "volume attenuation packs as a per-unit coefficient with the thickness");
-    expect(record.textures == glm::uvec4(1, 2, 3, 4) && record.extraTextures.x == 5u && record.extraTextures.z == 13u &&
-               record.lobeTextures == glm::uvec4(6, 7, 8, 9) && record.layerTextures == glm::uvec4(10, 11, 12, 0),
-           "texture slots land in their record lanes");
+    CHECK_MESSAGE(record.extraTextures.y == expectedFlags, "every configured lobe sets its flag");
+    CHECK_MESSAGE((record.surface.z == 1.0f && record.clearcoat.x == 1.0f && record.specular.w == 1.0f),
+                  "out-of-range ior, clearcoat and specular factors are clamped");
+    CHECK_MESSAGE((near(record.volume.r, std::log(2.0f) / 2.0f) && near(record.volume.g, 0.0f) &&
+                   near(record.volume.b, std::log(4.0f) / 2.0f) && record.volume.w == 0.5f),
+                  "volume attenuation packs as a per-unit coefficient with the thickness");
+    CHECK_MESSAGE((record.textures == glm::uvec4(1, 2, 3, 4) && record.extraTextures.x == 5u &&
+                   record.extraTextures.z == 13u && record.lobeTextures == glm::uvec4(6, 7, 8, 9) &&
+                   record.layerTextures == glm::uvec4(10, 11, 12, 0)),
+                  "texture slots land in their record lanes");
 
     MaterialAsset thin = layered;
     thin.transmission.thickness = 0.0f;
     thin.transmission.attenuationDistance = std::numeric_limits<float>::infinity();
     const MaterialRecord thinRecord = packMaterialRecord(thin, slots);
-    expect((thinRecord.extraTextures.y & material_lobes::volume) == 0u && thinRecord.volume == glm::vec4(0.0f),
-           "thin-walled transmission has no volume");
+    CHECK_MESSAGE(((thinRecord.extraTextures.y & material_lobes::volume) == 0u && thinRecord.volume == glm::vec4(0.0f)),
+                  "thin-walled transmission has no volume");
 }
 
-void testSheenAlbedo() {
+TEST_CASE("MaterialExtension: sheen albedo") {
     using environment_lighting::integrateSheenAlbedo;
     bool bounded = true;
     for (float roughness : {0.05f, 0.3f, 0.6f, 1.0f}) {
@@ -323,24 +326,25 @@ void testSheenAlbedo() {
             bounded &= std::isfinite(albedo) && albedo >= 0.0f && albedo <= 1.0f;
         }
     }
-    expect(bounded, "sheen albedo stays within [0, 1]");
-    expect(integrateSheenAlbedo(0.1f, 0.5f) > integrateSheenAlbedo(1.0f, 0.5f),
-           "sheen reflects most at grazing angles");
-    expect(integrateSheenAlbedo(1.0f, 1.0f) > integrateSheenAlbedo(1.0f, 0.2f),
-           "rough sheen reflects more head-on than smooth sheen");
+    CHECK_MESSAGE(bounded, "sheen albedo stays within [0, 1]");
+    CHECK_MESSAGE(integrateSheenAlbedo(0.1f, 0.5f) > integrateSheenAlbedo(1.0f, 0.5f),
+                  "sheen reflects most at grazing angles");
+    CHECK_MESSAGE(integrateSheenAlbedo(1.0f, 1.0f) > integrateSheenAlbedo(1.0f, 0.2f),
+                  "rough sheen reflects more head-on than smooth sheen");
     // Reference from a dense (64 x 128) integration of the same lobe.
-    expect(near(integrateSheenAlbedo(1.0f, 1.0f), 0.164f, 0.01f), "white rough sheen head-on reflects about 16%");
+    CHECK_MESSAGE(near(integrateSheenAlbedo(1.0f, 1.0f), 0.164f, 0.01f),
+                  "white rough sheen head-on reflects about 16%");
 }
 
-void testGallery() {
+TEST_CASE("MaterialExtension: gallery") {
     const std::filesystem::path path =
         std::filesystem::path(ZENITH_ASSET_DIR) / "showcase/materials/material_gallery.gltf";
     AssetManager assets;
     const AssetLoadResult<ModelHandle> loaded = assets.loadModel(path);
-    expect(static_cast<bool>(loaded), "the material gallery loads: " + loaded.error);
+    CHECK_MESSAGE(static_cast<bool>(loaded), ("the material gallery loads: " + loaded.error));
     const ModelAsset* model = assets.model(loaded.handle);
     const MeshAsset* mesh = model && !model->nodes.empty() ? assets.mesh(model->nodes[0].mesh) : nullptr;
-    expect(mesh && mesh->primitives.size() == 16, "the gallery has fifteen spheres and a backdrop");
+    CHECK_MESSAGE((mesh && mesh->primitives.size() == 16), "the gallery has fifteen spheres and a backdrop");
     if (!mesh) {
         return;
     }
@@ -352,12 +356,12 @@ void testGallery() {
             transmissive += material->transmission.factor > 0.0f ? 1u : 0u;
         }
     }
-    expect((seen & material_lobes::clearcoat) && (seen & material_lobes::sheen) &&
-               (seen & material_lobes::transmission) && (seen & material_lobes::volume),
-           "the gallery shows clearcoat, sheen, transmission and volume");
-    expect(transmissive == 3, "the gallery has clear, frosted and tinted glass");
+    CHECK_MESSAGE(((seen & material_lobes::clearcoat) && (seen & material_lobes::sheen) &&
+                   (seen & material_lobes::transmission) && (seen & material_lobes::volume)),
+                  "the gallery shows clearcoat, sheen, transmission and volume");
+    CHECK_MESSAGE(transmissive == 3, "the gallery has clear, frosted and tinted glass");
     const MaterialAsset* noSpecular = assets.material(mesh->primitives[8].material);
-    expect(noSpecular && noSpecular->specular.factor == 0.0f, "one sphere disables specular reflection");
+    CHECK_MESSAGE((noSpecular && noSpecular->specular.factor == 0.0f), "one sphere disables specular reflection");
     bool iorLadder = true;
     float previousIor = 0.0f;
     for (size_t index = 9; index < 15; ++index) {
@@ -365,22 +369,7 @@ void testGallery() {
         iorLadder &= material && material->ior > previousIor;
         previousIor = material ? material->ior : previousIor;
     }
-    expect(iorLadder && near(previousIor, 3.0f), "the back row ends in an increasing ior ladder");
+    CHECK_MESSAGE((iorLadder && near(previousIor, 3.0f)), "the back row ends in an increasing ior ladder");
 }
-} // namespace
 
-int main() {
-    testImport();
-    testEmbeddedImage(0, "without base64 padding");
-    testEmbeddedImage(1, "with two padding characters");
-    testEmbeddedImage(2, "with one padding character");
-    testRecordPacking();
-    testSheenAlbedo();
-    testGallery();
-    if (failures > 0) {
-        std::cerr << failures << " material extension test(s) failed\n";
-        return 1;
-    }
-    std::cout << "Material extension tests passed\n";
-    return 0;
-}
+TEST_SUITE_END();

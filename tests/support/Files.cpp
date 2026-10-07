@@ -35,4 +35,15 @@ void writeText(const std::filesystem::path& file, std::string_view text) {
     }
 }
 
+std::filesystem::path failureArtifactPath(std::string_view fileName) {
+#ifdef ZENITH_TEST_TEMP_DIR
+    const std::filesystem::path root = std::filesystem::path(ZENITH_TEST_TEMP_DIR) / "failures";
+#else
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith-test-failures";
+#endif
+    std::error_code ignored;
+    std::filesystem::create_directories(root, ignored);
+    return root / fileName;
+}
+
 } // namespace testsupport

@@ -1,27 +1,22 @@
 #include "engine/diagnostics/Logger.hpp"
 #include "engine/physics/PhysicsWorld.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
-#include <iostream>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("Physics");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 // A static floor and a dynamic box three metres above it; returns the box.
 Entity addFallingBox(Scene& scene) {
@@ -47,7 +42,7 @@ struct WorldUnderTest {
 
     WorldUnderTest() {
         box = addFallingBox(scene);
-        expect(static_cast<bool>(physics->init()), "each of several physics worlds initializes");
+        CHECK_MESSAGE(static_cast<bool>(physics->init()), "each of several physics worlds initializes");
     }
 
     bool stepAndDraw(const AssetManager& assets, int steps) {
@@ -68,31 +63,31 @@ struct WorldUnderTest {
 // Worlds share Jolt's process-wide runtime (factory, registered types, debug
 // renderer): any number may run at once, and shutting one down in any order
 // leaves the others stepping and drawing.
-void testWorldsShareJoltRuntime() {
+TEST_CASE("Physics: worlds share jolt runtime") {
     AssetManager assets;
     for (const bool firstShutsDownFirst : {true, false}) {
         WorldUnderTest first;
         WorldUnderTest second;
-        expect(first.stepAndDraw(assets, 10) && second.stepAndDraw(assets, 10),
-               "two worlds step and draw debug geometry at the same time");
+        CHECK_MESSAGE((first.stepAndDraw(assets, 10) && second.stepAndDraw(assets, 10)),
+                      "two worlds step and draw debug geometry at the same time");
         WorldUnderTest& closed = firstShutsDownFirst ? first : second;
         WorldUnderTest& survivor = firstShutsDownFirst ? second : first;
         const float before = survivor.boxHeight();
         closed.physics->shutdown();
         closed.physics.reset();
-        expect(survivor.stepAndDraw(assets, 30) && survivor.boxHeight() < before,
-               "a world keeps simulating and drawing after another world shuts down");
+        CHECK_MESSAGE((survivor.stepAndDraw(assets, 30) && survivor.boxHeight() < before),
+                      "a world keeps simulating and drawing after another world shuts down");
         WorldUnderTest third;
-        expect(third.stepAndDraw(assets, 5) && survivor.stepAndDraw(assets, 5),
-               "a world created after another shut down shares the live runtime");
+        CHECK_MESSAGE((third.stepAndDraw(assets, 5) && survivor.stepAndDraw(assets, 5)),
+                      "a world created after another shut down shares the live runtime");
     }
     // Every world above is gone, so the runtime was destroyed; a new world
     // creates it again.
     WorldUnderTest fresh;
-    expect(fresh.stepAndDraw(assets, 5), "a world initializes again after every world shut down");
+    CHECK_MESSAGE(fresh.stepAndDraw(assets, 5), "a world initializes again after every world shut down");
     fresh.physics->shutdown();
-    expect(static_cast<bool>(fresh.physics->init()) && fresh.stepAndDraw(assets, 5),
-           "a world shut down and initialized again steps and draws");
+    CHECK_MESSAGE((static_cast<bool>(fresh.physics->init()) && fresh.stepAndDraw(assets, 5)),
+                  "a world shut down and initialized again steps and draws");
 }
 
 LoggerConfig quietLogger() {
@@ -128,10 +123,11 @@ Entity addBox(Scene& scene, const glm::vec3& position, const char* name = "Box")
 
 // A body that cannot be built is left out with one warning naming it, and the
 // rest of the world keeps simulating, even though every audit retries it.
-void testUnbuildableBodiesAreSkipped() {
+TEST_CASE("Physics: unbuildable bodies are skipped") {
     Logger logger(quietLogger());
     PhysicsWorld physics(&logger);
-    expect(static_cast<bool>(physics.init({.debugAuditInterval = 1})), "physics initializes with frequent audits");
+    CHECK_MESSAGE(static_cast<bool>(physics.init({.debugAuditInterval = 1})),
+                  "physics initializes with frequent audits");
     Scene scene;
     AssetManager assets;
     const Entity box = addFallingBox(scene);
@@ -145,34 +141,34 @@ void testUnbuildableBodiesAreSkipped() {
     scene.registry().emplace<CharacterControllerComponent>(character, CharacterControllerComponent{.radius = 0.0f});
 
     const float startHeight = scene.registry().get<TransformComponent>(box).local[3].y;
-    expect(stepFor(physics, scene, assets, 30), "steps succeed while some bodies cannot be built");
-    expect(scene.registry().get<TransformComponent>(box).local[3].y < startHeight,
-           "the other bodies keep simulating next to a body that cannot be built");
-    expect(physics.stats().skippedBodies == 3, "skipped bodies and characters are counted in the stats");
-    expect(physicsWarnings(logger, "'Dynamic Mesh'") == 1 && physicsWarnings(logger, "'Flattened'") == 1 &&
-               physicsWarnings(logger, "'Pinhead'") == 1,
-           "each skipped body is reported once, by name, despite retries");
-    expect(!physics.refreshBody(dynamicMesh, scene, assets),
-           "an explicit refresh still reports a body that cannot be built");
+    CHECK_MESSAGE(stepFor(physics, scene, assets, 30), "steps succeed while some bodies cannot be built");
+    CHECK_MESSAGE(scene.registry().get<TransformComponent>(box).local[3].y < startHeight,
+                  "the other bodies keep simulating next to a body that cannot be built");
+    CHECK_MESSAGE(physics.stats().skippedBodies == 3, "skipped bodies and characters are counted in the stats");
+    CHECK_MESSAGE((physicsWarnings(logger, "'Dynamic Mesh'") == 1 && physicsWarnings(logger, "'Flattened'") == 1 &&
+                   physicsWarnings(logger, "'Pinhead'") == 1),
+                  "each skipped body is reported once, by name, despite retries");
+    CHECK_MESSAGE(!physics.refreshBody(dynamicMesh, scene, assets),
+                  "an explicit refresh still reports a body that cannot be built");
 
     scene.registry().get<TransformComponent>(flattened).local =
         glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 3.0f, 0.0f));
     scene.markTransformDirty(flattened);
     scene.markPhysicsDirty(flattened);
     scene.registry().get<CharacterControllerComponent>(character).radius = 0.4f;
-    expect(stepFor(physics, scene, assets, 1) && physics.stats().skippedBodies == 1,
-           "fixed bodies and characters are built on a later step");
+    CHECK_MESSAGE((stepFor(physics, scene, assets, 1) && physics.stats().skippedBodies == 1),
+                  "fixed bodies and characters are built on a later step");
     PhysicsRayHit hit;
-    expect(physics.raycast({2.0f, 10.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 20.0f, hit) && hit.entity == flattened,
-           "a body built after being skipped joins the simulation");
+    CHECK_MESSAGE((physics.raycast({2.0f, 10.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 20.0f, hit) && hit.entity == flattened),
+                  "a body built after being skipped joins the simulation");
 }
 
 // Bodies beyond maxBodies are skipped with one warning per episode and built
 // once removals make room.
-void testBodyCapacityIsClamped() {
+TEST_CASE("Physics: body capacity is clamped") {
     Logger logger(quietLogger());
     PhysicsWorld physics(&logger);
-    expect(static_cast<bool>(physics.init({.maxBodies = 4})), "physics initializes with four bodies");
+    CHECK_MESSAGE(static_cast<bool>(physics.init({.maxBodies = 4})), "physics initializes with four bodies");
     Scene scene;
     AssetManager assets;
     addFallingBox(scene);
@@ -180,28 +176,29 @@ void testBodyCapacityIsClamped() {
     for (int index = 0; index < 4; ++index) {
         boxes.push_back(addBox(scene, glm::vec3(static_cast<float>(index) * 2.0f, 3.0f, 2.0f)));
     }
-    expect(stepFor(physics, scene, assets, 10), "steps succeed beyond the body capacity");
-    expect(physics.stats().skippedBodies == 2 && physics.stats().bodies == 4,
-           "bodies beyond the capacity are skipped and counted");
-    expect(physicsWarnings(logger, "body capacity") == 1, "the body capacity is reported once per episode");
+    CHECK_MESSAGE(stepFor(physics, scene, assets, 10), "steps succeed beyond the body capacity");
+    CHECK_MESSAGE((physics.stats().skippedBodies == 2 && physics.stats().bodies == 4),
+                  "bodies beyond the capacity are skipped and counted");
+    CHECK_MESSAGE(physicsWarnings(logger, "body capacity") == 1, "the body capacity is reported once per episode");
 
     scene.destroyEntity(boxes[0]);
     scene.destroyEntity(boxes[1]);
-    expect(stepFor(physics, scene, assets, 1) && physics.stats().skippedBodies == 0 && physics.stats().bodies == 4,
-           "skipped bodies are built once removals make room");
+    CHECK_MESSAGE(
+        (stepFor(physics, scene, assets, 1) && physics.stats().skippedBodies == 0 && physics.stats().bodies == 4),
+        "skipped bodies are built once removals make room");
     scene.markPhysicsDirty(addBox(scene, glm::vec3(0.0f, 6.0f, 6.0f)));
-    expect(stepFor(physics, scene, assets, 5) && physics.stats().skippedBodies == 1,
-           "a new body over the capacity is skipped again");
-    expect(physicsWarnings(logger, "body capacity") == 2, "a new overflow episode is reported again");
+    CHECK_MESSAGE((stepFor(physics, scene, assets, 5) && physics.stats().skippedBodies == 1),
+                  "a new body over the capacity is skipped again");
+    CHECK_MESSAGE(physicsWarnings(logger, "body capacity") == 2, "a new overflow episode is reported again");
 }
 
 // Running out of contact capacity leaves contacts unresolved but keeps the
 // step going, with one warning per episode.
-void testContactCapacityIsAWarning() {
+TEST_CASE("Physics: contact capacity is a warning") {
     Logger logger(quietLogger());
     PhysicsWorld physics(&logger);
-    expect(static_cast<bool>(physics.init({.maxContactConstraints = 4})),
-           "physics initializes with tiny contact caches");
+    CHECK_MESSAGE(static_cast<bool>(physics.init({.maxContactConstraints = 4})),
+                  "physics initializes with tiny contact caches");
     Scene scene;
     AssetManager assets;
     addFallingBox(scene);
@@ -212,24 +209,25 @@ void testContactCapacityIsAWarning() {
     }
     bool exceeded = false;
     for (int step = 0; step < 30; ++step) {
-        expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
-               "a step that runs out of contact capacity still succeeds");
+        CHECK_MESSAGE(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
+                      "a step that runs out of contact capacity still succeeds");
         exceeded |= physics.stats().contactCapacityExceeded;
     }
-    expect(exceeded, "an exhausted contact capacity is reported in the stats");
-    expect(physicsWarnings(logger, "ran out of") == 1, "an exhausted contact capacity is logged once per episode");
+    CHECK_MESSAGE(exceeded, "an exhausted contact capacity is reported in the stats");
+    CHECK_MESSAGE(physicsWarnings(logger, "ran out of") == 1,
+                  "an exhausted contact capacity is logged once per episode");
 }
 
-void testConfigurationLimitsAreValidated() {
+TEST_CASE("Physics: configuration limits are validated") {
     PhysicsWorld physics;
-    expect(!physics.init({.maxContactConstraints = 65536, .temporaryAllocatorBytes = 1024 * 1024}),
-           "a temporary allocator too small for the contact constraints is rejected");
-    expect(!physics.init({.maxBodies = 0}), "a zero body capacity is rejected");
+    CHECK_MESSAGE(!physics.init({.maxContactConstraints = 65536, .temporaryAllocatorBytes = 1024 * 1024}),
+                  "a temporary allocator too small for the contact constraints is rejected");
+    CHECK_MESSAGE(!physics.init({.maxBodies = 0}), "a zero body capacity is rejected");
 }
 
 // Contact and trigger events sort by scene ids and type, whatever order they
 // arrive in.
-void testEventOrderIsByScene() {
+TEST_CASE("Physics: event order is by scene") {
     const auto contact = [](ContactEventType type, uint64_t first, uint64_t second, float normalX = 0.0f) {
         return ContactEvent{.type = type,
                             .normal = {normalX, 0.0f, 0.0f},
@@ -250,7 +248,7 @@ void testEventOrderIsByScene() {
             shuffled[index].type == expected[index].type && shuffled[index].firstId == expected[index].firstId &&
             shuffled[index].secondId == expected[index].secondId && shuffled[index].normal == expected[index].normal;
     }
-    expect(contactsMatch, "contacts order by the pair's lower then higher scene id, type, first id, and normal");
+    CHECK_MESSAGE(contactsMatch, "contacts order by the pair's lower then higher scene id, type, first id, and normal");
 
     const auto trigger = [](TriggerEventType type, uint64_t sensor, uint64_t other) {
         return TriggerEvent{.type = type, .sensorId = SceneEntityId{sensor}, .otherId = SceneEntityId{other}};
@@ -259,16 +257,16 @@ void testEventOrderIsByScene() {
         trigger(TriggerEventType::Exited, 5, 1), trigger(TriggerEventType::Entered, 2, 9),
         trigger(TriggerEventType::Entered, 5, 1), trigger(TriggerEventType::Entered, 2, 3)};
     std::ranges::sort(triggers, triggerEventPrecedes);
-    expect(triggers[0].otherId.value == 3 && triggers[1].otherId.value == 9 &&
-               triggers[2].type == TriggerEventType::Entered && triggers[3].type == TriggerEventType::Exited,
-           "triggers order by sensor id, other id, then Entered before Exited");
+    CHECK_MESSAGE((triggers[0].otherId.value == 3 && triggers[1].otherId.value == 9 &&
+                   triggers[2].type == TriggerEventType::Entered && triggers[3].type == TriggerEventType::Exited),
+                  "triggers order by sensor id, other id, then Entered before Exited");
 }
 
 // A contact carries a point where the bodies touch: a box landing on a floor
 // touches it at the floor's top.
-void testContactPoints() {
+TEST_CASE("Physics: contact points") {
     PhysicsWorld physics;
-    expect(static_cast<bool>(physics.init()), "the contact point world initializes");
+    CHECK_MESSAGE(static_cast<bool>(physics.init()), "the contact point world initializes");
     Scene scene;
     AssetManager assets;
     const Entity floor = scene.createEntity("Floor");
@@ -278,17 +276,17 @@ void testContactPoints() {
     addBox(scene, {1.0f, 1.0f, 2.0f});
     std::optional<ContactEvent> begin;
     for (int step = 0; step < 120 && !begin; ++step) {
-        expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
-               "the contact point world steps");
+        CHECK_MESSAGE(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
+                      "the contact point world steps");
         for (const ContactEvent& contact : physics.contactEvents()) {
             if (contact.type == ContactEventType::Begin) {
                 begin = contact;
             }
         }
     }
-    expect(begin.has_value() && std::abs(begin->point.y) < 0.1f && std::abs(begin->point.x - 1.0f) <= 0.55f &&
-               std::abs(begin->point.z - 2.0f) <= 0.55f,
-           "a contact's point is where the box meets the floor");
+    CHECK_MESSAGE((begin.has_value() && std::abs(begin->point.y) < 0.1f && std::abs(begin->point.x - 1.0f) <= 0.55f &&
+                   std::abs(begin->point.z - 2.0f) <= 0.55f),
+                  "a contact's point is where the box meets the floor");
     physics.shutdown();
 }
 
@@ -306,7 +304,7 @@ struct TriggerRecord {
 // events of every step until the boxes leave.
 std::vector<TriggerRecord> simultaneousTriggerEvents(std::span<const uint32_t> zoneOrder) {
     PhysicsWorld physics;
-    expect(static_cast<bool>(physics.init()), "the trigger order world initializes");
+    CHECK_MESSAGE(static_cast<bool>(physics.init()), "the trigger order world initializes");
     Scene scene;
     AssetManager assets;
     for (const uint32_t zone : zoneOrder) {
@@ -315,9 +313,9 @@ std::vector<TriggerRecord> simultaneousTriggerEvents(std::span<const uint32_t> z
         Entity box = entt::null;
         // Sensor ids descend while box ids ascend, so neither creation order
         // nor one id order matches the other.
-        expect(scene.createEntityWithId(SceneEntityId{100 - zone}, "Sensor", sensor).success &&
-                   scene.createEntityWithId(SceneEntityId{200 + zone}, "Box", box).success,
-               "trigger order entities are created with their ids");
+        CHECK_MESSAGE((scene.createEntityWithId(SceneEntityId{100 - zone}, "Sensor", sensor).success &&
+                       scene.createEntityWithId(SceneEntityId{200 + zone}, "Box", box).success),
+                      "trigger order entities are created with their ids");
         scene.registry().get<TransformComponent>(sensor).local = glm::translate(glm::mat4(1.0f), center);
         scene.registry().emplace<ColliderComponent>(sensor, BoxCollider{glm::vec3(1.0f)});
         scene.registry().emplace<RigidBodyComponent>(sensor, RigidBodyComponent{.sensor = true});
@@ -328,12 +326,12 @@ std::vector<TriggerRecord> simultaneousTriggerEvents(std::span<const uint32_t> z
     }
     std::vector<TriggerRecord> records;
     for (int step = 0; step < 90; ++step) {
-        expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
-               "the trigger order world steps");
+        CHECK_MESSAGE(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
+                      "the trigger order world steps");
         const std::span<const TriggerEvent> events = physics.triggerEvents();
-        expect(std::ranges::is_sorted(events, triggerEventPrecedes), "a step's trigger events are in order");
-        expect(std::ranges::is_sorted(physics.contactEvents(), contactEventPrecedes),
-               "a step's contact events are in order");
+        CHECK_MESSAGE(std::ranges::is_sorted(events, triggerEventPrecedes), "a step's trigger events are in order");
+        CHECK_MESSAGE(std::ranges::is_sorted(physics.contactEvents(), contactEventPrecedes),
+                      "a step's contact events are in order");
         for (const TriggerEvent& event : events) {
             records.push_back({event.type, event.sensorId.value, event.otherId.value});
         }
@@ -342,22 +340,22 @@ std::vector<TriggerRecord> simultaneousTriggerEvents(std::span<const uint32_t> z
     return records;
 }
 
-void testSimultaneousTriggersArriveInOrder() {
+TEST_CASE("Physics: simultaneous triggers arrive in order") {
     const std::array<uint32_t, 5> ascending{0, 1, 2, 3, 4};
     const std::array<uint32_t, 5> shuffled{3, 0, 4, 1, 2};
     const std::vector<TriggerRecord> first = simultaneousTriggerEvents(ascending);
     const std::vector<TriggerRecord> second = simultaneousTriggerEvents(shuffled);
-    expect(first.size() == 10, "every box enters and leaves its sensor");
-    expect(first.size() >= 5 && first[0] == TriggerRecord{TriggerEventType::Entered, 96, 204} &&
-               first[4] == TriggerRecord{TriggerEventType::Entered, 100, 200},
-           "simultaneous entries arrive by sensor scene id");
-    expect(first == second, "the trigger sequence does not depend on creation order");
+    CHECK_MESSAGE(first.size() == 10, "every box enters and leaves its sensor");
+    CHECK_MESSAGE((first.size() >= 5 && first[0] == TriggerRecord{TriggerEventType::Entered, 96, 204} &&
+                   first[4] == TriggerRecord{TriggerEventType::Entered, 100, 200}),
+                  "simultaneous entries arrive by sensor scene id");
+    CHECK_MESSAGE(first == second, "the trigger sequence does not depend on creation order");
 }
 } // namespace
 
-int main() {
+TEST_CASE("Physics: a falling box settles, answers queries and syncs queued lifecycle changes") {
     PhysicsWorld physics;
-    expect(static_cast<bool>(physics.init()), "physics world initializes");
+    CHECK_MESSAGE(static_cast<bool>(physics.init()), "physics world initializes");
 
     Scene scene;
     AssetManager assets;
@@ -379,27 +377,27 @@ int main() {
     bool sawContact = false;
     for (int i = 0; i < 180; ++i) {
         const PhysicsResult result = physics.step(scene, assets, physics.config().fixedTimeStep);
-        expect(static_cast<bool>(result), "physics step succeeds");
+        CHECK_MESSAGE(static_cast<bool>(result), "physics step succeeds");
         if (!result) {
             break;
         }
         sawContact |= !physics.contactEvents().empty();
     }
     const float settledHeight = scene.registry().get<TransformComponent>(box).local[3].y;
-    expect(settledHeight > 0.45f && settledHeight < 0.65f, "dynamic box settles on the floor");
-    expect(sawContact, "body contacts are exposed to gameplay code");
+    CHECK_MESSAGE((settledHeight > 0.45f && settledHeight < 0.65f), "dynamic box settles on the floor");
+    CHECK_MESSAGE(sawContact, "body contacts are exposed to gameplay code");
 
     PhysicsRayHit hit;
-    expect(physics.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, hit), "raycast hits a physics body");
-    expect(hit.entity == box || hit.entity == floor, "raycast resolves the hit to an ECS entity");
+    CHECK_MESSAGE(physics.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, hit), "raycast hits a physics body");
+    CHECK_MESSAGE((hit.entity == box || hit.entity == floor), "raycast resolves the hit to an ECS entity");
 
-    expect(physics.applyImpulse(box, {2.0f, 3.0f, 0.0f}), "impulse applies to a managed body");
-    expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
-           "physics advances after an impulse");
-    expect(physics.linearVelocity(box).x > 0.0f, "impulse changes linear velocity");
+    CHECK_MESSAGE(physics.applyImpulse(box, {2.0f, 3.0f, 0.0f}), "impulse applies to a managed body");
+    CHECK_MESSAGE(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
+                  "physics advances after an impulse");
+    CHECK_MESSAGE(physics.linearVelocity(box).x > 0.0f, "impulse changes linear velocity");
 
     const auto sample = assets.loadModel(std::filesystem::path{ZENITH_ASSET_DIR} / "sample.gltf");
-    expect(static_cast<bool>(sample), "mesh collider fixture loads");
+    CHECK_MESSAGE(static_cast<bool>(sample), "mesh collider fixture loads");
     const ModelAsset* model = sample ? assets.model(sample.handle) : nullptr;
     if (model && !model->nodes.empty()) {
         const Entity meshEntity = scene.createEntity("Static Mesh");
@@ -407,41 +405,35 @@ int main() {
             glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, 1.0f, 3.0f));
         scene.registry().emplace<ColliderComponent>(meshEntity, TriangleMeshCollider{model->nodes.front().mesh});
         scene.registry().emplace<RigidBodyComponent>(meshEntity);
-        expect(static_cast<bool>(physics.refreshBody(meshEntity, scene, assets)), "static triangle mesh body builds");
+        CHECK_MESSAGE(static_cast<bool>(physics.refreshBody(meshEntity, scene, assets)),
+                      "static triangle mesh body builds");
         PhysicsRayHit meshHit;
-        expect(physics.raycast({3.0f, 4.0f, 3.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, meshHit) && meshHit.entity == meshEntity,
-               "raycast hits a static triangle mesh");
+        CHECK_MESSAGE(
+            (physics.raycast({3.0f, 4.0f, 3.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, meshHit) && meshHit.entity == meshEntity),
+            "raycast hits a static triangle mesh");
     }
 
     const Entity lateBody = scene.createEntity("Late static body");
     scene.registry().emplace<ColliderComponent>(lateBody, BoxCollider{glm::vec3(0.25f)});
     scene.registry().emplace<RigidBodyComponent>(lateBody);
     scene.markPhysicsDirty(lateBody);
-    expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
-           "queued body creation succeeds without a reconciliation scan");
-    expect(physics.stats().lifecycleOperations == 1 && physics.stats().auditedEntities == 0,
-           "steady physics synchronization scales with lifecycle changes rather than total entities");
-    expect(physics.stats().transformsReadBack <= physics.stats().activeBodies,
-           "physics reads transforms back only for active dynamic bodies");
+    CHECK_MESSAGE(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
+                  "queued body creation succeeds without a reconciliation scan");
+    CHECK_MESSAGE((physics.stats().lifecycleOperations == 1 && physics.stats().auditedEntities == 0),
+                  "steady physics synchronization scales with lifecycle changes rather than total entities");
+    CHECK_MESSAGE(physics.stats().transformsReadBack <= physics.stats().activeBodies,
+                  "physics reads transforms back only for active dynamic bodies");
 
     scene.destroyEntity(box);
-    expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
-           "destroyed entity is removed from physics");
-    expect(physics.stats().lifecycleOperations == 1 && physics.stats().auditedEntities == 0,
-           "queued destruction avoids a full ECS reconciliation scan");
+    CHECK_MESSAGE(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
+                  "destroyed entity is removed from physics");
+    CHECK_MESSAGE((physics.stats().lifecycleOperations == 1 && physics.stats().auditedEntities == 0),
+                  "queued destruction avoids a full ECS reconciliation scan");
     physics.clear();
     PhysicsRayHit clearedHit;
-    expect(!physics.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, clearedHit),
-           "clearing physics removes all managed bodies");
+    CHECK_MESSAGE(!physics.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, clearedHit),
+                  "clearing physics removes all managed bodies");
     physics.shutdown();
-
-    testWorldsShareJoltRuntime();
-    testUnbuildableBodiesAreSkipped();
-    testBodyCapacityIsClamped();
-    testContactCapacityIsAWarning();
-    testConfigurationLimitsAreValidated();
-    testEventOrderIsByScene();
-    testContactPoints();
-    testSimultaneousTriggersArriveInOrder();
-    return failures == 0 ? 0 : 1;
 }
+
+TEST_SUITE_END();

@@ -1,109 +1,4 @@
-# The engine's unit tests: doctest cases in one binary, zenith_engine_tests,
-# each case its own CTest test "engine.<case>" (docs/TESTING.md). Files move
-# here from the standalone registrations below as they are converted.
-zenith_add_test_suite(engine
-    SOURCES
-        AmbientOcclusionTests.cpp
-        AnimatorTests.cpp
-        AssetReloadTests.cpp
-        BehaviourTests.cpp
-        CharacterControllerTests.cpp
-        ChildProcessTests.cpp
-        ClusteredLightingTests.cpp
-        ColorGradingTests.cpp
-        CompressedTextureTests.cpp
-        DebugDrawTests.cpp
-        DecalTests.cpp
-        DeferredUploadTrackerTests.cpp
-        DefinitionTableTests.cpp
-        DepthOfFieldTests.cpp
-        EnvironmentLightingTests.cpp
-        FrameCaptureTests.cpp
-        GameMenusTests.cpp
-        GameServicesTests.cpp
-        GpuCullLayoutTests.cpp
-        GpuResourceTableTests.cpp
-        GraphicsValidationTests.cpp
-        InputActionsJsonTests.cpp
-        IrradianceVolumeTests.cpp
-        LocalShadowTests.cpp
-        LoggerTests.cpp
-        MaterialAssetTests.cpp
-        MeshLodTests.cpp
-        MeshPassFramePlanTests.cpp
-        MotionBlurTests.cpp
-        NavigationTests.cpp
-        PackedVertexStreamTests.cpp
-        ParticleTests.cpp
-        PhysicsQueryTests.cpp
-        PrefabSpawnTests.cpp
-        RandomTests.cpp
-        ReflectionProbeTests.cpp
-        RenderPickingTests.cpp
-        RenderViewTests.cpp
-        RuntimeContentTests.cpp
-        RuntimeLimitTests.cpp
-        SaveGameTests.cpp
-        SceneEntityIndexTests.cpp
-        SceneTransformTests.cpp
-        ScreenSpaceReflectionTests.cpp
-        SpatialUpscaleTests.cpp
-        SystemSchedulerTests.cpp
-        TagsTests.cpp
-        TemporalQualityTests.cpp
-        ToneMappingTests.cpp
-        VersionedJsonTests.cpp
-        ViewShadingTests.cpp
-        VolumetricFogTests.cpp
-    LIBS
-        zenith_engine
-    DEFINITIONS
-        ZENITH_TEST_CMAKE="${CMAKE_COMMAND}"
-    NEEDS_ASSETS)
-
-# meshoptimizer is private to the engine library; this test calls it directly.
-zenith_add_test(zenith_milestones_19_21 EXECUTABLE zenith_milestone_19_21_tests
-    SOURCES Milestone19And21Tests.cpp
-    LIBS zenith_engine zenith_demo zenith_editor_app meshoptimizer NEEDS_ASSETS)
-zenith_add_test(zenith_production_milestones EXECUTABLE zenith_production_milestone_tests
-    SOURCES ProductionMilestonesTests.cpp LIBS zenith_engine NEEDS_ASSETS)
-zenith_add_test(zenith_audio SOURCES AudioSystemTests.cpp LIBS zenith_engine NEEDS_ASSETS)
-
-# One CTest per backend: each half waits on real file-system latency, so
-# they run in parallel rather than back to back.
-zenith_add_test_executable(zenith_file_watcher_tests SOURCES FileWatcherTests.cpp LIBS zenith_engine)
-foreach(file_watcher_backend IN ITEMS native polling)
-    zenith_add_test(zenith_file_watcher_${file_watcher_backend}
-        EXECUTABLE zenith_file_watcher_tests COMMAND_ARGS ${file_watcher_backend} TIMEOUT 60)
-endforeach()
-zenith_add_test(zenith_crash_handler SOURCES CrashHandlerTests.cpp LIBS zenith_engine)
-
-zenith_add_test(zenith_asset_scene EXECUTABLE zenith_asset_tests
-    SOURCES AssetSceneTests.cpp LIBS zenith_engine NEEDS_ASSETS)
-zenith_add_test(zenith_asset_database SOURCES AssetDatabaseTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_showcase_content SOURCES ShowcaseContentTests.cpp LIBS zenith_engine
-    NEEDS_ASSETS DEFINITIONS ZENITH_PROJECT_DIR="${PROJECT_SOURCE_DIR}/projects")
-zenith_add_test(zenith_material_extensions EXECUTABLE zenith_material_extension_tests
-    SOURCES MaterialExtensionTests.cpp LIBS zenith_engine NEEDS_ASSETS)
-zenith_add_test(zenith_animation SOURCES AnimationTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_physics SOURCES PhysicsTests.cpp LIBS zenith_engine NEEDS_ASSETS)
-zenith_add_test(zenith_asset_collection SOURCES AssetCollectionTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_floor_lifecycle SOURCES FloorLifecycleTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_scene_document SOURCES SceneDocumentTests.cpp LIBS zenith_engine NEEDS_ASSETS)
-zenith_add_test(zenith_transient_entities SOURCES TransientEntityTests.cpp LIBS zenith_engine)
-# Reads the asset directory's path only, so it does not build zenith_assets first.
-zenith_add_test(zenith_collections EXECUTABLE zenith_collection_tests
-    SOURCES CollectionTests.cpp LIBS zenith_engine
-    DEFINITIONS ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
-zenith_add_test(zenith_component_types SOURCES ComponentTypesTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_reflection SOURCES ReflectionTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_file_contents SOURCES FileContentsTests.cpp LIBS zenith_engine)
-# Skips (77) where SDL's offscreen video driver cannot create a window.
-zenith_add_test(zenith_input_manager SOURCES InputManagerTests.cpp LIBS zenith_engine SKIP_RETURN_CODE 77)
-
-# Game modules for zenith_game_module_tests: a working module, one built for
-# another module API version, and a library without module entry points.
-# zenith_test_game_module is also played by tests/game and tests/validation.
+# Game modules GameModuleTests loads, and where it finds them.
 zenith_add_test_module(zenith_test_game_module SOURCES modules/TestGameModule.cpp LIBS zenith_engine)
 zenith_add_test_module(zenith_test_mismatched_module SOURCES modules/MismatchedApiModule.cpp
     INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src")
@@ -117,25 +12,129 @@ if(MSVC)
     list(APPEND game_module_test_definitions
         ZENITH_TEST_GAME_MODULE_PDB="$<TARGET_PDB_FILE:zenith_test_game_module>")
 endif()
-zenith_add_test(zenith_game_module SOURCES GameModuleTests.cpp LIBS zenith_engine
-    DEFINITIONS ${game_module_test_definitions}
-    DEPENDS zenith_test_game_module zenith_test_mismatched_module zenith_test_not_a_module)
 
-zenith_add_test(zenith_project_config SOURCES ProjectConfigTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_input_actions EXECUTABLE zenith_input_action_tests
-    SOURCES InputActionTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_game_ui SOURCES GameUiTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_scene_hierarchy SOURCES SceneHierarchyTests.cpp LIBS zenith_engine)
+# The engine's unit tests: doctest cases in one binary, zenith_engine_tests,
+# each case its own CTest test "engine.<case>" (docs/TESTING.md). Files move
+# here from the standalone registrations below as they are converted.
+zenith_add_test_suite(engine
+    SOURCES
+        AmbientOcclusionTests.cpp
+        AnimationTests.cpp
+        AnimatorTests.cpp
+        AssetCollectionTests.cpp
+        AssetDatabaseTests.cpp
+        AssetReloadTests.cpp
+        AssetSceneTests.cpp
+        AssetStreamingTests.cpp
+        AudioSystemTests.cpp
+        BehaviourTests.cpp
+        CharacterControllerTests.cpp
+        ChildProcessTests.cpp
+        ClusteredLightingTests.cpp
+        CollectionTests.cpp
+        ColorGradingTests.cpp
+        ComponentTypesTests.cpp
+        CompressedTextureTests.cpp
+        CrashHandlerTests.cpp
+        DebugDrawTests.cpp
+        DecalTests.cpp
+        DeferredUploadTrackerTests.cpp
+        DefinitionTableTests.cpp
+        DepthOfFieldTests.cpp
+        DepthPrepassTests.cpp
+        EnvironmentLightingTests.cpp
+        FileContentsTests.cpp
+        FloorLifecycleTests.cpp
+        FrameCaptureTests.cpp
+        FrameTaskGraphTests.cpp
+        GameMenusTests.cpp
+        GameModuleTests.cpp
+        GameServicesTests.cpp
+        GameUiTests.cpp
+        GpuCullLayoutTests.cpp
+        GpuResourceTableTests.cpp
+        GraphicsValidationTests.cpp
+        InputActionTests.cpp
+        InputActionsJsonTests.cpp
+        IrradianceVolumeTests.cpp
+        LocalShadowTests.cpp
+        LoggerTests.cpp
+        MaterialAssetTests.cpp
+        MaterialExtensionTests.cpp
+        MeshLodTests.cpp
+        MeshPassFramePlanTests.cpp
+        MotionBlurTests.cpp
+        NavigationTests.cpp
+        PackedVertexStreamTests.cpp
+        ParticleTests.cpp
+        PhysicsQueryTests.cpp
+        PhysicsTests.cpp
+        PrefabSpawnTests.cpp
+        ProductionMilestonesTests.cpp
+        ProjectConfigTests.cpp
+        RandomTests.cpp
+        ReflectionProbeTests.cpp
+        ReflectionTests.cpp
+        RenderGraphTests.cpp
+        RenderPickingTests.cpp
+        RenderRegressionTests.cpp
+        RenderSubmissionTests.cpp
+        RenderViewTests.cpp
+        RuntimeContentTests.cpp
+        RuntimeLimitTests.cpp
+        SaveGameTests.cpp
+        SceneDocumentTests.cpp
+        SceneEntityIndexTests.cpp
+        SceneHierarchyTests.cpp
+        SceneTransformTests.cpp
+        ScreenSpaceReflectionTests.cpp
+        ShowcaseContentTests.cpp
+        SpatialUpscaleTests.cpp
+        SystemSchedulerTests.cpp
+        TagsTests.cpp
+        TemporalQualityTests.cpp
+        ToneMappingTests.cpp
+        TransientEntityTests.cpp
+        VersionedJsonTests.cpp
+        ViewShadingTests.cpp
+        VolumetricFogTests.cpp
+    LIBS
+        zenith_engine
+    DEFINITIONS
+        ZENITH_TEST_CMAKE="${CMAKE_COMMAND}"
+        ZENITH_PROJECT_DIR="${PROJECT_SOURCE_DIR}/projects"
+        ${game_module_test_definitions}
+    DEPENDS
+        zenith_test_game_module
+        zenith_test_mismatched_module
+        zenith_test_not_a_module
+    NEEDS_ASSETS)
+
+# meshoptimizer is private to the engine library; this test calls it directly.
+zenith_add_test(zenith_milestones_19_21 EXECUTABLE zenith_milestone_19_21_tests
+    SOURCES Milestone19And21Tests.cpp
+    LIBS zenith_engine zenith_demo zenith_editor_app meshoptimizer NEEDS_ASSETS)
+
+# One CTest per backend: each half waits on real file-system latency, so
+# they run in parallel rather than back to back.
+zenith_add_test_executable(zenith_file_watcher_tests SOURCES FileWatcherTests.cpp LIBS zenith_engine)
+foreach(file_watcher_backend IN ITEMS native polling)
+    zenith_add_test(zenith_file_watcher_${file_watcher_backend}
+        EXECUTABLE zenith_file_watcher_tests COMMAND_ARGS ${file_watcher_backend} TIMEOUT 60)
+endforeach()
+
+# Reads the asset directory's path only, so it does not build zenith_assets first.
+# Skips (77) where SDL's offscreen video driver cannot create a window.
+zenith_add_test(zenith_input_manager SOURCES InputManagerTests.cpp LIBS zenith_engine SKIP_RETURN_CODE 77)
+
+# Game modules for zenith_game_module_tests: a working module, one built for
+# another module API version, and a library without module entry points.
+# zenith_test_game_module is also played by tests/game and tests/validation.
+
 
 # Rendering, on the CPU.
-zenith_add_test(zenith_render_submission SOURCES RenderSubmissionTests.cpp LIBS zenith_engine)
 # Per-frame capacity clamps and their once-per-episode reporting.
 # Debug-draw recording, tessellation and label projection (CPU only).
-zenith_add_test(zenith_depth_prepass SOURCES DepthPrepassTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_frame_task_graph SOURCES FrameTaskGraphTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_render_graph SOURCES RenderGraphTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_asset_streaming SOURCES AssetStreamingTests.cpp LIBS zenith_engine)
-zenith_add_test(zenith_render_regression SOURCES RenderRegressionTests.cpp)
 
 # Engine-hosted runs on a Vulkan device; they skip (77) without one.
 # Two created render views beside the default one

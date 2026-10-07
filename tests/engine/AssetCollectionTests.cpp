@@ -8,27 +8,20 @@
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/module/GameServices.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <array>
 #include <filesystem>
-#include <fstream>
-#include <iostream>
 #include <memory>
 #include <string>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("AssetCollection");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 std::filesystem::path writeFont(const std::filesystem::path& root, const std::string& name) {
     const std::filesystem::path path = root / name;
-    std::ofstream output(path, std::ios::binary);
-    output << "font bytes for " << name;
+    testsupport::writeText(path, "font bytes for " + name);
     return path;
 }
 
@@ -48,43 +41,6 @@ AssetLeaseSet leaseFont(const AssetManager& assets, FontHandle font) {
     AssetLeaseSet leases;
     leases.fonts.push_back(assets.lease(font));
     return leases;
-}
-
-// A floor's font stays leased by the frames that drew it; a collection
-// requested at teardown runs once they all retired and evicts it, while an
-// asset still in use survives.
-void testCollectionWaitsForFramesInFlight(const std::filesystem::path& root) {
-    AssetManager assets;
-    const FontHandle floorFont = assets.loadFont(writeFont(root, "floor.font")).handle;
-    const FontHandle hudFont = assets.loadFont(writeFont(root, "hud.font")).handle;
-    const AssetLease<FontHandle> hudLease = assets.lease(hudFont);
-    FrameSlots frames;
-    for (int frame = 0; frame < 3; ++frame) {
-        frames.render(leaseFont(assets, floorFont));
-    }
-
-    DeferredAssetCollection collection(static_cast<uint32_t>(frames.slots.size()));
-    expect(!collection.frameRendered(assets, nullptr), "no collection runs without a request");
-    collection.request();
-    expect(collection.pending(), "a request is pending until it runs");
-    frames.render({});
-    expect(!collection.frameRendered(assets, nullptr), "the first frame after a request does not collect");
-    frames.render({});
-    expect(!collection.frameRendered(assets, nullptr) && assets.font(floorFont) != nullptr,
-           "the asset stays while a frame in flight leases it");
-    // A second request (another teardown) restarts the countdown.
-    collection.request();
-    for (int frame = 0; frame < 2; ++frame) {
-        frames.render({});
-        expect(!collection.frameRendered(assets, nullptr), "a later request restarts the countdown");
-    }
-    frames.render({});
-    const std::optional<DeferredAssetCollectionResult> collected = collection.frameRendered(assets, nullptr);
-    expect(collected && collected->assets.assetsEvicted == 1 && !collection.pending(),
-           "the collection runs once every frame in flight retired");
-    expect(assets.font(floorFont) == nullptr, "the released asset is evicted and its handle is stale");
-    expect(assets.font(hudFont) != nullptr, "a leased asset survives the collection");
-    expect(!collection.frameRendered(assets, nullptr), "a collection runs once per request");
 }
 
 class EmptyScene final : public ApplicationScene {
@@ -110,25 +66,6 @@ class TwoSceneApplication final : public Application {
         return std::make_unique<EmptyScene>();
     }
 };
-
-void testSceneChangeRequestsCollection() {
-    TwoSceneApplication application;
-    Scene scene;
-    AssetManager assets;
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationSession session(application, scene, assets, physics, audio);
-    expect(session.start().success, "the application starts");
-    expect(!session.takeAssetCollectionRequest(), "starting requests no collection");
-    expect(session.finishFrame().success && !session.takeAssetCollectionRequest(),
-           "a frame without a scene change requests no collection");
-
-    ApplicationControl control;
-    control.requestAssetCollection();
-    expect(control.assetCollectionRequested() && !control.actionPending(),
-           "an asset collection request is not a lifecycle action");
-    session.shutdown();
-}
 
 class SwitchingScene final : public ApplicationScene {
   public:
@@ -156,22 +93,81 @@ class SwitchingApplication final : public Application {
     }
 };
 
-void testTransitionRequestsCollection() {
+} // namespace
+
+// A floor's font stays leased by the frames that drew it; a collection
+// requested at teardown runs once they all retired and evicts it, while an
+// asset still in use survives.
+TEST_CASE("AssetCollection: collection waits for frames in flight") {
+    const testsupport::TempDirectory root("asset-collection-frames");
+    AssetManager assets;
+    const FontHandle floorFont = assets.loadFont(writeFont(root.path(), "floor.font")).handle;
+    const FontHandle hudFont = assets.loadFont(writeFont(root.path(), "hud.font")).handle;
+    const AssetLease<FontHandle> hudLease = assets.lease(hudFont);
+    FrameSlots frames;
+    for (int frame = 0; frame < 3; ++frame) {
+        frames.render(leaseFont(assets, floorFont));
+    }
+
+    DeferredAssetCollection collection(static_cast<uint32_t>(frames.slots.size()));
+    CHECK_MESSAGE(!collection.frameRendered(assets, nullptr), "no collection runs without a request");
+    collection.request();
+    CHECK_MESSAGE(collection.pending(), "a request is pending until it runs");
+    frames.render({});
+    CHECK_MESSAGE(!collection.frameRendered(assets, nullptr), "the first frame after a request does not collect");
+    frames.render({});
+    CHECK_MESSAGE((!collection.frameRendered(assets, nullptr) && assets.font(floorFont) != nullptr),
+                  "the asset stays while a frame in flight leases it");
+    // A second request (another teardown) restarts the countdown.
+    collection.request();
+    for (int frame = 0; frame < 2; ++frame) {
+        frames.render({});
+        CHECK_MESSAGE(!collection.frameRendered(assets, nullptr), "a later request restarts the countdown");
+    }
+    frames.render({});
+    const std::optional<DeferredAssetCollectionResult> collected = collection.frameRendered(assets, nullptr);
+    CHECK_MESSAGE((collected && collected->assets.assetsEvicted == 1 && !collection.pending()),
+                  "the collection runs once every frame in flight retired");
+    CHECK_MESSAGE(assets.font(floorFont) == nullptr, "the released asset is evicted and its handle is stale");
+    CHECK_MESSAGE(assets.font(hudFont) != nullptr, "a leased asset survives the collection");
+    CHECK_MESSAGE(!collection.frameRendered(assets, nullptr), "a collection runs once per request");
+}
+
+TEST_CASE("AssetCollection: scene change requests collection") {
+    TwoSceneApplication application;
+    Scene scene;
+    AssetManager assets;
+    PhysicsWorld physics;
+    AudioSystem audio;
+    ApplicationSession session(application, scene, assets, physics, audio);
+    CHECK_MESSAGE(session.start().success, "the application starts");
+    CHECK_MESSAGE(!session.takeAssetCollectionRequest(), "starting requests no collection");
+    CHECK_MESSAGE((session.finishFrame().success && !session.takeAssetCollectionRequest()),
+                  "a frame without a scene change requests no collection");
+
+    ApplicationControl control;
+    control.requestAssetCollection();
+    CHECK_MESSAGE((control.assetCollectionRequested() && !control.actionPending()),
+                  "an asset collection request is not a lifecycle action");
+    session.shutdown();
+}
+
+TEST_CASE("AssetCollection: transition requests collection") {
     SwitchingApplication application;
     Scene scene;
     AssetManager assets;
     PhysicsWorld physics;
     AudioSystem audio;
     ApplicationSession session(application, scene, assets, physics, audio);
-    expect(session.start().success, "the switching application starts");
+    CHECK_MESSAGE(session.start().success, "the switching application starts");
     session.update({}, 0.0f);
-    expect(session.finishFrame().success, "the scene change succeeds");
-    expect(session.takeAssetCollectionRequest(), "a scene change requests an asset collection");
-    expect(!session.takeAssetCollectionRequest(), "taking the request clears it");
+    CHECK_MESSAGE(session.finishFrame().success, "the scene change succeeds");
+    CHECK_MESSAGE(session.takeAssetCollectionRequest(), "a scene change requests an asset collection");
+    CHECK_MESSAGE(!session.takeAssetCollectionRequest(), "taking the request clears it");
     session.shutdown();
 }
 
-void testGameplayRequestReachesApplication() {
+TEST_CASE("AssetCollection: gameplay request reaches application") {
     Logger logger;
     AssetManager assets(&logger);
     DebugDraw debugDraw;
@@ -190,27 +186,12 @@ void testGameplayRequestReachesApplication() {
 
     runGameplayPhase(scheduler, SystemPhase::Update,
                      {.scene = scene, .mode = SimulationMode::Play, .services = &services});
-    expect(!control.assetCollectionRequested(), "without an application the request waits");
+    CHECK_MESSAGE(!control.assetCollectionRequested(), "without an application the request waits");
     runGameplayPhase(
         SystemScheduler{}, SystemPhase::Update,
         {.scene = scene, .application = &application, .mode = SimulationMode::Play, .services = &services});
-    expect(control.assetCollectionRequested(), "the next phase with an application hands the request over");
-    expect(!services.takeAssetCollectionRequest(), "the services forget a request they handed over");
+    CHECK_MESSAGE(control.assetCollectionRequested(), "the next phase with an application hands the request over");
+    CHECK_MESSAGE(!services.takeAssetCollectionRequest(), "the services forget a request they handed over");
 }
-} // namespace
 
-int main() {
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith_asset_collection_tests";
-    std::error_code error;
-    std::filesystem::remove_all(root, error);
-    std::filesystem::create_directories(root);
-    testCollectionWaitsForFramesInFlight(root);
-    testSceneChangeRequestsCollection();
-    testTransitionRequestsCollection();
-    testGameplayRequestReachesApplication();
-    std::filesystem::remove_all(root, error);
-    if (failures == 0) {
-        std::cout << "Asset collection tests passed\n";
-    }
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

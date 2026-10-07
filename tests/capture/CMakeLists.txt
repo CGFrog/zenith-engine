@@ -2,11 +2,11 @@
 # tests/references/<set> (docs/RENDERER_VALIDATION.md). Skips without a
 # hardware Vulkan device; zenith_update_<set>_references regenerates one
 # set and zenith_update_references regenerates all of them.
-# The driver loads Vulkan through its own volk instance; the engine's is
-# private. Captures sample the cooked BC7/BC5 textures, so they must be
+# The driver probes for a hardware device with the tests' shared Vulkan
+# probe (its own volk instance; the engine's is private). Captures sample the cooked BC7/BC5 textures, so they must be
 # current.
 zenith_add_test_executable(zenith_reference_capture SOURCES ReferenceCaptureDriver.cpp
-    LIBS zenith_engine volk
+    LIBS zenith_engine zenith_test_support zenith_test_vulkan_probe
     DEPENDS zenith zenith_cooked_textures zenith_debug_draw_smoke_tests zenith_scene_gizmo_smoke_tests)
 add_custom_target(zenith_update_references)
 # Each set renders with the game, except debug_draw and scene_gizmos,

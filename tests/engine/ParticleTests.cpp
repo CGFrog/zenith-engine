@@ -193,7 +193,8 @@ TEST_CASE("Particle: sort plan") {
         std::vector<particles::SortKey> keys(elements);
         for (uint32_t index = 0; index < elements; ++index) {
             // Few distinct keys so the index tie-break matters; a tail of padding.
-            keys[index] = index + 100 < elements ? particles::SortKey{random() % 97u, index} : particles::SortKey{};
+            keys[index] = index + 100 < elements ? particles::SortKey{static_cast<uint32_t>(random() % 97u), index}
+                                                 : particles::SortKey{};
         }
         std::vector<particles::SortKey> expected = keys;
         std::ranges::sort(expected);
