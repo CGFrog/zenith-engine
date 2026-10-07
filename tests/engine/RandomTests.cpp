@@ -160,8 +160,8 @@ void testGameServices() {
     AssetManager assets{&logger};
     DebugDraw debugDraw;
     GameServices services(assets, {}, debugDraw, &logger);
-    services.randomStreams().reseed(1U);
-    expect(draw(services.random("layout"), 3) == std::vector<uint32_t>{0xf732644bU, 0xeeb61c11U, 0x166875feU},
+    services.content().randomStreams().reseed(1U);
+    expect(draw(services.content().random("layout"), 3) == std::vector<uint32_t>{0xf732644bU, 0xeeb61c11U, 0x166875feU},
            "the session's streams come from its seed");
 }
 } // namespace

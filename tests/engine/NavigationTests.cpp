@@ -285,7 +285,8 @@ void testEngineSystem() {
                                                     .services = &services});
         scene.updateWorldTransforms();
     }
-    expect(services.navigation(scene).baked(), "the session bakes its navigation mesh when an agent needs it");
+    expect(services.outside().navigation(scene).baked(),
+           "the session bakes its navigation mesh when an agent needs it");
     expect(scene.registry().get<TransformComponent>(walker).world[3].x > -3.0f,
            "the engine's agent system moves agents in Play");
 }
@@ -323,8 +324,9 @@ void testBakePolicy() {
         AssetManager assets{&logger};
         DebugDraw debugDraw;
         GameServices services(assets, {}, debugDraw, &logger);
-        expect(services.navigationBakePolicy() == NavigationBakePolicy::Lazy, "sessions bake lazily by default");
-        services.setNavigationBakePolicy(policy);
+        expect(services.outside().navigationBakePolicy() == NavigationBakePolicy::Lazy,
+               "sessions bake lazily by default");
+        services.outside().setNavigationBakePolicy(policy);
         const Entity walker = addWalker(scene, {-4.0f, 0.0f, -8.0f});
         setNavDestination(scene.registry().get<NavAgentComponent>(walker), {4.0f, 0.0f, -8.0f});
         // Asking navigation() would bake under Lazy, so start from a new world.
@@ -333,18 +335,19 @@ void testBakePolicy() {
         runAgentFrames(scene, services, logger, 3);
         const NavAgentComponent& agent = scene.registry().get<NavAgentComponent>(walker);
         if (lazy) {
-            expect(services.navigation(scene).generation() == unbaked + 1,
+            expect(services.outside().navigation(scene).generation() == unbaked + 1,
                    "the Lazy policy bakes as soon as an agent exists");
         } else {
-            expect(services.navigation(scene).generation() == unbaked && !services.navigation(scene).baked(),
+            expect(services.outside().navigation(scene).generation() == unbaked &&
+                       !services.outside().navigation(scene).baked(),
                    "the Explicit policy never bakes on its own");
             expect(agent.destination.has_value() && !agent.pathFailed && positionOf(scene, walker).x < -3.9f,
                    "agents wait for the bake with their destinations");
             expect(waitingWarnings(logger) == 1, "waiting agents are reported once");
         }
 
-        expect(services.bakeNavigation(scene).success, "the game bakes its level");
-        expect(services.navigation(scene).generation() == unbaked + (lazy ? 2u : 1u),
+        expect(services.outside().bakeNavigation(scene).success, "the game bakes its level");
+        expect(services.outside().navigation(scene).generation() == unbaked + (lazy ? 2u : 1u),
                lazy ? "the Lazy policy bakes a level the game bakes too twice"
                     : "the Explicit policy bakes a level the game bakes once");
         runAgentFrames(scene, services, logger, 5);
@@ -362,21 +365,24 @@ void testDefaultSettingsAndLooking() {
     DebugDraw debugDraw;
     GameServices services(assets, {}, debugDraw, &logger);
     const NavMeshBuildSettings project{.cellSize = 0.25f, .agentRadius = 0.8f};
-    expect(services.defaultNavigationSettings() == NavMeshBuildSettings{}, "sessions start with the default settings");
-    services.setDefaultNavigationSettings(project);
+    expect(services.outside().defaultNavigationSettings() == NavMeshBuildSettings{},
+           "sessions start with the default settings");
+    services.outside().setDefaultNavigationSettings(project);
 
-    expect(services.navigationIfBaked() == nullptr, "nothing is baked before anything asks");
-    expect(services.navigationIfBaked() == nullptr && std::as_const(services).navigationCrowd().agentCount() == 0,
+    expect(services.outside().navigationIfBaked() == nullptr, "nothing is baked before anything asks");
+    expect(services.outside().navigationIfBaked() == nullptr &&
+               std::as_const(services).outside().navigationCrowd().agentCount() == 0,
            "looking at the mesh and crowd never bakes");
-    const NavigationWorld& lazy = services.navigation(scene);
+    const NavigationWorld& lazy = services.outside().navigation(scene);
     expect(lazy.baked() && lazy.settings() == project, "the lazy bake uses the session's default settings");
-    expect(services.navigationIfBaked() == &lazy, "once baked, the mesh can be looked at");
+    expect(services.outside().navigationIfBaked() == &lazy, "once baked, the mesh can be looked at");
 
-    expect(services.bakeNavigation(scene).success && services.navigation(scene).settings() == project,
+    expect(services.outside().bakeNavigation(scene).success &&
+               services.outside().navigation(scene).settings() == project,
            "bakeNavigation without settings uses the defaults");
     const NavMeshBuildSettings explicitSettings{.agentRadius = 0.2f};
-    expect(services.bakeNavigation(scene, explicitSettings).success &&
-               services.navigation(scene).settings() == explicitSettings,
+    expect(services.outside().bakeNavigation(scene, explicitSettings).success &&
+               services.outside().navigation(scene).settings() == explicitSettings,
            "settings passed to bakeNavigation win");
 }
 } // namespace

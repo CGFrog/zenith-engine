@@ -1,6 +1,6 @@
 #pragma once
 
-// Short-lived effects for a gameplay session (GameServices::effects): a prefab placed at a transform that removes
+// Short-lived effects for a gameplay session (WorldServices::effects): a prefab placed at a transform that removes
 // itself when it ends.
 
 #include "engine/scene/Scene.hpp"
@@ -34,7 +34,7 @@ struct EffectOptions {
     bool pooled{false};
 };
 
-// Short-lived effects for a gameplay session (GameServices::effects): a
+// Short-lived effects for a gameplay session (WorldServices::effects): a
 // prefab placed at a transform that removes itself when it ends. Spawns are
 // requested at any time and applied at the session's next flush; an effect
 // ends on the session's timers, so it follows the simulation clock's time

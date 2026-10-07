@@ -12,7 +12,7 @@ class PhysicsWorld;
 // game: what its physics and navigation actually hold, rather than the
 // authored components the scene gizmos draw.
 struct RuntimeDebugOverlays {
-    // The game's navigation mesh (GameServices::navigationIfBaked).
+    // The game's navigation mesh (OutsideServices::navigationIfBaked).
     bool navigationMesh{false};
     // Every physics body's collision shape (PhysicsWorld::drawDebug).
     bool physicsShapes{false};

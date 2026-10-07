@@ -29,7 +29,7 @@ capability. `--check` fails when the generated index is stale.
 | Game executable startup | `src/main.cpp`, `src/game/application/GameLaunch.*`, `RuntimeGameplay.*` | `parseGameLaunchArguments`, `loadLaunchProject`, `loadRuntimeGameplay`, `Engine::init`, `Engine::run` | `zenith_project_runtime` | [Demo](game/demo.md) |
 | The frame loop (fixed step, interpolation, render) | `src/engine/Engine.cpp` | `Engine::run` | `zenith_application_lifecycle` | [Architecture › Frame sequence](ARCHITECTURE.md#frame-sequence) |
 | Application / scene lifecycle hooks | `src/engine/application/Application.hpp` | `Application`, `ApplicationScene::{load,update,fixedUpdate,afterPhysicsStep,lateUpdate,drawUi,unload}`, `ApplicationContext` | `zenith_application_lifecycle` | [Application](engine/application.md) |
-| Pause, time scale, frame step | `src/engine/application/SimulationClock.hpp`, `src/engine/module/GameServices.*` | `SimulationClock`, `GameServices::{setPaused,setTimeScale,simulationClock}` | `zenith_game_services` | [Modules › GameServices](engine/modules.md#gameservices) |
+| Pause, time scale, frame step | `src/engine/application/SimulationClock.hpp`, `src/engine/module/GameServiceGroups.*` | `SimulationClock`, `TimeServices::{setPaused,setTimeScale,simulationClock}` | `zenith_game_services` | [Modules › GameServices](engine/modules.md#gameservices) |
 | Executable-relative asset/shader paths | `src/engine/resources/ResourceLocator.*` | `initializeResourceLocator`, `assetRoot`, `shaderRoot`, `resourceRoot` | – | [Assets › Asset flow](engine/assets.md#asset-flow) |
 | Logging and log categories | `src/engine/diagnostics/Logger.*` | `Logger`, `LogChannel`, `GameServices::log(name)` | `zenith_logger` | [Application](engine/application.md) |
 | Project manifest (`.zenith-project`) | `src/engine/project/ProjectConfig.*` | `ProjectConfig`, `loadProjectConfig`, `saveProjectConfig`, `loadProjectInputActions` | `zenith_project_config` | [Projects](engine/projects.md) |
@@ -51,7 +51,7 @@ capability. `--check` fails when the generated index is stale.
 | Collections and visibility | `src/engine/scene/Collections.*`, `SceneVisibility.*` | `SceneCollections`, `SceneVisibility`, `SceneVisibilityMode` | `zenith_collections` | [Scene](engine/scene.md) |
 | Tags | `src/engine/scene/Tags.*` | `TagsComponent`, `findEntitiesWithTag`, `hasTag` | `zenith_tags` | [Project Settings](editor/project-settings.md) |
 | Transient (unsaved, generated) entities | `src/engine/scene/Scene.hpp` | `TransientComponent`, `markTransient`, `destroyTransient` | `zenith_transient_entities` | [Scene › Transient](engine/scene.md#transient-entities) |
-| Save games | `src/engine/scene/SaveGame.*` | `SaveGameStore`, `GameServices::saveGame` | `zenith_save_game` | [Scene](engine/scene.md) |
+| Save games | `src/engine/scene/SaveGame.*` | `SaveGameStore`, `OutsideServices::saveGame` | `zenith_save_game` | [Scene](engine/scene.md) |
 | Additive / asynchronous scenes | `src/engine/scene/AdditiveSceneManager.*`, `src/engine/jobs/JobSystem.*` | `AdditiveSceneManager`, `JobSystem` | `zenith_asset_streaming` | [Scene](engine/scene.md) |
 
 ### Gameplay programming (modules, systems, behaviours)
@@ -65,7 +65,7 @@ capability. `--check` fails when the generated index is stale.
 | Engine built-in systems (`zenith.*`) | `src/engine/module/BuiltInSystems.*` | `zenith.character_input`, `zenith.first_person_camera`, behaviour runners, `zenith.nav_agents`, `zenith.animator`, `zenith.audio_emitters` | `zenith_system_scheduler` | [Modules](engine/modules.md) |
 | Behaviours: hooks and lifecycle | `src/engine/behaviour/Behaviour.hpp`, `BehaviourScheduler.*`, `BehaviourRegistry.*` | `Behaviour`, `BehaviourContext`, `runBehaviours`, `destroyAllBehaviours` | `zenith_behaviours` | [Modules › Behaviours](engine/modules.md#behaviours-srcenginebehaviour) |
 | Exceptions from game code | `src/engine/module/GuardedCall.hpp` | `callGuarded`, `SystemFaults` | `zenith_system_scheduler`, `zenith_behaviours` | [Modules › Fault isolation](engine/modules.md#fault-isolation) |
-| `GameServices` (session hub) | `src/engine/module/GameServices.*` | `commands`, `events`, `timers`, `effects`, `resource<T>`, `random`, `audio`, `navigation`, `debugDraw`, `assetPath` | `zenith_game_services` | [Modules › GameServices](engine/modules.md#gameservices) |
+| `GameServices` (session hub) | `src/engine/module/GameServices.*`, `src/engine/module/GameServiceGroups.*` | `events`, `log`; `world()` (`commands`, `prefabs`, `effects`), `time()` (`timers`, pause, time scale), `content()` (`resource<T>`, `random`, `assetPath`), `outside()` (`audio`, `navigation`, saves, `debugDraw`) | `zenith_game_services` | [Modules › GameServices](engine/modules.md#gameservices) |
 | Spawn / destroy / reparent deferred | `src/engine/module/EntityCommandBuffer.*` | `EntityCommandBuffer::{spawn,spawnEmpty,destroy,reparent,flush}`, `SpawnPlacement` | `zenith_game_services`, `zenith_prefab_spawn` | [Modules](engine/modules.md) |
 | Events between systems | `src/engine/module/EventQueue.*`, `GameEvents.hpp` | `EventQueue::{publish,read}`, `SceneLoaded`, `EntitySpawned`, `TriggerEntered` | `zenith_game_services` | [Modules](engine/modules.md) |
 | Timers | `src/engine/module/Timers.*` | `Timers::{start,cancel}`, `TimerRepeat`, `TimerContext` | `zenith_game_services` | [Modules](engine/modules.md) |
@@ -938,19 +938,20 @@ Game module ABI and loading, systems, GameServices, Gameplay.
 | File | Main types | Summary |
 | --- | --- | --- |
 | `BuiltInSystems` .hpp/.cpp |  | The engine's own systems, which every Gameplay runs before a game's systems of the same phase and order. |
-| `Effects` .hpp/.cpp | `EffectOptions`, `Effects` | Short-lived effects for a gameplay session (GameServices::effects): a prefab placed at a transform that removes itself when it ends. |
+| `Effects` .hpp/.cpp | `EffectOptions`, `Effects` | Short-lived effects for a gameplay session (WorldServices::effects): a prefab placed at a transform that removes itself when it ends. |
 | `EngineExport` .hpp |  | zenith_engine is a shared library so that an executable and every game module it loads share one copy of the engine and of its third-party state (SDL, Dear ImGui, Jolt, volk). |
 | `EntityCommandBuffer` .hpp/.cpp | `SpawnPlacement`, `EntityCommandBuffer` | Scene changes recorded while systems iterate the scene and applied together at a flush point, so a system never invalidates the view it is walking. |
 | `EventQueue` .hpp/.cpp | `EventQueue` | Typed events double-buffered per frame: published in frame N, read in every phase of frame N+1. |
 | `GameEvents` .hpp | `TriggerEntered`, `TriggerExited`, `EntitySpawned`, `EntityDestroyed`, … | Events the engine publishes to a gameplay session's EventQueue. |
 | `GameModule` .hpp/.cpp | `GameModuleResult`, `GameModuleLoading`, `GameModuleOptions`, `GameModule` | A loaded game module (shadow copy or in place) and the component types, systems, and behaviours it registered. |
 | `Gameplay` .hpp/.cpp | `Gameplay`, `GameplayRunner`, `GameplayResult` | What a game plays: the component types its scenes load with and the systems it runs while playing. |
-| `GameServices` .hpp/.cpp | `NavigationBakePolicy`, `GameplayPhysicsEvents`, `GameServices` | GameServices: the per-session hub of gameplay mechanisms (commands, events, timers, effects, resources, random, audio, navigation, saves). |
+| `GameServiceGroups` .hpp/.cpp | `NavigationBakePolicy`, `TimeServices`, `WorldServices`, `ContentServices`, … | The groups of GameServices: the world (prefabs, commands, effects), time (timers, pause, time scale), content (session resources, random streams, asset paths), and the outside (audio, navigation, saves, debug drawing). |
+| `GameServices` .hpp/.cpp | `GameplayPhysicsEvents`, `GameServices` | GameServices: the per-session hub of gameplay mechanisms, grouped as the world, time, content, and the outside, plus events and logging. |
 | `GuardedCall` .hpp |  | callGuarded: runs a callback into game code and returns what it threw instead of unwinding through the engine. |
 | `ModuleApi` .hpp/.cpp | `ModuleCompatibilityResult` | ZENITH_GAME_MODULE, ZENITH_MODULE_API_VERSION, and the compatibility check. |
 | `ModuleRegistrar` .hpp/.cpp | `BehaviourOptions`, `ModuleRegistrar` | What zenith_module_register receives: addComponentType, addSystem, addBehaviour, addInputActions, addDefinitionTable. |
 | `ModuleShadowCopy` .hpp/.cpp | `ModuleShadowCopyResult`, `ModuleShadowCopy` | Copies a module (and its PDB) to a unique shadow file so the original can be rebuilt while loaded. |
-| `SessionResources` .hpp/.cpp | `SessionResources` | Per-session values, one per type keyed by resourceKey (GameServices::resource<T>()). |
+| `SessionResources` .hpp/.cpp | `SessionResources` | Per-session values, one per type keyed by resourceKey (ContentServices::resource<T>()). |
 | `SharedLibrary` .hpp/.cpp | `SharedLibraryResult`, `SharedLibrary` | Owns one handle to a shared library loaded with LoadLibrary or dlopen and closes it on destruction. |
 | `SystemScheduler` .hpp/.cpp | `SimulationMode`, `RunIn`, `SystemPhase`, `SystemContext`, … | SystemPhase, RunIn, SystemContext, SystemDescriptor, SystemRegistry, SystemScheduler, runGameplayPhase. |
 | `Timers` .hpp/.cpp | `TimerHandle`, `TimerRepeat`, `TimerContext`, `Timers` | Callbacks that run after an amount of simulated time. |

@@ -83,7 +83,7 @@ class GameplayRunner {
     const SystemFaults& systemFaults() const;
     // The input actions systems receive; the game may change the bindings.
     InputActionMap& actionMap();
-    // The game's clock (GameServices::simulationClock), which the scene
+    // The game's clock (TimeServices::simulationClock), which the scene
     // reports as its ApplicationScene::simulationClock so the engine steps
     // physics, animation, and audio by it; the default clock unless started.
     SimulationClock simulationClock() const;

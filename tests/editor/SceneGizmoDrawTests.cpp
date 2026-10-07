@@ -447,9 +447,9 @@ void testRuntimeDebug() {
            "contacts draw the last step's contact points");
     expect(record({.characters = true}) > 0, "characters draw their capsules");
     expect(record({.navAgents = true}) > 0, "agents draw even before they join a crowd");
-    expect(record({.navigationMesh = true}) == 0 && services.navigationIfBaked() == nullptr,
+    expect(record({.navigationMesh = true}) == 0 && services.outside().navigationIfBaked() == nullptr,
            "drawing the game's navigation mesh never bakes it");
-    expect(services.navigation(scene).baked() && record({.navigationMesh = true}) > 0,
+    expect(services.outside().navigation(scene).baked() && record({.navigationMesh = true}) > 0,
            "once the game baked its mesh it is drawn");
     physics.shutdown();
 }

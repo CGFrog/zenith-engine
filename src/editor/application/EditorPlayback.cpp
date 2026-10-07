@@ -346,13 +346,14 @@ bool EditorPlayback::enter(ApplicationContext& context, EditorRuntime runtime) {
     }
     m_services.moduleHost.startGameplay(context.assets, m_services.document.options(), context.rendering.debugDraw());
     if (GameServices* services = m_services.moduleHost.gameServices()) {
-        services->setAudio(&context.audio);
+        services->outside().setAudio(&context.audio);
         // The game bakes as navigation.bake previewed, as the shipped game does.
-        services->setDefaultNavigationSettings(m_services.navigationSettings);
+        services->outside().setDefaultNavigationSettings(m_services.navigationSettings);
         // Play saves into the project, apart from the shipped game's saves.
         if (!m_services.projectFile.empty() && m_services.document.path()) {
             const std::filesystem::path project = m_services.projectFile.parent_path();
-            services->setSaveGames(SaveGameStore(project / ".zenith" / "saves", project), *m_services.document.path());
+            services->outside().setSaveGames(SaveGameStore(project / ".zenith" / "saves", project),
+                                             *m_services.document.path());
         }
         services->events().publish(SceneLoaded{});
     }
@@ -447,7 +448,7 @@ SimulationClock EditorPlayback::simulationClock() const {
     // The game's own pause and time scale apply on top of the editor's.
     const SimulationClock editorClock = m_services.playMode.simulationClock();
     const GameServices* services = m_services.moduleHost.gameServices();
-    return services != nullptr ? services->simulationClock(editorClock) : editorClock;
+    return services != nullptr ? services->time().simulationClock(editorClock) : editorClock;
 }
 
 void EditorPlayback::beginUiFrame(ApplicationContext& context) {

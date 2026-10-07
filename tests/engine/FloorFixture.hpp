@@ -115,7 +115,7 @@ struct FloorSession {
         require(audio.init(AudioConfig{.maxVoices = 256, .outputEnabled = false}), "initialize audio");
         writeRoomPrefab(assetRoot, assets, documents);
         services = std::make_unique<GameServices>(assets, documents, debugDraw, &logger);
-        services->setAudio(&audio);
+        services->outside().setAudio(&audio);
         const Entity body = addStaticBox(scene, "Player", entt::null, {0.0f, 50.0f, 0.0f}, glm::vec3(0.4f));
         auto& rigidBody = scene.registry().get<RigidBodyComponent>(body);
         rigidBody.motionType = PhysicsMotionType::Kinematic;
@@ -129,7 +129,7 @@ struct FloorSession {
         for (uint32_t index = 0; index < roomCount; ++index) {
             const glm::vec3 position(static_cast<float>(index % columns) * roomSize, 0.0f,
                                      static_cast<float>(index / columns) * roomSize);
-            services->commands().spawn(
+            services->world().commands().spawn(
                 "room.prefab", {.localTransform = glm::translate(glm::mat4(1.0f), position)},
                 [this](Scene& spawnedIn, Entity entity) { rooms.push_back(spawnedIn.id(entity)); });
         }
@@ -138,7 +138,7 @@ struct FloorSession {
 
     void destroyFloor() {
         for (const SceneEntityId room : rooms) {
-            services->commands().destroy(room);
+            services->world().commands().destroy(room);
         }
         rooms.clear();
         services->flush(scene);

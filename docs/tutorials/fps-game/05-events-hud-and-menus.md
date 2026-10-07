@@ -16,7 +16,7 @@ struct TargetDestroyed {
 ```
 
 `Target::takeDamage` publishes it and destroys the target through
-`services.commands()`, which applies after the phase. The `score` system
+`services.world().commands()`, which applies after the phase. The `score` system
 reads the previous frame's events:
 
 ```cpp
@@ -50,7 +50,7 @@ game view and in `zenith --project`.
 The weapon spawns `prefabs/impact.prefab` where a shot lands:
 
 ```cpp
-context.services->effects().spawn(impactEffect, glm::translate(glm::mat4(1.0f), hit.position), {.pooled = true});
+context.services->world().effects().spawn(impactEffect, glm::translate(glm::mat4(1.0f), hit.position), {.pooled = true});
 ```
 
 The prefab is one entity with a one-shot particle burst, so the effect
@@ -61,7 +61,7 @@ Selection** on an entity with a Particle Emitter.
 
 `drawPauseMenu` and `drawSettingsMenu` are the engine's menus; the game
 supplies their entries. The template's pause calls
-`context.services->setPaused(true)`: physics, FixedUpdate, timers,
+`context.services->time().setPaused(true)`: physics, FixedUpdate, timers,
 animation, scene audio, and the player's look stop, while Update systems
 keep running with a zero `deltaSeconds` (and the real frame time in
 `unscaledDeltaSeconds`), so the score system can read the Pause key and

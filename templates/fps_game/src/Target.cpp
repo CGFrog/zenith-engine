@@ -21,7 +21,7 @@ void Target::takeDamage(GameServices& services, Scene& scene, Entity self, float
     if (health <= 0.0f) {
         m_destroyed = true;
         services.events().publish(TargetDestroyed{.target = id});
-        services.commands().destroy(id);
+        services.world().commands().destroy(id);
     }
 }
 

@@ -142,8 +142,15 @@ component it is given; the view propagates to multi-selection).
 ## Add a gameplay service to `GameServices`
 
 1. Implement the mechanism in its subsystem (no game policy).
-2. Expose it on `GameServices` (`src/engine/module/GameServices.*`); it must
-   be destroyed before the module that used it unloads.
+2. Expose it on the group whose question it answers
+   (`src/engine/module/GameServiceGroups.*`): what changes the scene
+   (`WorldServices`, `world()`), when things happen (`TimeServices`,
+   `time()`), the session's own data (`ContentServices`, `content()`), or
+   what lies outside the scene (`OutsideServices`, `outside()`). Only what
+   every group's users share (events, logging, the host's lifecycle calls)
+   goes on `GameServices` itself. It must be destroyed before the module that
+   used it unloads, and after anything in a later-declared group that refers
+   to it.
 3. This changes `GameServices`' layout: bump `ZENITH_MODULE_API_VERSION`.
 4. Test in `tests/engine/GameServicesTests.cpp`.
 5. Docs: [Game modules › GameServices](engine/modules.md#gameservices) and

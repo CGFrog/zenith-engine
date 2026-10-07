@@ -63,7 +63,7 @@ struct BehaviourCollision {
 // Disabled behaviours get no update, trigger, or collision hooks. Trigger and
 // collision hooks run at the start of the next FixedUpdate after the physics
 // step that produced them, before onFixedUpdate. Change the scene's entities
-// from a hook through GameServices::commands(), never directly.
+// from a hook through WorldServices::commands(), never directly.
 //
 // A copy (a duplicated entity, a prefab instance, a Play session's copy of
 // the edited scene) is a new behaviour that has not been created or started;

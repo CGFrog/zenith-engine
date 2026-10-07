@@ -235,7 +235,7 @@ root when inside it). `load` reads the baseline again and applies the changes
 the game never touched follow later edits of the level. Writes are atomic; a
 missing or corrupted slot loads its previous save from the `.bak` backup.
 `list` returns the slots newest first. Games reach the session's store
-through `GameServices::saveGames` and `saveGame`; `ProjectApplication` puts
+through `OutsideServices::saveGames` and `saveGame`; `ProjectApplication` puts
 it under `userDataDirectory("Zenith", <project name>)/saves`, and the editor's
 Play under the project's `.zenith/saves`.
 
@@ -394,7 +394,7 @@ so it avoids files, text, and staging scenes:
   use). `invalidate(reference or absolute path)` and
   `clearCache()` drop entries; the editor's prefab create and apply
   invalidate after writing, and the asset watcher's modified prefabs
-  invalidate the game's `GameServices::prefabs()`. `load()` always reads the
+  invalidate the game's `WorldServices::prefabs()`. `load()` always reads the
   file. `cacheStats()` counts hits and loads. A system is single-threaded;
   copies share the immutable entries.
 - **Validate once.** `instantiate` first walks the cached graph (every

@@ -23,7 +23,7 @@ void showMessage(FpsGameState& state, std::string text) {
 // animation stop until it resumes.
 void setScreen(GameServices& services, FpsGameState& state, FpsScreen screen) {
     state.screen = screen;
-    services.setPaused(screen != FpsScreen::Playing);
+    services.time().setPaused(screen != FpsScreen::Playing);
 }
 
 FirstPersonViewPreferences& viewPreferences(Scene& scene) {

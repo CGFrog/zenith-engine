@@ -10,7 +10,7 @@ void {{CLASS_NAME}}::onStart([[maybe_unused]] BehaviourContext& context) {
 
 void {{CLASS_NAME}}::onUpdate([[maybe_unused]] BehaviourContext& context) {
     // Runs every frame. context.entity is this behaviour's entity in
-    // context.scene; spawn and destroy through context.services->commands().
+    // context.scene; spawn and destroy through context.services->world().commands().
 }
 
 void register{{CLASS_NAME}}(ModuleRegistrar& registrar) {

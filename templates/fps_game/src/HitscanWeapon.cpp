@@ -36,7 +36,7 @@ void HitscanWeapon::onUpdate(BehaviourContext& context) {
         return;
     }
     if (!impactEffect.empty()) {
-        context.services->effects().spawn(impactEffect, glm::translate(glm::mat4(1.0f), hit.position),
+        context.services->world().effects().spawn(impactEffect, glm::translate(glm::mat4(1.0f), hit.position),
                                           {.pooled = true});
     }
     if (Target* target = scene.registry().try_get<Target>(hit.entity)) {

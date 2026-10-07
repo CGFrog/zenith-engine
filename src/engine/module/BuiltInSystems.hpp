@@ -23,14 +23,14 @@ inline constexpr std::string_view Behaviours = "zenith.behaviours";
 inline constexpr std::string_view FixedBehaviours = "zenith.fixed_behaviours";
 inline constexpr std::string_view LateBehaviours = "zenith.late_behaviours";
 // Update, Play: plans and follows the navigation agents' paths on the
-// session's navigation mesh (GameServices::navigation, baked on first use).
+// session's navigation mesh (OutsideServices::navigation, baked on first use).
 inline constexpr std::string_view NavAgents = "zenith.nav_agents";
 // Update, Play, after the game's Update systems (order animatorOrder): runs
 // the animators (updateAnimators) before the animations advance.
 inline constexpr std::string_view Animator = "zenith.animator";
 inline constexpr int32_t animatorOrder = 1000;
 // LateUpdate, Play: loads each audio emitter's clipAsset into its clip
-// (GameServices::loadClip) when the path changed, so emitters spawned or
+// (OutsideServices::loadClip) when the path changed, so emitters spawned or
 // edited this frame play from the frame's audio sync.
 inline constexpr std::string_view AudioEmitters = "zenith.audio_emitters";
 } // namespace EngineSystems

@@ -111,11 +111,11 @@ Watched Fields**. Watches survive Stop, so they show again next Play.
 
 ### Debug drawing
 
-`GameServices::debugDraw()` draws lines, spheres, boxes, and labels in every
+`OutsideServices::debugDraw()` draws lines, spheres, boxes, and labels in every
 viewport, the game view, and the standalone game:
 
 ```cpp
-DebugDraw& draw = context.services->debugDraw();
+DebugDraw& draw = context.services->outside().debugDraw();
 draw.line(origin, origin + forward * range, {.color = {1.0f, 0.2f, 0.2f, 1.0f}});   // one frame
 draw.channel("weapons.hits").forSeconds(2.0f).sphere(hitPoint, 0.1f);              // two seconds
 draw.channel("weapons.spawns").persistent().label(spawnPoint, "spawn");          // until cleared

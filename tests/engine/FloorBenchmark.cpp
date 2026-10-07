@@ -40,11 +40,11 @@ int main() {
             timed(report, "floor.spawn", [&] { session.spawnFloor(roomCount, columns); });
             timed(report, "floor.first_step", [&] { session.step(); });
             timed(report, "floor.navigation_bake",
-                  [&] { require(session.services->bakeNavigation(session.scene), "bake the floor"); });
+                  [&] { require(session.services->outside().bakeNavigation(session.scene), "bake the floor"); });
             timed(report, "floor.destroy", [&] { session.destroyFloor(); });
             timed(report, "floor.teardown_step", [&] { session.step(); });
         }
-        const NavMeshStats& mesh = session.services->navigation(session.scene).stats();
+        const NavMeshStats& mesh = session.services->outside().navigation(session.scene).stats();
         std::cout << roomCount << " rooms, " << roomCount * bodiesPerRoom << " bodies; last navigation mesh "
                   << mesh.polygons << " polygons from " << mesh.inputTriangles << " triangles\n";
         session.audio.shutdown();

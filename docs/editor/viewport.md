@@ -17,7 +17,7 @@ shows its stats and the project settings it bakes with, opens them
 (`project.settings {tab: navigation}`), toggles the viewport's **Navigation
 Mesh** overlay (`overlays.navigationMesh`, which gates the preview's drawing
 and is saved with the other overlays), and in Play shows the game's mesh and
-agent count through `GameServices::navigationIfBaked`, which never bakes.
+agent count through `OutsideServices::navigationIfBaked`, which never bakes.
 
 `panels/ViewportRegistry` is the session-owned record of the viewports. A
 viewport registers in its constructor and unregisters in its destructor; it
@@ -110,7 +110,7 @@ last step's contact points and normals), **Characters** (character capsules,
 green grounded with the ground normal, blue airborne), and **Nav Agents**
 (each agent's radius, crowd velocity and path end, yellow for a partial path
 and red for a failed one); **Navigation Mesh** then shows the game's own mesh
-(`GameServices::navigationIfBaked`, which never bakes) instead of the
+(`OutsideServices::navigationIfBaked`, which never bakes) instead of the
 preview. `viewport/RuntimeDebugDraw` records them without ImGui
 (`recordRuntimeDebug`), `ViewportPanel::recordRuntimeOverlays` calls it every
 Play frame whatever **Show in Play Mode** says, game views included, and the

@@ -136,6 +136,7 @@ add_library(zenith_engine SHARED
     module/EntityCommandBuffer.cpp
     module/EventQueue.cpp
     module/GameModule.cpp
+    module/GameServiceGroups.cpp
     module/GameServices.cpp
     module/Gameplay.cpp
     module/ModuleApi.cpp
