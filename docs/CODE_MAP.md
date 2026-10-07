@@ -28,9 +28,9 @@ capability. `--check` fails when the generated index is stale.
 
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
-| Game executable startup | `src/main.cpp`, `src/game/application/GameLaunch.*`, `RuntimeGameplay.*` | `parseGameLaunchArguments`, `loadLaunchProject`, `loadRuntimeGameplay`, `Engine::init`, `Engine::run` | `zenith_project_runtime` | [Demo](game/demo.md) |
-| The frame loop (fixed step, interpolation, render) | `src/engine/Engine.cpp` | `Engine::run` | `zenith_application_lifecycle` | [Architecture › Frame sequence](ARCHITECTURE.md#frame-sequence) |
-| Application / scene lifecycle hooks | `src/engine/application/Application.hpp` | `Application`, `ApplicationScene::{load,update,fixedUpdate,afterPhysicsStep,lateUpdate,drawUi,unload}`, `ApplicationContext` | `zenith_application_lifecycle` | [Application](engine/application.md) |
+| Game executable startup | `src/main.cpp`, `src/game/application/GameLaunch.*`, `RuntimeGameplay.*` | `parseGameLaunchArguments`, `loadLaunchProject`, `loadRuntimeGameplay`, `Engine::init`, `Engine::run` | `game.ProjectRuntime` | [Demo](game/demo.md) |
+| The frame loop (fixed step, interpolation, render) | `src/engine/Engine.cpp` | `Engine::run` | `game.ApplicationLifecycle` | [Architecture › Frame sequence](ARCHITECTURE.md#frame-sequence) |
+| Application / scene lifecycle hooks | `src/engine/application/Application.hpp` | `Application`, `ApplicationScene::{load,update,fixedUpdate,afterPhysicsStep,lateUpdate,drawUi,unload}`, `ApplicationContext` | `game.ApplicationLifecycle` | [Application](engine/application.md) |
 | Pause, time scale, frame step | `src/engine/application/SimulationClock.hpp`, `src/engine/module/GameServiceGroups.*` | `SimulationClock`, `TimeServices::{setPaused,setTimeScale,simulationClock}` | `engine.GameServices` | [Modules › GameServices](engine/modules.md#gameservices) |
 | Executable-relative asset/shader paths | `src/engine/resources/ResourceLocator.*` | `initializeResourceLocator`, `assetRoot`, `shaderRoot`, `resourceRoot` | – | [Assets › Asset flow](engine/assets.md#asset-flow) |
 | Logging and log categories | `src/engine/diagnostics/Logger.*` | `Logger`, `LogChannel`, `GameServices::log(name)` | `engine.Logger` | [Application](engine/application.md) |
@@ -73,13 +73,13 @@ capability. `--check` fails when the generated index is stale.
 | Timers | `src/engine/module/Timers.*` | `Timers::{start,cancel}`, `TimerRepeat`, `TimerContext` | `engine.GameServices` | [Modules](engine/modules.md) |
 | Self-removing effects | `src/engine/module/Effects.*` | `Effects::spawn`, `EffectOptions` | `engine.GameServices` | [Modules](engine/modules.md) |
 | Per-session state | `src/engine/module/SessionResources.*` | `SessionResources`, `resourceKey` | `engine.GameServices` | [Modules](engine/modules.md) |
-| Running a `Gameplay` in a game scene | `src/engine/module/Gameplay.*` | `Gameplay`, `GameplayRunner`, `gameplayFromModule`, `linkGameplay` | `zenith_project_runtime`, `zenith_demo_game_module` | [Modules](engine/modules.md) |
+| Running a `Gameplay` in a game scene | `src/engine/module/Gameplay.*` | `Gameplay`, `GameplayRunner`, `gameplayFromModule`, `linkGameplay` | `game.ProjectRuntime`, `game.DemoGameModule` | [Modules](engine/modules.md) |
 | First-person player | `src/engine/gameplay/FirstPerson.*`, `src/engine/physics/CharacterController.hpp` | `FirstPersonCameraComponent`, `applyCharacterInput`, `spawnFirstPersonPlayer` | `engine.CharacterController` | [Gameplay](engine/gameplay.md) |
 | Deterministic random | `src/engine/gameplay/Random.*` | `RandomStream`, `RandomStreams`, `entropySeed` | `engine.Random` | [Gameplay › Random](engine/gameplay.md#random) |
 | Data tables | `src/engine/gameplay/DefinitionTable.*`, `DefinitionSchemas.*` | `DefinitionTable<Entry>`, `DefinitionSchemaRegistry` | `engine.DefinitionTable` | [Gameplay](engine/gameplay.md) |
 | Procedural meshes at runtime | `src/engine/assets/MeshBuilder.*`, `src/engine/assets/Assets.hpp` | `MeshBuilder`, `AssetManager::{createMesh,createMaterial,lease}` | `engine.RuntimeContent` | [Gameplay › Procedural geometry](engine/gameplay.md#procedural-geometry) |
 | Example game code | `templates/cpp_game/src/`, `templates/fps_game/src/` | `SpinnerGameplay`, `HitscanWeapon`, `Target`, `GoalZone`, `FpsGame` | `editor.FpsTemplate` | [FPS tutorial](tutorials/fps-game/README.md) |
-| Demo gameplay | `src/game/gameplay/` | `registerDemoGameplay`, `ItemCollectionSystem` | `zenith_demo_game_module` | [Demo](game/demo.md) |
+| Demo gameplay | `src/game/gameplay/` | `registerDemoGameplay`, `ItemCollectionSystem` | `game.DemoGameModule` | [Demo](game/demo.md) |
 
 ### Input, UI, audio
 
@@ -194,7 +194,7 @@ capability. `--check` fails when the generated index is stale.
 | Warnings and exports | `cmake/CompilerSettings.cmake`, `cmake/WindowsExports.cmake`, `tools/export_definitions/` | `zenith_target_warnings`, `zenith_export_defined_symbols`. |
 | Registering tests | `cmake/ZenithTesting.cmake`, `tests/*/CMakeLists.txt` | `zenith_add_test_suite` (doctest unit binaries), `zenith_add_test` (standalone), `zenith_add_test_executable`, `zenith_add_test_module`; tier defaults ([Testing](TESTING.md)). |
 | Test helpers | `tests/support/` | `support/Doctest.hpp`, `testsupport::TempDirectory`, `readText`/`writeText`, `failureArtifactPath`, `approxEqual`, `skipExitCode`, `StandaloneChecks`, `vulkanDeviceAvailable`, `zenith_test_main`. |
-| Test rules check | `tools/tests/check_tests.py`, `tools/tests/legacy_tests.txt` | Enforces [Testing](TESTING.md); CI's `docs` job and `tools/check.ps1` run it. |
+| Test rules check | `tools/tests/check_tests.py` | Enforces [Testing](TESTING.md); CI's `docs` job and `tools/check.ps1` run it. |
 | Game modules built outside the tree | `cmake/ZenithEngineConfig.cmake.in`, `templates/*/CMakeLists.txt` | Templates `include("${ZENITH_ROOT}/ZenithEngineConfig.cmake")` written by the engine build. |
 | Packaging | `cmake/PackageProject.cmake`, root `CMakeLists.txt` (CPack) | [Releasing](RELEASING.md). |
 | Presets | `CMakePresets.json` | `default`/`worktree` configure, `debug` build, `unit`/`cpu`/`gpu`/`benchmark`/`all` test ([Testing](TESTING.md)). |
@@ -321,8 +321,8 @@ Rules ([Testing](TESTING.md)):
   `zenith_add_test(<name> SOURCES ...)`.
 - Tiers are labels: `unit`, `slow`, `vulkan`, `benchmark`, each with a test
   preset of that name, plus `cpu` (unit and slow) and `all`.
-- Shared helpers are in `tests/support/`. Files not converted yet are listed
-  in `tools/tests/legacy_tests.txt`.
+- Shared helpers are in `tests/support/` (`TempDirectory`, `readText`,
+  `writeText`, `readBytes`, `writeBytes`); the checker refuses local copies.
 - Editor tests build contexts from `tests/editor/EditorTestFixture.hpp`.
 
 ## Source index
