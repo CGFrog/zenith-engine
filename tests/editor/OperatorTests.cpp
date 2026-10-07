@@ -491,8 +491,8 @@ TEST_CASE("Operator: keymap conflicts") {
 }
 
 TEST_CASE("Operator: keymap file") {
-    const testsupport::TempDirectory directoryDirectory("zenith_operator_tests");
-    const std::filesystem::path directory = directoryDirectory.path();
+    const testsupport::TempDirectory scratch("operator-tests");
+    const std::filesystem::path directory = scratch.path();
     std::error_code error;
     const std::filesystem::path path = directory / "keymap.json";
 

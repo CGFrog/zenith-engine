@@ -276,8 +276,8 @@ TEST_CASE("ComponentOperator: layout ordering") {
 }
 
 TEST_CASE("ComponentOperator: layout persistence") {
-    const testsupport::TempDirectory directoryDirectory("zenith-component-layout-test");
-    const std::filesystem::path directory = directoryDirectory.path();
+    const testsupport::TempDirectory scratch("component-layout-test");
+    const std::filesystem::path directory = scratch.path();
     const std::filesystem::path path = directory / "component-inspector.json";
 
     ComponentInspectorLayout missing;

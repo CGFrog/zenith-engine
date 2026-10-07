@@ -278,8 +278,8 @@ TEST_CASE("IrradianceVolume: volume selection") {
 }
 
 TEST_CASE("IrradianceVolume: scene document round trip") {
-    const testsupport::TempDirectory rootDirectory("zenith_irradiance_volume_test");
-    const std::filesystem::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("irradiance-volume-test");
+    const std::filesystem::path root = scratch.path();
     std::filesystem::create_directories(root / "baked");
     const IrradianceVolumeData data = uniformVolume({2u, 2u, 2u}, {0.3f, 0.2f, 0.1f});
     std::vector<std::byte> bytes;

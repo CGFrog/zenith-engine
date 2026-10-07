@@ -338,7 +338,7 @@ int main(int argc, char** argv) {
         std::cerr << "Cannot create " << options.outputDirectory << ": " << error.message() << '\n';
         return 1;
     }
-    int failures = 0;
+    int failedViews = 0;
     bool anySelected = false;
     for (const CaptureView& view : manifest.views) {
         if (!selected(options, view)) {
@@ -346,15 +346,15 @@ int main(int argc, char** argv) {
         }
         anySelected = true;
         if (!processView(options, manifest, view)) {
-            ++failures;
+            ++failedViews;
         }
     }
     if (!anySelected) {
         std::cerr << "No manifest view matches the requested --view names\n";
         return 1;
     }
-    if (failures != 0) {
-        std::cerr << failures << " reference capture(s) failed\n";
+    if (failedViews != 0) {
+        std::cerr << failedViews << " reference capture(s) failed\n";
         return 1;
     }
     return 0;

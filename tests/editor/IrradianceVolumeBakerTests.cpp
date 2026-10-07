@@ -189,8 +189,8 @@ TEST_CASE("IrradianceVolumeBaker: gather and bake path") {
                    firstName != irradianceVolumeBakeFileName(SceneEntityId{7}, second)),
                   "bake file names identify the volume and its contents");
 
-    const testsupport::TempDirectory rootDirectory("zenith_irradiance_bake_test");
-    const std::filesystem::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("irradiance-bake-test");
+    const std::filesystem::path root = scratch.path();
     const Entity volume = scene.createEntity("Volume");
     scene.registry().emplace<IrradianceVolumeComponent>(volume).probeCounts = {2u, 1u, 2u};
     scene.updateWorldTransforms();

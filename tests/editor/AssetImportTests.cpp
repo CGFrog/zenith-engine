@@ -14,6 +14,7 @@
 #include "engine/gameplay/DefinitionSchemas.hpp"
 
 #include "support/Doctest.hpp"
+#include "support/Files.hpp"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -21,7 +22,6 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
-#include <fstream>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -31,17 +31,6 @@
 TEST_SUITE_BEGIN("AssetImport");
 
 namespace {
-
-void writeFile(const std::filesystem::path& path, std::string_view contents) {
-    std::filesystem::create_directories(path.parent_path());
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    output << contents;
-}
-
-std::string readFile(const std::filesystem::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-}
 
 bool hasMessage(const EditorDiagnostics& diagnostics, std::string_view text, EditorDiagnosticSeverity severity) {
     return std::ranges::any_of(diagnostics.entries(), [&](const EditorDiagnostic& entry) {
@@ -109,19 +98,19 @@ struct TestProject {
 TEST_CASE("AssetImport: import into folder") {
     TestProject project("asset-import-copy");
     const std::filesystem::path outside = project.directory / "outside";
-    writeFile(outside / "stone.png", "stone");
-    writeFile(outside / "stone.png.meta", "{}");
-    writeFile(outside / "pack" / "a.wav", "a");
-    writeFile(outside / "pack" / "a.wav.meta", "{}");
-    writeFile(outside / "pack" / ".hidden", "h");
-    writeFile(project.content / "stone.png", "existing");
+    testsupport::writeText(outside / "stone.png", "stone");
+    testsupport::writeText(outside / "stone.png.meta", "{}");
+    testsupport::writeText(outside / "pack" / "a.wav", "a");
+    testsupport::writeText(outside / "pack" / "a.wav.meta", "{}");
+    testsupport::writeText(outside / "pack" / ".hidden", "h");
+    testsupport::writeText(project.content / "stone.png", "existing");
 
     const std::array<std::filesystem::path, 3> sources{outside / "stone.png", outside / "pack",
                                                        outside / "stone.png.meta"};
     const AssetImportResult result = importIntoFolder(sources, project.content);
     CHECK_MESSAGE((result.success() && result.imported.size() == 2), "a file and a folder should be imported");
     CHECK_MESSAGE((std::filesystem::exists(project.content / "stone (1).png") &&
-                   readFile(project.content / "stone.png") == "existing"),
+                   testsupport::readText(project.content / "stone.png") == "existing"),
                   "a taken name should get ' (1)' and leave the existing file alone");
     CHECK_MESSAGE((std::filesystem::exists(project.content / "pack" / "a.wav") &&
                    !std::filesystem::exists(project.content / "pack" / "a.wav.meta") &&
@@ -140,9 +129,9 @@ TEST_CASE("AssetImport: import into folder") {
 TEST_CASE("AssetImport: project import and settings") {
     TestProject project("asset-import-project");
     const std::filesystem::path outside = project.directory / "outside";
-    writeFile(outside / "wall.png", "png");
-    writeFile(project.content / "sounds" / "hit.wav", "wav");
-    writeFile(project.scenes / "level.zenith-scene", "{}");
+    testsupport::writeText(outside / "wall.png", "png");
+    testsupport::writeText(project.content / "sounds" / "hit.wav", "wav");
+    testsupport::writeText(project.scenes / "level.zenith-scene", "{}");
 
     std::vector<std::filesystem::path> reloadedTextures;
     std::vector<std::filesystem::path> reloadedSounds;
@@ -188,17 +177,18 @@ TEST_CASE("AssetImport: project import and settings") {
 }
 
 void writeReferencingProject(const TestProject& project) {
-    writeFile(project.content / "textures" / "plate.png", "png");
-    writeFile(project.content / "textures" / "unused.png", "png");
-    writeFile(project.content / "sounds" / "hit.wav", "wav");
-    writeFile(project.content / "materials" / "plate.zmat",
-              R"({"version": 1, "base_color_texture": {"path": "../textures/plate.png"}})");
-    writeFile(project.scenes / "level.zenith-scene", R"({"version": 2, "entities": [
+    testsupport::writeText(project.content / "textures" / "plate.png", "png");
+    testsupport::writeText(project.content / "textures" / "unused.png", "png");
+    testsupport::writeText(project.content / "sounds" / "hit.wav", "wav");
+    testsupport::writeText(project.content / "materials" / "plate.zmat",
+                           R"({"version": 1, "base_color_texture": {"path": "../textures/plate.png"}})");
+    testsupport::writeText(project.scenes / "level.zenith-scene", R"({"version": 2, "entities": [
         {"id": 7, "components": {"decal": {"albedo_asset": {"path": "textures/plate.png"}}}},
         {"id": 8, "components": {"audio_emitter": {"clip_asset": "sounds/hit.wav"}}}]})");
-    writeFile(project.content / "prefabs" / "crate.prefab", R"({"version": 1, "entities": [], "nested": []})");
-    writeFile(project.content / "prefabs" / "stack.prefab",
-              R"({"version": 1, "entities": [], "nested": [{"id": 1, "source": "crate.prefab"}]})");
+    testsupport::writeText(project.content / "prefabs" / "crate.prefab",
+                           R"({"version": 1, "entities": [], "nested": []})");
+    testsupport::writeText(project.content / "prefabs" / "stack.prefab",
+                           R"({"version": 1, "entities": [], "nested": [{"id": 1, "source": "crate.prefab"}]})");
 }
 
 TEST_CASE("AssetImport: references") {
@@ -231,13 +221,13 @@ TEST_CASE("AssetImport: references") {
 
     // A GUID finds a reference whose path is stale.
     const AssetGuid guid = assets.catalog().findAsset(plate)->guid;
-    writeFile(project.content / "materials" / "renamed.zmat", R"({"version": 1, "base_color_texture": {"guid": ")" +
-                                                                  guid.toString() +
-                                                                  R"(", "path": "../textures/old.png"}})");
+    testsupport::writeText(project.content / "materials" / "renamed.zmat",
+                           R"({"version": 1, "base_color_texture": {"guid": ")" + guid.toString() +
+                               R"(", "path": "../textures/old.png"}})");
     assets.refresh(diagnostics);
     CHECK_MESSAGE(assets.findReferences(plate, diagnostics).size() == 3, "a reference by GUID should be found");
 
-    const std::string scene = readFile(project.scenes / "level.zenith-scene");
+    const std::string scene = testsupport::readText(project.scenes / "level.zenith-scene");
     const std::vector<SceneEntityId> users = sceneEntitiesReferencing(scene, project.content, plate, guid);
     CHECK_MESSAGE((users.size() == 1 && users.front().value == 7), "the open scene's users should be found by entity");
 }
@@ -275,9 +265,9 @@ TEST_CASE("AssetImport: delete guard and find references") {
 TEST_CASE("AssetImport: file drops") {
     TestProject project("asset-import-drops");
     const std::filesystem::path outside = project.directory / "outside";
-    writeFile(outside / "crate.gltf", "{}");
-    writeFile(outside / "far.png", "png");
-    writeFile(project.content / "models" / "keep.txt", "folder content");
+    testsupport::writeText(outside / "crate.gltf", "{}");
+    testsupport::writeText(outside / "far.png", "png");
+    testsupport::writeText(project.content / "models" / "keep.txt", "folder content");
     HeadlessImGui imgui;
     EditorDiagnostics diagnostics;
     ProjectAssets assets(project.content, project.scenes, project.settingsFile(),
@@ -302,7 +292,7 @@ TEST_CASE("AssetImport: file drops") {
     // A window over the browser takes the drops on it: the browser leaves a
     // drop inside its rectangle that landed on the window above it.
     drops.takeAll();
-    writeFile(outside / "covered.gltf", "{}");
+    testsupport::writeText(outside / "covered.gltf", "{}");
     const auto drawCovered = [&] {
         panel.drawBrowser(diagnostics, actions);
         ImGui::SetNextWindowPos({350.0f, 250.0f});
@@ -327,9 +317,10 @@ struct EnemyDef {
 TEST_CASE("AssetImport: data tables") {
     TestProject project("asset-import-data");
     const std::filesystem::path enemies = project.content / "data" / "enemies.json";
-    writeFile(enemies, "\xEF\xBB\xBF  [{\"id\": \"rat\", \"health\": 3}, {\"id\": \"bat\", \"speed\": 2}]");
-    writeFile(project.content / "data" / "settings.json", R"({"volume": 1})");
-    writeFile(project.content / "data" / "broken.json", R"([{"id": "a"}, {"id": "a"}])");
+    testsupport::writeText(enemies,
+                           "\xEF\xBB\xBF  [{\"id\": \"rat\", \"health\": 3}, {\"id\": \"bat\", \"speed\": 2}]");
+    testsupport::writeText(project.content / "data" / "settings.json", R"({"volume": 1})");
+    testsupport::writeText(project.content / "data" / "broken.json", R"([{"id": "a"}, {"id": "a"}])");
     CHECK_MESSAGE(editorAssetKind(enemies) == EditorAssetKind::Data, "a JSON array should be a data table");
     CHECK_MESSAGE(!editorAssetKind(project.content / "data" / "settings.json"),
                   "a JSON object should not be listed as an asset");

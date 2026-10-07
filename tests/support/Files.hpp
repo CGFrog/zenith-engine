@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -16,6 +17,7 @@ std::vector<uint8_t> readBytes(const std::filesystem::path& file);
 // Writes text as the whole file, creating its parent directories; throws
 // std::runtime_error when it cannot.
 void writeText(const std::filesystem::path& file, std::string_view text);
+void writeBytes(const std::filesystem::path& file, std::span<const uint8_t> bytes);
 
 // Where a test keeps a file that explains a failure (a capture that did not
 // match, a diff): test-temp/failures/<fileName> in the build tree, which

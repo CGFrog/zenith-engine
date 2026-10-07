@@ -321,8 +321,8 @@ TEST_CASE("PropertiesPanel: render tab") {
 
 TEST_CASE("PropertiesPanel: controller") {
     RenderRuntime rendering;
-    const testsupport::TempDirectory pathDirectory("zenith-render-controller-test");
-    const std::filesystem::path path = pathDirectory / "zenith-render-controller-test.json";
+    const testsupport::TempDirectory renderSettingsDirectory("render-controller-test");
+    const std::filesystem::path path = renderSettingsDirectory / "zenith-render-controller-test.json";
     std::filesystem::remove(path);
     RenderSettingsController controller(EditorRenderSettings(ProjectConfig{}, path));
     CHECK_MESSAGE((static_cast<bool>(controller.load(rendering))), "loading with nothing saved should succeed");

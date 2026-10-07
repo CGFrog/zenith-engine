@@ -148,8 +148,8 @@ void write(const std::filesystem::path& path, std::string_view text) {
 }
 
 TEST_CASE("DefinitionTable: files and reload") {
-    const testsupport::TempDirectory directoryDirectory("zenith_definition_tables");
-    const std::filesystem::path directory = directoryDirectory.path();
+    const testsupport::TempDirectory scratch("definition-tables");
+    const std::filesystem::path directory = scratch.path();
     const std::filesystem::path path = directory / "items.json";
     write(path, items);
 
