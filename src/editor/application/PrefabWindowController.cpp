@@ -147,6 +147,28 @@ ViewportPanel* PrefabWindowController::viewport(uint64_t window) const {
     return found != nullptr ? dynamic_cast<ViewportPanel*>(found->viewport.get()) : nullptr;
 }
 
+bool PrefabWindowController::panelsDocked(uint64_t window) const {
+    const View* found = findView(window);
+    const PrefabWindowDocument* document = m_windows.find(window);
+    if (found == nullptr || document == nullptr || found->dockspaceId == 0) {
+        return false;
+    }
+    const std::pair<const std::shared_ptr<EditorPanel>&, std::string_view> panels[] = {
+        {found->hierarchy, "hierarchy"}, {found->viewport, "viewport"}, {found->inspector, "inspector"}};
+    for (const auto& [panel, part] : panels) {
+        if (!panel) {
+            continue;
+        }
+        const ImGuiWindow* panelWindow =
+            ImGui::FindWindowByName(windowPartName(*document, panel->title(), part).c_str());
+        if (panelWindow == nullptr || panelWindow->DockNode == nullptr ||
+            ImGui::DockNodeGetRootNode(panelWindow->DockNode)->ID != found->dockspaceId) {
+            return false;
+        }
+    }
+    return true;
+}
+
 PrefabWindowDocument* PrefabWindowController::focused() const {
     return m_focused == 0 ? nullptr : m_windows.find(m_focused);
 }
@@ -423,6 +445,7 @@ void PrefabWindowController::drawWindow(ApplicationContext& context, PrefabWindo
         m_focused = window.id;
     }
     const ImGuiID dockspaceId = ImGui::GetID("##PrefabDockspace");
+    view.dockspaceId = dockspaceId;
     if (visible) {
         m_services.themeChrome.paintAreaWindow();
         drawToolbar(context, window);
