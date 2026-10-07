@@ -11,21 +11,17 @@
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <string>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("Animator");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 std::vector<AnimationClip> clips() {
     return {{.name = "Idle", .duration = 1.0f}, {.name = "Walk", .duration = 0.5f}, {.name = "Jump", .duration = 0.8f}};
@@ -68,84 +64,86 @@ struct Rig {
     }
 };
 
-void testEntryAndConditions() {
+TEST_CASE("Animator: entry and conditions") {
     Rig rig;
-    expect(validateAnimatorDefinition(rig.animator.definition).empty(), "the locomotion animator is valid");
-    expect(rig.step(0.1f) && rig.animator.currentState == "Idle" && rig.animation.clipIndex == 0 &&
-               !rig.animation.blendClipIndex && std::abs(rig.animator.stateTime - 0.1f) < 1.0e-5f,
-           "an animator enters its entry state without a cross-fade");
+    CHECK_MESSAGE(validateAnimatorDefinition(rig.animator.definition).empty(), "the locomotion animator is valid");
+    CHECK_MESSAGE((rig.step(0.1f) && rig.animator.currentState == "Idle" && rig.animation.clipIndex == 0 &&
+                   !rig.animation.blendClipIndex && std::abs(rig.animator.stateTime - 0.1f) < 1.0e-5f),
+                  "an animator enters its entry state without a cross-fade");
 
     rig.step(0.1f);
-    expect(rig.animator.currentState == "Idle", "an animator stays while no transition holds");
+    CHECK_MESSAGE(rig.animator.currentState == "Idle", "an animator stays while no transition holds");
 
-    expect(rig.animator.setFloat("speed", 1.0f) && !rig.animator.setFloat("missing", 1.0f),
-           "parameters are set by name");
+    CHECK_MESSAGE((rig.animator.setFloat("speed", 1.0f) && !rig.animator.setFloat("missing", 1.0f)),
+                  "parameters are set by name");
     rig.step(0.1f);
-    expect(rig.animator.currentState == "Walk" && rig.animation.blendClipIndex == 1u &&
-               rig.animation.blendDuration == 0.25f && rig.animation.playbackSpeed == 2.0f,
-           "a float condition moves to its state, cross-fading the clip");
-    expect(std::abs(rig.animator.stateTime - 0.2f) < 1.0e-5f, "state time advances at the state's speed");
+    CHECK_MESSAGE((rig.animator.currentState == "Walk" && rig.animation.blendClipIndex == 1u &&
+                   rig.animation.blendDuration == 0.25f && rig.animation.playbackSpeed == 2.0f),
+                  "a float condition moves to its state, cross-fading the clip");
+    CHECK_MESSAGE(std::abs(rig.animator.stateTime - 0.2f) < 1.0e-5f, "state time advances at the state's speed");
 
     rig.animator.setFloat("speed", 0.0f);
     rig.step(0.1f);
-    expect(rig.animator.currentState == "Idle", "a less-than condition moves back");
+    CHECK_MESSAGE(rig.animator.currentState == "Idle", "a less-than condition moves back");
 }
 
-void testTriggersAndExitTime() {
+TEST_CASE("Animator: triggers and exit time") {
     Rig rig;
     rig.step(0.1f);
-    expect(!rig.animator.setTrigger("speed") && rig.animator.setTrigger("jump"),
-           "only trigger parameters can be triggered");
+    CHECK_MESSAGE((!rig.animator.setTrigger("speed") && rig.animator.setTrigger("jump")),
+                  "only trigger parameters can be triggered");
     rig.step(0.1f);
-    expect(rig.animator.currentState == "Jump" && rig.animator.parameter("jump") == 0.0f && !rig.animation.looping,
-           "a trigger fires an any-state transition and is consumed");
+    CHECK_MESSAGE(
+        (rig.animator.currentState == "Jump" && rig.animator.parameter("jump") == 0.0f && !rig.animation.looping),
+        "a trigger fires an any-state transition and is consumed");
     rig.step(0.1f);
-    expect(rig.animator.currentState == "Jump", "an any-state transition does not re-enter its own state");
+    CHECK_MESSAGE(rig.animator.currentState == "Jump", "an any-state transition does not re-enter its own state");
 
     rig.step(0.5f);
-    expect(rig.animator.currentState == "Jump", "an exit-time transition waits for its clip to play");
+    CHECK_MESSAGE(rig.animator.currentState == "Jump", "an exit-time transition waits for its clip to play");
     rig.step(0.3f);
     rig.step(0.01f);
-    expect(rig.animator.currentState == "Idle", "an exit-time transition leaves once the clip has played");
+    CHECK_MESSAGE(rig.animator.currentState == "Idle", "an exit-time transition leaves once the clip has played");
 }
 
-void testEventsAcrossLoops() {
+TEST_CASE("Animator: events across loops") {
     Rig rig;
     rig.step(0.0f);
     rig.animator.setFloat("speed", 1.0f);
     // Enters Walk and plays 0.1 s of it at speed 2: 0.2 clip seconds, so the
     // footstep at 0.2 is not yet passed.
     rig.step(0.1f);
-    expect(rig.animator.currentState == "Walk" && rig.events.empty(), "no event before its time");
+    CHECK_MESSAGE((rig.animator.currentState == "Walk" && rig.events.empty()), "no event before its time");
     rig.step(0.05f);
-    expect(rig.events == std::vector<std::string>{"footstep"}, "an event fires when playback passes its time");
+    CHECK_MESSAGE((rig.events == std::vector<std::string>{"footstep"}), "an event fires when playback passes its time");
     rig.step(0.05f);
-    expect(rig.events.empty(), "an event fires once per pass");
+    CHECK_MESSAGE(rig.events.empty(), "an event fires once per pass");
     // From 0.4 to 1.4 clip seconds passes the footstep at 0.7 and 1.2.
     rig.step(0.5f);
-    expect(rig.events.size() == 2, "a looping state fires its event on every loop it passes");
+    CHECK_MESSAGE(rig.events.size() == 2, "a looping state fires its event on every loop it passes");
 }
 
-void testMissingClipsAndValidation() {
+TEST_CASE("Animator: missing clips and validation") {
     Rig rig;
     rig.available = {{.name = "Idle", .duration = 1.0f}};
-    expect(!rig.step(0.1f) && rig.animator.currentState.empty(), "an animator whose clip is missing does nothing");
+    CHECK_MESSAGE((!rig.step(0.1f) && rig.animator.currentState.empty()),
+                  "an animator whose clip is missing does nothing");
 
     AnimatorDefinition definition = locomotion();
     definition.transitions.push_back({.from = "Idle", .to = "Nowhere", .exitTime = 0.5f});
-    expect(!validateAnimatorDefinition(definition).empty(), "a transition to a missing state is invalid");
+    CHECK_MESSAGE(!validateAnimatorDefinition(definition).empty(), "a transition to a missing state is invalid");
     definition = locomotion();
     definition.transitions.push_back({.from = "Idle", .to = "Walk"});
-    expect(!validateAnimatorDefinition(definition).empty(), "a transition with nothing to wait for is invalid");
+    CHECK_MESSAGE(!validateAnimatorDefinition(definition).empty(), "a transition with nothing to wait for is invalid");
     definition = locomotion();
     definition.transitions.front().conditions.front().mode = AnimatorConditionMode::Triggered;
-    expect(!validateAnimatorDefinition(definition).empty(), "a condition must fit its parameter's type");
+    CHECK_MESSAGE(!validateAnimatorDefinition(definition).empty(), "a condition must fit its parameter's type");
     definition = locomotion();
     definition.states.push_back({.name = "Idle", .clip = "Walk"});
-    expect(!validateAnimatorDefinition(definition).empty(), "state names are unique");
+    CHECK_MESSAGE(!validateAnimatorDefinition(definition).empty(), "state names are unique");
 }
 
-void testSceneDocument() {
+TEST_CASE("Animator: scene document") {
     const std::shared_ptr<const ComponentTypeRegistry> types = builtInComponentTypes();
     AssetManager assets;
     Scene scene;
@@ -154,43 +152,36 @@ void testSceneDocument() {
     animator.currentState = "Walk";
     scene.registry().emplace<AnimatorComponent>(entity, animator);
     std::string text;
-    expect(SceneDocument::serialize(scene, assets, {.componentTypes = types}, text).success, "an animator serializes");
+    CHECK_MESSAGE(SceneDocument::serialize(scene, assets, {.componentTypes = types}, text).success,
+                  "an animator serializes");
     Scene loaded;
-    expect(SceneDocument::deserialize(text, assets, {.componentTypes = types}, loaded).success,
-           "an animator deserializes");
+    CHECK_MESSAGE(SceneDocument::deserialize(text, assets, {.componentTypes = types}, loaded).success,
+                  "an animator deserializes");
     const Entity reloaded = loaded.findEntity(scene.id(entity));
     const auto* read = reloaded != entt::null ? loaded.registry().try_get<AnimatorComponent>(reloaded) : nullptr;
-    expect(read != nullptr && read->definition.states.size() == 3 && read->definition.transitions.size() == 4 &&
-               read->definition.transitions[3].exitTime == 1.0f && !read->definition.transitions[0].exitTime &&
-               read->definition.transitions[2].conditions[0].mode == AnimatorConditionMode::Triggered &&
-               read->definition.parameters[1].type == AnimatorParameterType::Trigger &&
-               read->definition.events[0].name == "footstep" && read->definition.entryState == "Idle" &&
-               read->currentState.empty(),
-           "an animator's definition round-trips and its runtime state does not");
+    CHECK_MESSAGE((read != nullptr && read->definition.states.size() == 3 && read->definition.transitions.size() == 4 &&
+                   read->definition.transitions[3].exitTime == 1.0f && !read->definition.transitions[0].exitTime &&
+                   read->definition.transitions[2].conditions[0].mode == AnimatorConditionMode::Triggered &&
+                   read->definition.parameters[1].type == AnimatorParameterType::Trigger &&
+                   read->definition.events[0].name == "footstep" && read->definition.entryState == "Idle" &&
+                   read->currentState.empty()),
+                  "an animator's definition round-trips and its runtime state does not");
 
     const std::string invalid =
         R"({"version":1,"entities":[{"id":1,"name":"a","local_transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],)"
         R"("parent":null,"components":{"animator":{"states":[{"name":"A","clip":"A"}],)"
         R"("transitions":[{"from":"A","to":"B","exit_time":1}]}}}]})";
     Scene rejected;
-    expect(!SceneDocument::deserialize(invalid, assets, {.componentTypes = types}, rejected).success,
-           "a scene with an invalid animator fails to load");
+    CHECK_MESSAGE(!SceneDocument::deserialize(invalid, assets, {.componentTypes = types}, rejected).success,
+                  "a scene with an invalid animator fails to load");
 }
 
-void testSystemSchedule() {
+TEST_CASE("Animator: system schedule") {
     const Gameplay gameplay = builtInGameplay();
     const std::vector<std::string> update = gameplay.systems->schedule(SystemPhase::Update, SimulationMode::Play);
-    expect(!update.empty() && update.back() == EngineSystems::Animator,
-           "the engine's animator system runs after the other Update systems");
+    CHECK_MESSAGE((!update.empty() && update.back() == EngineSystems::Animator),
+                  "the engine's animator system runs after the other Update systems");
 }
 } // namespace
 
-int main() {
-    testEntryAndConditions();
-    testTriggersAndExitTime();
-    testEventsAcrossLoops();
-    testMissingClipsAndValidation();
-    testSceneDocument();
-    testSystemSchedule();
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

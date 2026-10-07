@@ -3,20 +3,16 @@
 
 #include "engine/ui/GameMenus.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <cmath>
 #include <iostream>
 #include <string>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("GameMenus");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 InputState clickAt(glm::vec2 position) {
     InputState input;
@@ -27,24 +23,24 @@ InputState clickAt(glm::vec2 position) {
 }
 
 // At 1080p the menus' rows are 640 wide, centred: x 640 to 1280.
-void testPauseMenu() {
+TEST_CASE("GameMenus: pause menu") {
     GameUiContext ui;
     ui.beginFrame({1920, 1080}, {});
-    expect(drawPauseMenu(ui) == MenuAction::None, "a pause menu without input chooses nothing");
+    CHECK_MESSAGE(drawPauseMenu(ui) == MenuAction::None, "a pause menu without input chooses nothing");
     // Three rows: resume at y 478 to 542, settings 556 to 620, quit 634 to 698.
     ui.beginFrame({1920, 1080}, clickAt({960.0f, 500.0f}));
-    expect(drawPauseMenu(ui) == MenuAction::Resume, "clicking Resume resumes");
+    CHECK_MESSAGE(drawPauseMenu(ui) == MenuAction::Resume, "clicking Resume resumes");
     ui.beginFrame({1920, 1080}, clickAt({960.0f, 600.0f}));
-    expect(drawPauseMenu(ui) == MenuAction::OpenSettings, "clicking Settings opens the settings");
+    CHECK_MESSAGE(drawPauseMenu(ui) == MenuAction::OpenSettings, "clicking Settings opens the settings");
     ui.beginFrame({1920, 1080}, clickAt({960.0f, 680.0f}));
-    expect(drawPauseMenu(ui) == MenuAction::Quit, "clicking Quit quits");
+    CHECK_MESSAGE(drawPauseMenu(ui) == MenuAction::Quit, "clicking Quit quits");
     // Two rows: resume at y 517 to 581, quit 595 to 659.
     ui.beginFrame({1920, 1080}, clickAt({960.0f, 620.0f}));
-    expect(drawPauseMenu(ui, {.showSettings = false}) == MenuAction::Quit,
-           "a pause menu without Settings moves Quit up");
+    CHECK_MESSAGE(drawPauseMenu(ui, {.showSettings = false}) == MenuAction::Quit,
+                  "a pause menu without Settings moves Quit up");
 }
 
-void testSettingsMenu() {
+TEST_CASE("GameMenus: settings menu") {
     bool toggled = false;
     size_t choice = 0;
     float volume = 0.5f;
@@ -67,32 +63,29 @@ void testSettingsMenu() {
     };
     GameUiContext ui;
     ui.beginFrame({1920, 1080}, {});
-    expect(drawSettingsMenu(ui, entries) == MenuAction::None, "a settings menu without input changes nothing");
+    CHECK_MESSAGE(drawSettingsMenu(ui, entries) == MenuAction::None, "a settings menu without input changes nothing");
 
     // Four rows: y 439 to 503, 517 to 581, 595 to 659, and Back 673 to 737.
     ui.beginFrame({1920, 1080}, clickAt({960.0f, 470.0f}));
-    expect(drawSettingsMenu(ui, entries) == MenuAction::Changed && toggled, "clicking a toggle row sets it");
+    CHECK_MESSAGE((drawSettingsMenu(ui, entries) == MenuAction::Changed && toggled), "clicking a toggle row sets it");
     ui.beginFrame({1920, 1080}, clickAt({700.0f, 550.0f}));
-    expect(drawSettingsMenu(ui, entries) == MenuAction::Changed && choice == 1, "clicking a choice row cycles it");
+    CHECK_MESSAGE((drawSettingsMenu(ui, entries) == MenuAction::Changed && choice == 1),
+                  "clicking a choice row cycles it");
     choice = 2;
     ui.beginFrame({1920, 1080}, clickAt({700.0f, 550.0f}));
     drawSettingsMenu(ui, entries);
-    expect(choice == 0, "a choice wraps around to its first option");
+    CHECK_MESSAGE(choice == 0, "a choice wraps around to its first option");
 
     InputState hover;
     hover.mousePosition = {700.0f, 620.0f};
     ui.beginFrame({1920, 1080}, hover);
     ui.setNavigation({.rightPressed = true});
-    expect(drawSettingsMenu(ui, entries) == MenuAction::Changed && std::abs(volume - 0.6f) < 1.0e-5f,
-           "right navigation steps the focused slider");
+    CHECK_MESSAGE((drawSettingsMenu(ui, entries) == MenuAction::Changed && std::abs(volume - 0.6f) < 1.0e-5f),
+                  "right navigation steps the focused slider");
 
     ui.beginFrame({1920, 1080}, clickAt({960.0f, 700.0f}));
-    expect(drawSettingsMenu(ui, entries) == MenuAction::Back, "clicking Back goes back");
+    CHECK_MESSAGE(drawSettingsMenu(ui, entries) == MenuAction::Back, "clicking Back goes back");
 }
 } // namespace
 
-int main() {
-    testPauseMenu();
-    testSettingsMenu();
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

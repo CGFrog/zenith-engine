@@ -5,21 +5,17 @@
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <glm/gtc/epsilon.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <string>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("SceneEntityIndex");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 bool nearlyEqual(const glm::mat4& left, const glm::mat4& right) {
     for (glm::length_t column = 0; column < 4; ++column) {
@@ -34,7 +30,7 @@ glm::mat4 translation(float x, float y, float z) {
     return glm::translate(glm::mat4(1.0f), {x, y, z});
 }
 
-void testLookupAfterCreateAndDestroy() {
+TEST_CASE("SceneEntityIndex: lookup after create and destroy") {
     Scene scene;
     const Entity root = scene.createEntity("Root");
     const Entity child = scene.createEntity("Child");
@@ -44,43 +40,46 @@ void testLookupAfterCreateAndDestroy() {
     const SceneEntityId rootId = scene.id(root);
     const SceneEntityId childId = scene.id(child);
     const SceneEntityId grandchildId = scene.id(grandchild);
-    expect(scene.findEntity(rootId) == root, "a created entity is found by id");
-    expect(scene.findEntity(grandchildId) == grandchild, "a nested entity is found by id");
-    expect(scene.findEntity(SceneEntityId{999}) == entt::null, "an unused id finds nothing");
+    CHECK_MESSAGE(scene.findEntity(rootId) == root, "a created entity is found by id");
+    CHECK_MESSAGE(scene.findEntity(grandchildId) == grandchild, "a nested entity is found by id");
+    CHECK_MESSAGE((scene.findEntity(SceneEntityId{999}) == entt::null), "an unused id finds nothing");
 
     Entity explicitEntity = entt::null;
-    expect(scene.createEntityWithId(SceneEntityId{500}, "Explicit", explicitEntity).success,
-           "an explicit id is accepted");
-    expect(scene.findEntity(SceneEntityId{500}) == explicitEntity, "an explicit id is found");
+    CHECK_MESSAGE(scene.createEntityWithId(SceneEntityId{500}, "Explicit", explicitEntity).success,
+                  "an explicit id is accepted");
+    CHECK_MESSAGE(scene.findEntity(SceneEntityId{500}) == explicitEntity, "an explicit id is found");
     Entity duplicate = entt::null;
-    expect(!scene.createEntityWithId(SceneEntityId{500}, "Duplicate", duplicate).success, "a duplicate id is refused");
+    CHECK_MESSAGE(!scene.createEntityWithId(SceneEntityId{500}, "Duplicate", duplicate).success,
+                  "a duplicate id is refused");
 
     scene.destroyEntity(child);
-    expect(scene.findEntity(childId) == entt::null, "a destroyed entity is no longer found");
-    expect(scene.findEntity(grandchildId) == entt::null, "a destroyed subtree's descendants are no longer found");
-    expect(scene.findEntity(rootId) == root, "destroying a child keeps its parent findable");
+    CHECK_MESSAGE((scene.findEntity(childId) == entt::null), "a destroyed entity is no longer found");
+    CHECK_MESSAGE((scene.findEntity(grandchildId) == entt::null),
+                  "a destroyed subtree's descendants are no longer found");
+    CHECK_MESSAGE(scene.findEntity(rootId) == root, "destroying a child keeps its parent findable");
 
     // EnTT recycles the destroyed slots; the new entities have new ids.
     const Entity recycled = scene.createEntity("Recycled");
-    expect(scene.findEntity(scene.id(recycled)) == recycled, "an entity in a recycled slot is found");
-    expect(scene.findEntity(childId) == entt::null, "a recycled slot does not revive an old id");
+    CHECK_MESSAGE(scene.findEntity(scene.id(recycled)) == recycled, "an entity in a recycled slot is found");
+    CHECK_MESSAGE((scene.findEntity(childId) == entt::null), "a recycled slot does not revive an old id");
 }
 
-void testLookupAfterDuplicate() {
+TEST_CASE("SceneEntityIndex: lookup after duplicate") {
     Scene scene;
     const Entity root = scene.createEntity("Root");
     const Entity child = scene.createEntity("Child");
     scene.setParent(child, root);
     Entity copy = entt::null;
-    expect(scene.duplicateSubtree(root, entt::null, copy).success, "a subtree duplicates");
-    expect(scene.findEntity(scene.id(copy)) == copy, "a duplicated root is found by its new id");
+    CHECK_MESSAGE((scene.duplicateSubtree(root, entt::null, copy).success), "a subtree duplicates");
+    CHECK_MESSAGE(scene.findEntity(scene.id(copy)) == copy, "a duplicated root is found by its new id");
     const auto& copiedChildren = scene.registry().get<RelationshipComponent>(copy).children;
-    expect(copiedChildren.size() == 1 && scene.findEntity(scene.id(copiedChildren.front())) == copiedChildren.front(),
-           "a duplicated child is found by its new id");
-    expect(scene.findEntity(scene.id(root)) == root, "the source stays findable after duplicating");
+    CHECK_MESSAGE(
+        (copiedChildren.size() == 1 && scene.findEntity(scene.id(copiedChildren.front())) == copiedChildren.front()),
+        "a duplicated child is found by its new id");
+    CHECK_MESSAGE(scene.findEntity(scene.id(root)) == root, "the source stays findable after duplicating");
 }
 
-void testLookupAfterClearSwapAndReplace() {
+TEST_CASE("SceneEntityIndex: lookup after clear swap and replace") {
     Scene first;
     const SceneEntityId firstId = first.id(first.createEntity("In first"));
     Scene second;
@@ -88,28 +87,28 @@ void testLookupAfterClearSwapAndReplace() {
     const SceneEntityId secondId = second.id(second.createEntity("In second"));
 
     first.swap(second);
-    expect(first.findEntity(secondId) != entt::null &&
-               first.registry().get<NameComponent>(first.findEntity(secondId)).name == "In second",
-           "swap moves the index with the registry");
-    expect(second.findEntity(firstId) != entt::null &&
-               second.registry().get<NameComponent>(second.findEntity(firstId)).name == "In first",
-           "swap gives the other scene the other index");
+    CHECK_MESSAGE((first.findEntity(secondId) != entt::null &&
+                   first.registry().get<NameComponent>(first.findEntity(secondId)).name == "In second"),
+                  "swap moves the index with the registry");
+    CHECK_MESSAGE((second.findEntity(firstId) != entt::null &&
+                   second.registry().get<NameComponent>(second.findEntity(firstId)).name == "In first"),
+                  "swap gives the other scene the other index");
 
     Scene replacement;
     const SceneEntityId replacementId = replacement.id(replacement.createEntity("Replacement"));
     first.replaceWith(std::move(replacement));
-    expect(first.findEntity(replacementId) != entt::null &&
-               first.registry().get<NameComponent>(first.findEntity(replacementId)).name == "Replacement",
-           "replaceWith takes the replacement's index");
-    expect(replacement.findEntity(replacementId) == entt::null, "a replaced-from scene keeps no stale index");
+    CHECK_MESSAGE((first.findEntity(replacementId) != entt::null &&
+                   first.registry().get<NameComponent>(first.findEntity(replacementId)).name == "Replacement"),
+                  "replaceWith takes the replacement's index");
+    CHECK_MESSAGE((replacement.findEntity(replacementId) == entt::null), "a replaced-from scene keeps no stale index");
 
     first.clear();
-    expect(first.findEntity(replacementId) == entt::null, "clear empties the index");
-    expect(first.findEntity(first.id(first.createEntity("After clear"))) != entt::null,
-           "entities created after clear are indexed");
+    CHECK_MESSAGE((first.findEntity(replacementId) == entt::null), "clear empties the index");
+    CHECK_MESSAGE((first.findEntity(first.id(first.createEntity("After clear"))) != entt::null),
+                  "entities created after clear are indexed");
 }
 
-void testLookupAfterDocumentLoad() {
+TEST_CASE("SceneEntityIndex: lookup after document load") {
     Scene source;
     const Entity parent = source.createEntity("Parent");
     const Entity child = source.createEntity("Child");
@@ -117,17 +116,17 @@ void testLookupAfterDocumentLoad() {
     const SceneEntityId childId = source.id(child);
     AssetManager assets;
     std::string document;
-    expect(SceneDocument::serialize(source, assets, {}, document).success, "the scene serializes");
+    CHECK_MESSAGE(SceneDocument::serialize(source, assets, {}, document).success, "the scene serializes");
 
     Scene loaded;
     loaded.createEntity("Replaced by the load");
-    expect(SceneDocument::deserialize(document, assets, {}, loaded).success, "the scene loads");
+    CHECK_MESSAGE(SceneDocument::deserialize(document, assets, {}, loaded).success, "the scene loads");
     const Entity loadedChild = loaded.findEntity(childId);
-    expect(loadedChild != entt::null && loaded.registry().get<NameComponent>(loadedChild).name == "Child",
-           "a loaded entity is found by its document id");
+    CHECK_MESSAGE((loadedChild != entt::null && loaded.registry().get<NameComponent>(loadedChild).name == "Child"),
+                  "a loaded entity is found by its document id");
 }
 
-void testManyDirtyEntitiesRecomputeOnce() {
+TEST_CASE("SceneEntityIndex: many dirty entities recompute once") {
     constexpr uint32_t count = 5000;
     Scene scene;
     std::vector<Entity> entities;
@@ -143,14 +142,14 @@ void testManyDirtyEntitiesRecomputeOnce() {
         }
     }
     scene.updateWorldTransforms();
-    expect(scene.lastTransformUpdateStats().recomputed == count,
-           "marking each entity dirty twice recomputes each once");
-    expect(scene.lastTransformUpdateStats().visited == count, "each dirty entity is visited once");
+    CHECK_MESSAGE(scene.lastTransformUpdateStats().recomputed == count,
+                  "marking each entity dirty twice recomputes each once");
+    CHECK_MESSAGE(scene.lastTransformUpdateStats().visited == count, "each dirty entity is visited once");
     scene.updateWorldTransforms();
-    expect(scene.lastTransformUpdateStats().visited == 0, "nothing stays queued after an update");
+    CHECK_MESSAGE(scene.lastTransformUpdateStats().visited == 0, "nothing stays queued after an update");
 }
 
-void testDirtyBranchesUnderDirtyParents() {
+TEST_CASE("SceneEntityIndex: dirty branches under dirty parents") {
     Scene scene;
     const Entity parent = scene.createEntity("Parent");
     const Entity child = scene.createEntity("Child");
@@ -164,8 +163,9 @@ void testDirtyBranchesUnderDirtyParents() {
     scene.registry().get<TransformComponent>(parent).local = translation(2.0f, 0.0f, 0.0f);
     scene.markTransformDirty(parent);
     scene.updateWorldTransforms();
-    expect(nearlyEqual(scene.registry().get<TransformComponent>(grandchild).world, translation(2.0f, 0.0f, 1.0f)),
-           "a dirty descendant of a dirty root gets both changes");
+    CHECK_MESSAGE(
+        nearlyEqual(scene.registry().get<TransformComponent>(grandchild).world, translation(2.0f, 0.0f, 1.0f)),
+        "a dirty descendant of a dirty root gets both changes");
 
     // A child added under a parent that is still dirty.
     scene.registry().get<TransformComponent>(parent).local = translation(3.0f, 0.0f, 0.0f);
@@ -175,11 +175,11 @@ void testDirtyBranchesUnderDirtyParents() {
     scene.registry().get<RelationshipComponent>(late).parent = parent;
     scene.registry().get<RelationshipComponent>(parent).children.push_back(late);
     scene.updateWorldTransforms();
-    expect(nearlyEqual(scene.registry().get<TransformComponent>(late).world, translation(3.0f, 1.0f, 0.0f)),
-           "a child added under a dirty parent follows it");
+    CHECK_MESSAGE(nearlyEqual(scene.registry().get<TransformComponent>(late).world, translation(3.0f, 1.0f, 0.0f)),
+                  "a child added under a dirty parent follows it");
 }
 
-void testReparentBetweenUpdates() {
+TEST_CASE("SceneEntityIndex: reparent between updates") {
     Scene scene;
     const Entity left = scene.createEntity("Left");
     const Entity right = scene.createEntity("Right");
@@ -189,8 +189,8 @@ void testReparentBetweenUpdates() {
     scene.registry().get<TransformComponent>(child).local = translation(0.0f, 1.0f, 0.0f);
     scene.setParent(child, left);
     scene.updateWorldTransforms();
-    expect(nearlyEqual(scene.registry().get<TransformComponent>(child).world, translation(-5.0f, 1.0f, 0.0f)),
-           "the child follows its first parent");
+    CHECK_MESSAGE(nearlyEqual(scene.registry().get<TransformComponent>(child).world, translation(-5.0f, 1.0f, 0.0f)),
+                  "the child follows its first parent");
 
     scene.registry().get<TransformComponent>(left).local = translation(-6.0f, 0.0f, 0.0f);
     scene.markTransformDirty(left);
@@ -198,22 +198,11 @@ void testReparentBetweenUpdates() {
     scene.registry().get<TransformComponent>(right).local = translation(6.0f, 0.0f, 0.0f);
     scene.markTransformDirty(right);
     scene.updateWorldTransforms();
-    expect(nearlyEqual(scene.registry().get<TransformComponent>(child).world, translation(6.0f, 1.0f, 0.0f)),
-           "a child reparented between updates follows its new parent");
-    expect(scene.registry().get<RelationshipComponent>(left).children.empty(), "the old parent lost the child");
+    CHECK_MESSAGE(nearlyEqual(scene.registry().get<TransformComponent>(child).world, translation(6.0f, 1.0f, 0.0f)),
+                  "a child reparented between updates follows its new parent");
+    CHECK_MESSAGE((scene.registry().get<RelationshipComponent>(left).children.empty()),
+                  "the old parent lost the child");
 }
 } // namespace
 
-int main() {
-    testLookupAfterCreateAndDestroy();
-    testLookupAfterDuplicate();
-    testLookupAfterClearSwapAndReplace();
-    testLookupAfterDocumentLoad();
-    testManyDirtyEntitiesRecomputeOnce();
-    testDirtyBranchesUnderDirtyParents();
-    testReparentBetweenUpdates();
-    if (failures == 0) {
-        std::cout << "Scene entity index tests passed\n";
-    }
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

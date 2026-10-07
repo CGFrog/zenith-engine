@@ -53,7 +53,7 @@ The measurement behind the decision is in
 
 ## Image stability
 
-`zenith_render_regression` compares deterministic color-space, cascade-shadow,
+`engine.RenderRegression` compares deterministic color-space, cascade-shadow,
 edge-antialiasing, and final game-UI composition captures with sealed hashes.
 The UI capture covers the post-tone-map ordering and expected output color
 space. On failure it writes the candidate PPM images to the system temporary
@@ -63,7 +63,7 @@ The public anti-aliasing choices are **Off**, **FXAA**, and **TAA**
 (`AntialiasingMode`). TAA is the temporal upscaling resolve
 (`TemporalResolvePass`): it reprojects history with per-pixel motion vectors,
 rejects disoccluded and reactive pixels, and resolves the jittered internal
-resolution to the output. `zenith_temporal_quality` covers jitter, history
+resolution to the output. `engine.TemporalQuality` covers jitter, history
 invalidation, and dynamic-resolution policy on the CPU. FXAA remains a cheap
 fallback and still filters the linear HDR scene before tone mapping in
 `post.frag`; edges are therefore judged on scene luminance rather than display

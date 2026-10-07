@@ -119,7 +119,8 @@ TEST_SUITE_END();
 - **Files.**
   - Write only under a `testsupport::TempDirectory`. It is a fresh directory in
     the build tree's `test-temp/`, removed when it goes out of scope.
-  - Read and write with `testsupport::readText`, `readBytes`, and `writeText`.
+  - Read and write with `testsupport::readText`, `readBytes`, `writeText`, and
+    `writeBytes`, never a local copy of them.
   - Never use `temp_directory_path()`, a fixed path, or the working directory
     (cases run from the top of the build tree).
   - Read assets through `ZENITH_ASSET_DIR` (`NEEDS_ASSETS` in the suite call).
@@ -162,19 +163,37 @@ They register with `zenith_add_test` and a tier label:
   loaded run time.
 
 They use the same support helpers (`TempDirectory`, the file helpers, the glm
-comparisons), and report failures with the frame and reason.
+comparisons), and check with `testsupport::StandaloneChecks`:
+`checks.check(condition, "what")`, or `checks.check(condition, frame, "what")`
+in a frame loop. A failure prints the file, line and frame, and
+`checks.exitCode("<name>")` is the process's result. When `engine.init()`
+fails, a GPU smoke asks `testsupport::vulkanDeviceAvailable` whether there is a
+device at all, and returns `testsupport::skipExitCode` when there is none.
+
+A few checks are CMake scripts run with `cmake -P` (the packaging checks in
+`tests/packaging/`). They register with
+`zenith_add_test(<name> EXECUTABLE "${CMAKE_COMMAND}" COMMAND_ARGS ... -P <script>)`
+and keep their scratch files under `${ZENITH_TEST_TEMP_DIR}/<name>`.
 
 ## Where things are
 
 | Path | What |
 | --- | --- |
-| `tests/support/` | `zenith_test_support`: `Doctest.hpp` (include this), `TempDirectory`, `Files`, `Approx`, `Skip`; and `zenith_test_main`. |
+| `tests/support/` | `zenith_test_support`: `Doctest.hpp` (include this in unit tests), `TempDirectory`, `Files` (with `failureArtifactPath` for files that explain a failure, kept under `test-temp/failures/`), `Approx`, `Skip`, `StandaloneChecks`; `zenith_test_vulkan_probe` (`VulkanProbe`); and `zenith_test_main`. |
 | `tests/<area>/` | The area's unit tests, its standalone executables, and its `CMakeLists.txt`. |
 | `cmake/ZenithTesting.cmake` | `zenith_add_test_suite` (unit binaries), `zenith_add_test` (standalone executables), the tier defaults, and `ZENITH_TEST_TIMEOUT_SCALE`. |
 | `CMakePresets.json` | The `unit`, `cpu`, `gpu`, `benchmark`, and `all` test presets. |
-| `tools/tests/check_tests.py` | The checks this page describes, and `legacy_tests.txt`, the files not converted yet. |
+| `tools/tests/check_tests.py` | The checks this page describes. |
 
-`tools/tests/legacy_tests.txt` lists files written before this scheme, with
-their own `expect()` and `main()`. They are being converted to doctest
-area by area. Convert a file when you change it substantially, and remove it
-from the list in the same change. Never add a file to the list.
+## What the checker enforces
+
+`python tools/tests/check_tests.py` fails when a file under `tests/`:
+- hand-rolls assertions (an `expect()` helper or a `failures` counter);
+- has its own `main()` without being a standalone executable;
+- builds a path from `temp_directory_path()`;
+- defines its own `readText`, `writeText`, `readBytes`, `writeBytes`,
+  `readFile`, `writeFile`, or `freshDirectory`;
+- names its suite or cases against the rules above;
+- is not listed in any `tests/**/CMakeLists.txt`.
+
+Every test follows these rules; there are no exemptions.

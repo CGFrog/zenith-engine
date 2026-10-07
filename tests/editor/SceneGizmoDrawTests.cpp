@@ -16,25 +16,26 @@
 #include "engine/resources/ResourceLocator.hpp"
 #include "engine/scene/Collections.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
-#include <iostream>
+#include <filesystem>
 #include <limits>
 #include <optional>
 #include <string>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("SceneGizmoDraw");
 
-void expect(bool condition, const std::string& message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
+namespace {
+// Points the resource locator at the build tree, where the test binary sits
+// beside the assets, as main once did with argv[0].
+void useBuildTreeResources() {
+    initializeResourceLocator(std::filesystem::path(ZENITH_ASSET_DIR).parent_path() / "zenith_editor_tests");
 }
 
 bool near(float actual, float expected, float tolerance = 1e-3f) {
@@ -94,7 +95,7 @@ struct GizmoScene {
 
 std::optional<MeshHandle> loadCube(AssetManager& assets) {
     const AssetLoadResult<MeshHandle> cube = assets.loadMesh(assetRoot() / "primitives" / "cube.gltf", 0);
-    expect(static_cast<bool>(cube), "the cube mesh should load: " + cube.error);
+    CHECK_MESSAGE(static_cast<bool>(cube), ("the cube mesh should load: " + cube.error));
     return cube ? std::optional<MeshHandle>(cube.handle) : std::nullopt;
 }
 
@@ -130,7 +131,9 @@ bool allColored(std::span<const DebugLineVertex> lines, const glm::vec4& color) 
     });
 }
 
-void testLights() {
+} // namespace
+
+TEST_CASE("SceneGizmoDraw: lights") {
     const SceneGizmoColors colors = sceneGizmoColors();
     SceneGizmoOverlays lights = allOff();
     lights.lights = OverlayScope::All;
@@ -139,14 +142,14 @@ void testLights() {
         const Entity point = fixture.add("Point", glm::translate(glm::mat4(1.0f), {1.0f, 2.0f, 3.0f}));
         fixture.scene.registry().emplace<PointLightComponent>(point).range = 4.0f;
         const DebugDraw output = fixture.draw(lights);
-        expect(output.lineCount() == sphereLines(sceneGizmoSegments::range) + markerLines,
-               "a point light draws its range sphere and a marker");
-        expect(near(highest(output).x, 5.0f) && near(lowest(output).y, -2.0f),
-               "the range sphere has the light's range around its position");
-        expect(allColored(output.lineVertices(DebugDepth::Tested), colors.light) &&
-                   output.lineVertices(DebugDepth::AlwaysOnTop).empty(),
-               "an unselected light is depth tested in the light colour");
-        expect(fixture.draw(allOff()).lineCount() == 0, "lights off draws nothing");
+        CHECK_MESSAGE(output.lineCount() == sphereLines(sceneGizmoSegments::range) + markerLines,
+                      "a point light draws its range sphere and a marker");
+        CHECK_MESSAGE((near(highest(output).x, 5.0f) && near(lowest(output).y, -2.0f)),
+                      "the range sphere has the light's range around its position");
+        CHECK_MESSAGE((allColored(output.lineVertices(DebugDepth::Tested), colors.light) &&
+                       output.lineVertices(DebugDepth::AlwaysOnTop).empty()),
+                      "an unselected light is depth tested in the light colour");
+        CHECK_MESSAGE(fixture.draw(allOff()).lineCount() == 0, "lights off draws nothing");
     }
     {
         GizmoScene fixture;
@@ -158,9 +161,9 @@ void testLights() {
         light.outerConeRadians = glm::radians(30.0f);
         light.innerConeRadians = glm::radians(15.0f);
         const DebugDraw output = fixture.draw(lights);
-        expect(output.lineCount() == 2u * coneLines + markerLines, "a spot light draws outer and inner cones");
-        expect(near(lowest(output).z, -5.0f) && near(highest(output).y, 5.0f * std::tan(glm::radians(30.0f))),
-               "the spot cones follow the transformed direction for the range at the outer angle");
+        CHECK_MESSAGE(output.lineCount() == 2u * coneLines + markerLines, "a spot light draws outer and inner cones");
+        CHECK_MESSAGE((near(lowest(output).z, -5.0f) && near(highest(output).y, 5.0f * std::tan(glm::radians(30.0f)))),
+                      "the spot cones follow the transformed direction for the range at the outer angle");
     }
     {
         GizmoScene fixture;
@@ -168,25 +171,25 @@ void testLights() {
         // Toward the light: straight up, so the light travels down.
         fixture.scene.registry().emplace<DirectionalLightComponent>(sun).direction = {0.0f, 2.0f, 0.0f};
         const DebugDraw output = fixture.draw(lights);
-        expect(output.lineCount() == sceneGizmoSegments::marker + 3u * arrowLines,
-               "a directional light draws a circle and three arrows");
-        expect(near(lowest(output).y, 10.0f - sceneGizmoSizes::directionalArrowLength),
-               "directional arrows point along the light's travel");
+        CHECK_MESSAGE(output.lineCount() == sceneGizmoSegments::marker + 3u * arrowLines,
+                      "a directional light draws a circle and three arrows");
+        CHECK_MESSAGE(near(lowest(output).y, 10.0f - sceneGizmoSizes::directionalArrowLength),
+                      "directional arrows point along the light's travel");
         const std::span<const DebugLineVertex> idle = output.lineVertices(DebugDepth::AlwaysOnTop);
-        expect(idle.size() == output.lineCount() * 2u && (idle.front().color >> 24) < 255u,
-               "an unselected sun draws faintly over the scene");
+        CHECK_MESSAGE((idle.size() == output.lineCount() * 2u && (idle.front().color >> 24) < 255u),
+                      "an unselected sun draws faintly over the scene");
         fixture.selection = {fixture.scene.id(sun)};
-        expect(allColored(fixture.draw(lights).lineVertices(DebugDepth::AlwaysOnTop), sceneGizmoColors().active),
-               "a selected sun draws in the active colour");
+        CHECK_MESSAGE(allColored(fixture.draw(lights).lineVertices(DebugDepth::AlwaysOnTop), sceneGizmoColors().active),
+                      "a selected sun draws in the active colour");
     }
     {
         GizmoScene fixture;
         fixture.scene.registry().emplace<EnvironmentLightComponent>(fixture.add("Sky"));
-        expect(fixture.draw(lights).lineCount() == markerLines, "an environment light draws a marker");
+        CHECK_MESSAGE(fixture.draw(lights).lineCount() == markerLines, "an environment light draws a marker");
     }
 }
 
-void testCameras() {
+TEST_CASE("SceneGizmoDraw: cameras") {
     const SceneGizmoColors colors = sceneGizmoColors();
     SceneGizmoOverlays cameras = allOff();
     cameras.cameras = OverlayScope::All;
@@ -199,28 +202,28 @@ void testCameras() {
     fixture.scene.registry().emplace<CameraComponent>(second).primary = false;
 
     DebugDraw output = fixture.draw(cameras);
-    expect(output.lineCount() == 2u * cameraIconLines, "each unselected camera draws only its small icon");
+    CHECK_MESSAGE(output.lineCount() == 2u * cameraIconLines, "each unselected camera draws only its small icon");
     const std::span<const DebugLineVertex> tested = output.lineVertices(DebugDepth::Tested);
     const auto countColored = [&](const glm::vec4& color) {
         return std::ranges::count_if(
             tested, [&](const DebugLineVertex& vertex) { return vertex.color == packDebugColor(color); });
     };
-    expect(countColored(colors.activeCamera) == static_cast<long long>(cameraIconLines * 2u) &&
-               countColored(colors.camera) == static_cast<long long>(cameraIconLines * 2u),
-           "the primary camera is highlighted as the active scene camera");
-    expect(lowest(output).z > -(sceneGizmoSizes::cameraIconDepth + 1e-3f),
-           "the unselected icon stays within its fixed depth, whatever the clip planes");
+    CHECK_MESSAGE((countColored(colors.activeCamera) == static_cast<long long>(cameraIconLines * 2u) &&
+                   countColored(colors.camera) == static_cast<long long>(cameraIconLines * 2u)),
+                  "the primary camera is highlighted as the active scene camera");
+    CHECK_MESSAGE(lowest(output).z > -(sceneGizmoSizes::cameraIconDepth + 1e-3f),
+                  "the unselected icon stays within its fixed depth, whatever the clip planes");
     const glm::vec3 unselectedSize = highest(output) - lowest(output);
 
     fixture.selection = {fixture.scene.id(primary)};
     output = fixture.draw(cameras);
-    expect(output.lineCount() > 2u * cameraIconLines &&
-               lowest(output).z <=
-                   -(sceneGizmoSizes::cameraRayLength - sceneGizmoSizes::dashLength - sceneGizmoSizes::dashGap) &&
-               lowest(output).z >= -sceneGizmoSizes::cameraRayLength - 1e-3f,
-           "a selected camera adds dotted rays along its view instead of a frustum");
-    expect(allColored(output.lineVertices(DebugDepth::AlwaysOnTop), colors.active),
-           "the active camera draws over the scene in the active colour");
+    CHECK_MESSAGE((output.lineCount() > 2u * cameraIconLines &&
+                   lowest(output).z <=
+                       -(sceneGizmoSizes::cameraRayLength - sceneGizmoSizes::dashLength - sceneGizmoSizes::dashGap) &&
+                   lowest(output).z >= -sceneGizmoSizes::cameraRayLength - 1e-3f),
+                  "a selected camera adds dotted rays along its view instead of a frustum");
+    CHECK_MESSAGE(allColored(output.lineVertices(DebugDepth::AlwaysOnTop), colors.active),
+                  "the active camera draws over the scene in the active colour");
     // Dashes: every ray line is shorter than the dash length plus a rounding margin.
     const std::span<const DebugLineVertex> onTop = output.lineVertices(DebugDepth::AlwaysOnTop);
     bool dotted = onTop.size() > 2u * cameraIconLines;
@@ -228,7 +231,7 @@ void testCameras() {
         dotted = dotted &&
                  glm::length(onTop[index + 1].position - onTop[index].position) <= sceneGizmoSizes::dashLength + 1e-3f;
     }
-    expect(dotted, "the selected camera's rays are dotted");
+    CHECK_MESSAGE(dotted, "the selected camera's rays are dotted");
 
     // A camera with a different lens draws the same icon: it is not tied to the
     // field of view or the clip planes.
@@ -236,35 +239,37 @@ void testCameras() {
     primaryCamera.farPlane = 500.0f;
     fixture.selection.clear();
     const glm::vec3 changedSize = highest(fixture.draw(cameras)) - lowest(fixture.draw(cameras));
-    expect(near(changedSize.x, unselectedSize.x) && near(changedSize.y, unselectedSize.y) &&
-               near(changedSize.z, unselectedSize.z),
-           "the camera icon keeps its size whatever the lens");
+    CHECK_MESSAGE((near(changedSize.x, unselectedSize.x) && near(changedSize.y, unselectedSize.y) &&
+                   near(changedSize.z, unselectedSize.z)),
+                  "the camera icon keeps its size whatever the lens");
 
     fixture.viewCamera = fixture.scene.id(primary);
-    expect(fixture.draw(cameras).lineCount() == cameraIconLines, "the camera the view looks through draws no icon");
+    CHECK_MESSAGE(fixture.draw(cameras).lineCount() == cameraIconLines,
+                  "the camera the view looks through draws no icon");
 }
 
-void testCollidersAndVolumes() {
+TEST_CASE("SceneGizmoDraw: colliders and volumes") {
+    useBuildTreeResources();
     GizmoScene fixture;
     entt::registry& registry = fixture.scene.registry();
     const Entity box = fixture.add("Box", glm::scale(glm::mat4(1.0f), {2.0f, 1.0f, 1.0f}));
     registry.emplace<ColliderComponent>(box, ColliderComponent{.shape = BoxCollider{.halfExtents = glm::vec3(0.5f)}});
     const SceneGizmoOverlays defaults;
-    expect(defaults.colliders == OverlayScope::All, "colliders default to every object");
+    CHECK_MESSAGE(defaults.colliders == OverlayScope::All, "colliders default to every object");
     DebugDraw faint = fixture.draw(defaults);
-    expect(faint.lineCount() == boxLines, "an unselected collider still draws its shape by default");
+    CHECK_MESSAGE(faint.lineCount() == boxLines, "an unselected collider still draws its shape by default");
     const std::span<const DebugLineVertex> faintLines = faint.lineVertices(DebugDepth::Tested);
-    expect(!faintLines.empty() &&
-               (faintLines.front().color >> 24) < (packDebugColor(sceneGizmoColors().collider) >> 24),
-           "an unselected collider is fainter than its category colour");
+    CHECK_MESSAGE(
+        (!faintLines.empty() && (faintLines.front().color >> 24) < (packDebugColor(sceneGizmoColors().collider) >> 24)),
+        "an unselected collider is fainter than its category colour");
     fixture.selection = {fixture.scene.id(box)};
     SceneGizmoOverlays colliders = allOff();
     colliders.colliders = OverlayScope::Selected;
     DebugDraw output = fixture.draw(colliders);
-    expect(output.lineCount() == boxLines && near(highest(output).x, 1.0f),
-           "a selected box collider is drawn with the world scale baked in");
-    expect(allColored(output.lineVertices(DebugDepth::AlwaysOnTop), sceneGizmoColors().active),
-           "a selected collider draws brighter, over the scene");
+    CHECK_MESSAGE((output.lineCount() == boxLines && near(highest(output).x, 1.0f)),
+                  "a selected box collider is drawn with the world scale baked in");
+    CHECK_MESSAGE(allColored(output.lineVertices(DebugDepth::AlwaysOnTop), sceneGizmoColors().active),
+                  "a selected collider draws brighter, over the scene");
     fixture.selection.clear();
 
     colliders.colliders = OverlayScope::All;
@@ -274,30 +279,30 @@ void testCollidersAndVolumes() {
     registry.emplace<ColliderComponent>(
         capsule, ColliderComponent{.shape = CapsuleCollider{.halfHeight = 1.0f, .radius = 0.5f}});
     output = fixture.draw(colliders);
-    expect(output.lineCount() == boxLines + sphereLines(sceneGizmoSegments::range) + capsuleLines,
-           "box, sphere, and capsule colliders draw their shapes");
-    expect(near(highest(output).y, 11.0f) && near(lowest(output).y, -11.5f),
-           "spheres and capsules (along local Y) have their authored sizes");
+    CHECK_MESSAGE(output.lineCount() == boxLines + sphereLines(sceneGizmoSegments::range) + capsuleLines,
+                  "box, sphere, and capsule colliders draw their shapes");
+    CHECK_MESSAGE((near(highest(output).y, 11.0f) && near(lowest(output).y, -11.5f)),
+                  "spheres and capsules (along local Y) have their authored sizes");
     if (const std::optional<MeshHandle> cube = loadCube(fixture.assets)) {
         const Entity mesh = fixture.add("Mesh collider");
         registry.emplace<ColliderComponent>(mesh, ColliderComponent{.shape = TriangleMeshCollider{.mesh = *cube}});
         const MeshAsset* cubeMesh = fixture.assets.mesh(*cube);
         const size_t triangles = cubeMesh != nullptr ? cubeMesh->indices.size() / 3u : 0u;
-        expect(fixture.draw(colliders).lineCount() == output.lineCount() + boxLines,
-               "an unselected triangle mesh collider draws only its bounds");
+        CHECK_MESSAGE(fixture.draw(colliders).lineCount() == output.lineCount() + boxLines,
+                      "an unselected triangle mesh collider draws only its bounds");
         fixture.selection = {fixture.scene.id(mesh)};
-        expect(fixture.draw(colliders).lineCount() == output.lineCount() + triangles * 3u,
-               "a selected triangle mesh collider draws every triangle edge");
+        CHECK_MESSAGE(fixture.draw(colliders).lineCount() == output.lineCount() + triangles * 3u,
+                      "a selected triangle mesh collider draws every triangle edge");
         registry.get<ColliderComponent>(mesh).shape = ConvexHullCollider{.mesh = *cube};
-        expect(fixture.draw(colliders).lineCount() == output.lineCount() + triangles * 3u,
-               "a selected convex hull collider draws the mesh it wraps");
+        CHECK_MESSAGE(fixture.draw(colliders).lineCount() == output.lineCount() + triangles * 3u,
+                      "a selected convex hull collider draws the mesh it wraps");
         fixture.selection.clear();
     }
 }
 
 // A character controller collides with a capsule of its own, which the
 // Colliders overlay draws centred on the entity, upright whatever its turn.
-void testCharacterCapsule() {
+TEST_CASE("SceneGizmoDraw: character capsule") {
     GizmoScene fixture;
     const Entity player = fixture.add(
         "Player", glm::rotate(glm::translate(glm::mat4(1.0f), {0.0f, 1.0f, 4.0f}), 1.0f, glm::vec3(1.0f, 0.0f, 0.0f)));
@@ -306,14 +311,16 @@ void testCharacterCapsule() {
     SceneGizmoOverlays colliders = allOff();
     colliders.colliders = OverlayScope::All;
     DebugDraw output = fixture.draw(colliders);
-    expect(output.lineCount() == capsuleLines, "a character controller draws its capsule");
-    expect(near(highest(output).y, 1.9f) && near(lowest(output).y, 0.1f) && near(highest(output).z, 4.4f),
-           "the capsule is upright and centred on the entity");
+    CHECK_MESSAGE(output.lineCount() == capsuleLines, "a character controller draws its capsule");
+    CHECK_MESSAGE((near(highest(output).y, 1.9f) && near(lowest(output).y, 0.1f) && near(highest(output).z, 4.4f)),
+                  "the capsule is upright and centred on the entity");
     colliders.colliders = OverlayScope::Selected;
-    expect(fixture.draw(colliders).lineCount() == 0, "an unselected character draws nothing in Selected scope");
+    CHECK_MESSAGE(fixture.draw(colliders).lineCount() == 0, "an unselected character draws nothing in Selected scope");
     fixture.selection = {fixture.scene.id(player)};
-    expect(fixture.draw(colliders).lineCount() == capsuleLines, "a selected character draws its capsule");
+    CHECK_MESSAGE(fixture.draw(colliders).lineCount() == capsuleLines, "a selected character draws its capsule");
 }
+
+namespace {
 
 struct Bounds {
     glm::vec3 minimum{std::numeric_limits<float>::max()};
@@ -341,10 +348,13 @@ bool nearVector(const glm::vec3& actual, const glm::vec3& expected, float tolera
     return glm::all(glm::lessThanEqual(glm::abs(actual - expected), glm::vec3(tolerance)));
 }
 
+} // namespace
+
 // A moved and turned collider on a moved, turned, and scaled entity is in the
 // same place in physics (its Jolt body, drawn by drawDebug), navigation
 // geometry, and the editor's gizmo: all three follow colliderLocalTransform.
-void testOffsetCollidersAgree() {
+TEST_CASE("SceneGizmoDraw: offset colliders agree") {
+    useBuildTreeResources();
     const glm::mat4 entityWorld = glm::translate(glm::mat4(1.0f), {2.0f, 1.0f, -3.0f}) *
                                   glm::rotate(glm::mat4(1.0f), glm::radians(30.0f), {0.0f, 1.0f, 0.0f}) *
                                   glm::scale(glm::mat4(1.0f), {2.0f, 1.0f, 1.5f});
@@ -380,30 +390,32 @@ void testOffsetCollidersAgree() {
         DebugDraw physicsDraw;
         const bool drawn =
             physics.init() && physics.refreshBody(entity, scene, fixture.assets) && physics.drawDebug(physicsDraw);
-        expect(drawn, "the " + name + " offset collider builds a body and draws it");
+        CHECK_MESSAGE(drawn, ("the " + name + " offset collider builds a body and draws it"));
         const Bounds body = debugBounds(physicsDraw);
         physics.shutdown();
 
         if (name == "capsule") {
             // The three tessellate the round caps differently; their centres agree.
-            expect(nearVector(gizmo.center(), body.center(), 0.02f) &&
-                       nearVector(navigation.center(), body.center(), 0.02f),
-                   "an offset capsule collider is centred in the same place in physics, navigation, and the gizmo");
+            CHECK_MESSAGE(
+                (nearVector(gizmo.center(), body.center(), 0.02f) &&
+                 nearVector(navigation.center(), body.center(), 0.02f)),
+                "an offset capsule collider is centred in the same place in physics, navigation, and the gizmo");
             continue;
         }
-        expect(nearVector(gizmo.minimum, body.minimum, 1e-3f) && nearVector(gizmo.maximum, body.maximum, 1e-3f),
-               "the gizmo of an offset " + name + " collider covers its physics body");
-        expect(nearVector(navigation.minimum, body.minimum, 1e-3f) &&
-                   nearVector(navigation.maximum, body.maximum, 1e-3f),
-               "the navigation geometry of an offset " + name + " collider covers its physics body");
-        expect(!nearVector(body.center(), glm::vec3(entityWorld[3]), 0.1f),
-               "the offset moves the " + name + " collider away from its entity");
+        CHECK_MESSAGE(
+            (nearVector(gizmo.minimum, body.minimum, 1e-3f) && nearVector(gizmo.maximum, body.maximum, 1e-3f)),
+            ("the gizmo of an offset " + name + " collider covers its physics body"));
+        CHECK_MESSAGE((nearVector(navigation.minimum, body.minimum, 1e-3f) &&
+                       nearVector(navigation.maximum, body.maximum, 1e-3f)),
+                      ("the navigation geometry of an offset " + name + " collider covers its physics body"));
+        CHECK_MESSAGE(!nearVector(body.center(), glm::vec3(entityWorld[3]), 0.1f),
+                      ("the offset moves the " + name + " collider away from its entity"));
     }
 }
 
 // Play's debugging overlays draw what the running game holds, each only when
 // on, and looking at navigation never bakes it.
-void testRuntimeDebug() {
+TEST_CASE("SceneGizmoDraw: runtime debug") {
     Scene scene;
     Logger logger(LoggerConfig{.echoToStderr = false});
     AssetManager assets{&logger};
@@ -428,7 +440,7 @@ void testRuntimeDebug() {
     scene.updateWorldTransforms();
 
     PhysicsWorld physics;
-    expect(static_cast<bool>(physics.init()), "the runtime debug world initializes");
+    CHECK_MESSAGE(static_cast<bool>(physics.init()), "the runtime debug world initializes");
     for (int step = 0; step < 10; ++step) {
         physics.step(scene, assets, physics.config().fixedTimeStep);
     }
@@ -441,20 +453,20 @@ void testRuntimeDebug() {
         recordRuntimeDebug(sources, overlays, output);
         return output.lineCount();
     };
-    expect(record({}) == 0, "with every overlay off nothing is drawn");
-    expect(record({.physicsShapes = true}) > 0, "physics shapes draw the bodies the world holds");
-    expect(!physics.contactEvents().empty() && record({.contacts = true}) > 0,
-           "contacts draw the last step's contact points");
-    expect(record({.characters = true}) > 0, "characters draw their capsules");
-    expect(record({.navAgents = true}) > 0, "agents draw even before they join a crowd");
-    expect(record({.navigationMesh = true}) == 0 && services.outside().navigationIfBaked() == nullptr,
-           "drawing the game's navigation mesh never bakes it");
-    expect(services.outside().navigation(scene).baked() && record({.navigationMesh = true}) > 0,
-           "once the game baked its mesh it is drawn");
+    CHECK_MESSAGE(record({}) == 0, "with every overlay off nothing is drawn");
+    CHECK_MESSAGE(record({.physicsShapes = true}) > 0, "physics shapes draw the bodies the world holds");
+    CHECK_MESSAGE((!physics.contactEvents().empty() && record({.contacts = true}) > 0),
+                  "contacts draw the last step's contact points");
+    CHECK_MESSAGE(record({.characters = true}) > 0, "characters draw their capsules");
+    CHECK_MESSAGE(record({.navAgents = true}) > 0, "agents draw even before they join a crowd");
+    CHECK_MESSAGE((record({.navigationMesh = true}) == 0 && services.outside().navigationIfBaked() == nullptr),
+                  "drawing the game's navigation mesh never bakes it");
+    CHECK_MESSAGE((services.outside().navigation(scene).baked() && record({.navigationMesh = true}) > 0),
+                  "once the game baked its mesh it is drawn");
     physics.shutdown();
 }
 
-void testVolumes() {
+TEST_CASE("SceneGizmoDraw: volumes") {
     const glm::mat4 scaled = glm::scale(glm::translate(glm::mat4(1.0f), {1.0f, 0.0f, 0.0f}), glm::vec3(3.0f));
     GizmoScene probeScene;
     probeScene.scene.registry().emplace<ReflectionProbeComponent>(probeScene.add("Probe", scaled)).halfExtents =
@@ -462,8 +474,8 @@ void testVolumes() {
     SceneGizmoOverlays probes = allOff();
     probes.reflectionProbes = OverlayScope::All;
     DebugDraw output = probeScene.draw(probes);
-    expect(output.lineCount() == boxLines && near(highest(output).x, 2.0f),
-           "a reflection probe draws its axis-aligned box, ignoring scale");
+    CHECK_MESSAGE((output.lineCount() == boxLines && near(highest(output).x, 2.0f)),
+                  "a reflection probe draws its axis-aligned box, ignoring scale");
 
     GizmoScene volumeScene;
     const glm::mat4 turned = glm::rotate(scaled, glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f));
@@ -472,8 +484,8 @@ void testVolumes() {
     SceneGizmoOverlays irradiance = allOff();
     irradiance.irradianceVolumes = OverlayScope::All;
     output = volumeScene.draw(irradiance);
-    expect(output.lineCount() == boxLines && near(highest(output).x, 2.0f) && near(highest(output).z, 1.0f),
-           "an irradiance volume draws its axis-aligned box, ignoring rotation and scale");
+    CHECK_MESSAGE((output.lineCount() == boxLines && near(highest(output).x, 2.0f) && near(highest(output).z, 1.0f)),
+                  "an irradiance volume draws its axis-aligned box, ignoring rotation and scale");
 
     GizmoScene decalScene;
     decalScene.scene.registry().emplace<DecalComponent>(decalScene.add("Decal", scaled)).halfExtents = {0.5f, 0.25f,
@@ -481,12 +493,13 @@ void testVolumes() {
     SceneGizmoOverlays decals = allOff();
     decals.decals = OverlayScope::All;
     output = decalScene.draw(decals);
-    expect(output.lineCount() == boxLines + arrowLines && near(highest(output).x, 2.5f) &&
-               near(lowest(output).y, -0.75f),
-           "a decal draws its scaled oriented box and a projection arrow along -Y");
+    CHECK_MESSAGE((output.lineCount() == boxLines + arrowLines && near(highest(output).x, 2.5f) &&
+                   near(lowest(output).y, -0.75f)),
+                  "a decal draws its scaled oriented box and a projection arrow along -Y");
 }
 
-void testSelectionBoundsAndHidden() {
+TEST_CASE("SceneGizmoDraw: selection bounds and hidden") {
+    useBuildTreeResources();
     const SceneGizmoColors colors = sceneGizmoColors();
     GizmoScene fixture;
     const std::optional<MeshHandle> loaded = loadCube(fixture.assets);
@@ -511,15 +524,16 @@ void testSelectionBoundsAndHidden() {
     bounds.selectionBounds = true;
     DebugDraw output = fixture.draw(bounds);
     const std::span<const DebugLineVertex> onTop = output.lineVertices(DebugDepth::AlwaysOnTop);
-    expect(output.lineCount() == 2u * boxLines && onTop.size() == 4u * boxLines,
-           "each selected object draws one bounds box over the scene");
-    expect(onTop.size() == 4u * boxLines && onTop.front().color == packDebugColor(colors.active) &&
-               onTop.back().color == packDebugColor(colors.selected),
-           "the active object's bounds use the active colour, the rest the selected colour");
-    expect(near(highest(output).x, 10.0f + meshUpper.x) && near(highest(output).y, 3.0f + meshUpper.y) &&
-               std::ranges::any_of(
-                   onTop, [&](const DebugLineVertex& vertex) { return near(vertex.position.x, 2.0f * meshUpper.x); }),
-           "bounds enclose the world-space mesh, including a child's");
+    CHECK_MESSAGE((output.lineCount() == 2u * boxLines && onTop.size() == 4u * boxLines),
+                  "each selected object draws one bounds box over the scene");
+    CHECK_MESSAGE((onTop.size() == 4u * boxLines && onTop.front().color == packDebugColor(colors.active) &&
+                   onTop.back().color == packDebugColor(colors.selected)),
+                  "the active object's bounds use the active colour, the rest the selected colour");
+    CHECK_MESSAGE(
+        (near(highest(output).x, 10.0f + meshUpper.x) && near(highest(output).y, 3.0f + meshUpper.y) &&
+         std::ranges::any_of(
+             onTop, [&](const DebugLineVertex& vertex) { return near(vertex.position.x, 2.0f * meshUpper.x); })),
+        "bounds enclose the world-space mesh, including a child's");
 
     fixture.scene.registry().emplace<VisibilityComponent>(first, VisibilityComponent{.hidden = true});
     fixture.scene.registry().emplace<PointLightComponent>(first);
@@ -527,16 +541,21 @@ void testSelectionBoundsAndHidden() {
     everything.lights = OverlayScope::All;
     everything.names = OverlayScope::All;
     output = fixture.draw(everything);
-    expect(output.lineCount() == boxLines, "a hidden entity draws no gizmos and no bounds");
-    expect(std::ranges::none_of(output.labels(), [](const DebugLabel& label) { return label.text == "First"; }),
-           "a hidden entity has no name label");
+    CHECK_MESSAGE(output.lineCount() == boxLines, "a hidden entity draws no gizmos and no bounds");
+    CHECK_MESSAGE(std::ranges::none_of(output.labels(), [](const DebugLabel& label) { return label.text == "First"; }),
+                  "a hidden entity has no name label");
 }
+
+namespace {
 
 RenderObjectId objectOf(Entity entity) {
     return static_cast<RenderObjectId>(entt::to_integral(entity));
 }
 
-void testLocalViewIsolation() {
+} // namespace
+
+TEST_CASE("SceneGizmoDraw: local view isolation") {
+    useBuildTreeResources();
     GizmoScene fixture;
     const std::optional<MeshHandle> loaded = loadCube(fixture.assets);
     if (!loaded) {
@@ -556,18 +575,19 @@ void testLocalViewIsolation() {
     everything.names = OverlayScope::All;
     everything.selectionBounds = true;
     const DebugDraw output = fixture.draw(everything);
-    expect(output.lineCount() == sphereLines(sceneGizmoSegments::range) + markerLines + boxLines,
-           "local view draws the light and bounds of isolated objects only");
-    expect(lowest(output).x > -5.0f, "nothing is drawn for an object outside the local view");
-    expect(output.labels().size() == 1u && output.labels().front().text == "Inside",
-           "local view labels isolated objects only");
+    CHECK_MESSAGE(output.lineCount() == sphereLines(sceneGizmoSegments::range) + markerLines + boxLines,
+                  "local view draws the light and bounds of isolated objects only");
+    CHECK_MESSAGE(lowest(output).x > -5.0f, "nothing is drawn for an object outside the local view");
+    CHECK_MESSAGE((output.labels().size() == 1u && output.labels().front().text == "Inside"),
+                  "local view labels isolated objects only");
 
     fixture.isolatedObjects.reset();
-    expect(fixture.draw(everything).lineCount() == 2u * output.lineCount(),
-           "leaving local view draws every object's gizmos again");
+    CHECK_MESSAGE(fixture.draw(everything).lineCount() == 2u * output.lineCount(),
+                  "leaving local view draws every object's gizmos again");
 }
 
-void testCollectionInstanceBounds() {
+TEST_CASE("SceneGizmoDraw: collection instance bounds") {
+    useBuildTreeResources();
     GizmoScene fixture;
     const std::optional<MeshHandle> loaded = loadCube(fixture.assets);
     const MeshAsset* mesh = loaded ? fixture.assets.mesh(*loaded) : nullptr;
@@ -575,18 +595,19 @@ void testCollectionInstanceBounds() {
         return;
     }
     const BoundingBox scanned = calculateBoundingBox(mesh->vertices);
-    expect(!mesh->localBox.empty() && mesh->localBox.minimum == scanned.minimum &&
-               mesh->localBox.maximum == scanned.maximum,
-           "a loaded mesh caches the box around its vertices");
-    expect(calculateBoundingBox({}).empty(), "no vertices make an empty box");
+    CHECK_MESSAGE((!mesh->localBox.empty() && mesh->localBox.minimum == scanned.minimum &&
+                   mesh->localBox.maximum == scanned.maximum),
+                  "a loaded mesh caches the box around its vertices");
+    CHECK_MESSAGE(calculateBoundingBox({}).empty(), "no vertices make an empty box");
 
     SceneCollections collections;
     SceneCollectionId instanced;
-    expect(static_cast<bool>(collections.create("Instanced", {}, instanced)), "the collection is created");
+    CHECK_MESSAGE(static_cast<bool>(collections.create("Instanced", {}, instanced)), "the collection is created");
     fixture.scene.setCollections(std::move(collections));
     const Entity member = fixture.add("Member");
     fixture.scene.attachMesh(member, *loaded);
-    expect(static_cast<bool>(linkToCollection(fixture.scene, member, instanced)), "the member joins the collection");
+    CHECK_MESSAGE(static_cast<bool>(linkToCollection(fixture.scene, member, instanced)),
+                  "the member joins the collection");
     const Entity instancer = fixture.add("Instancer", glm::translate(glm::mat4(1.0f), {10.0f, 0.0f, 0.0f}));
     fixture.scene.registry().emplace<CollectionInstanceComponent>(instancer, instanced);
     fixture.selection = {fixture.scene.id(instancer)};
@@ -594,17 +615,17 @@ void testCollectionInstanceBounds() {
     SceneGizmoOverlays bounds = allOff();
     bounds.selectionBounds = true;
     DebugDraw output = fixture.draw(bounds);
-    expect(output.lineCount() == boxLines, "a selected collection instancer draws one bounds box");
-    expect(near(lowest(output).x, 10.0f + mesh->localBox.minimum.x) &&
-               near(highest(output).x, 10.0f + mesh->localBox.maximum.x) &&
-               near(highest(output).y, mesh->localBox.maximum.y),
-           "an instancer's bounds cover the members its instance draws");
+    CHECK_MESSAGE(output.lineCount() == boxLines, "a selected collection instancer draws one bounds box");
+    CHECK_MESSAGE((near(lowest(output).x, 10.0f + mesh->localBox.minimum.x) &&
+                   near(highest(output).x, 10.0f + mesh->localBox.maximum.x) &&
+                   near(highest(output).y, mesh->localBox.maximum.y)),
+                  "an instancer's bounds cover the members its instance draws");
 
     fixture.isolatedObjects = std::vector<RenderObjectId>{objectOf(member)};
-    expect(fixture.draw(bounds).lineCount() == 0, "an instancer outside the local view draws no bounds");
+    CHECK_MESSAGE(fixture.draw(bounds).lineCount() == 0, "an instancer outside the local view draws no bounds");
 }
 
-void testNames() {
+TEST_CASE("SceneGizmoDraw: names") {
     const SceneGizmoColors colors = sceneGizmoColors();
     GizmoScene fixture;
     const Entity active = fixture.add("Active", glm::translate(glm::mat4(1.0f), {1.0f, 2.0f, 3.0f}));
@@ -617,58 +638,38 @@ void testNames() {
     SceneGizmoOverlays names = allOff();
     names.names = OverlayScope::Selected;
     DebugDraw output = fixture.draw(names);
-    expect(output.labels().size() == 2u && output.lineCount() == 0, "names of the selection are labels only");
+    CHECK_MESSAGE((output.labels().size() == 2u && output.lineCount() == 0), "names of the selection are labels only");
     const auto find = [&](const std::string& text) -> const DebugLabel* {
         const auto label =
             std::ranges::find_if(output.labels(), [&](const DebugLabel& entry) { return entry.text == text; });
         return label != output.labels().end() ? &*label : nullptr;
     };
     const DebugLabel* activeLabel = find("Active");
-    expect(activeLabel != nullptr && activeLabel->color == colors.active &&
-               glm::all(glm::equal(activeLabel->position, glm::vec3(1.0f, 2.0f, 3.0f))),
-           "the active name sits at its origin in the active colour");
-    expect(find("Other") != nullptr && find("Other")->color == colors.selected,
-           "selected names use the selected colour");
+    CHECK_MESSAGE((activeLabel != nullptr && activeLabel->color == colors.active &&
+                   glm::all(glm::equal(activeLabel->position, glm::vec3(1.0f, 2.0f, 3.0f)))),
+                  "the active name sits at its origin in the active colour");
+    CHECK_MESSAGE((find("Other") != nullptr && find("Other")->color == colors.selected),
+                  "selected names use the selected colour");
     names.names = OverlayScope::All;
     output = fixture.draw(names);
-    expect(output.labels().size() == 3u && find("Unselected") != nullptr && find("Unselected")->color == colors.label &&
-               find("Node") == nullptr,
-           "all names label every object except a model's nodes");
+    CHECK_MESSAGE((output.labels().size() == 3u && find("Unselected") != nullptr &&
+                   find("Unselected")->color == colors.label && find("Node") == nullptr),
+                  "all names label every object except a model's nodes");
 }
 
-void testPlayModePolicy() {
+TEST_CASE("SceneGizmoDraw: play mode policy") {
     ViewportOverlays overlays;
-    expect(!overlays.sceneInPlay, "scene gizmos are off in Play mode by default");
-    expect(viewportDrawsSceneGizmos(EditorMode::Edit, false, overlays) &&
-               viewportDrawsSceneGizmos(EditorMode::Edit, true, overlays),
-           "Edit mode always draws scene gizmos");
-    expect(!viewportDrawsSceneGizmos(EditorMode::Play, false, overlays) &&
-               !viewportDrawsSceneGizmos(EditorMode::Paused, false, overlays),
-           "Play mode draws none unless enabled");
+    CHECK_MESSAGE(!overlays.sceneInPlay, "scene gizmos are off in Play mode by default");
+    CHECK_MESSAGE((viewportDrawsSceneGizmos(EditorMode::Edit, false, overlays) &&
+                   viewportDrawsSceneGizmos(EditorMode::Edit, true, overlays)),
+                  "Edit mode always draws scene gizmos");
+    CHECK_MESSAGE((!viewportDrawsSceneGizmos(EditorMode::Play, false, overlays) &&
+                   !viewportDrawsSceneGizmos(EditorMode::Paused, false, overlays)),
+                  "Play mode draws none unless enabled");
     overlays.sceneInPlay = true;
-    expect(viewportDrawsSceneGizmos(EditorMode::Play, false, overlays) &&
-               !viewportDrawsSceneGizmos(EditorMode::Play, true, overlays),
-           "enabled Play-mode gizmos never draw over a scene camera's view");
+    CHECK_MESSAGE((viewportDrawsSceneGizmos(EditorMode::Play, false, overlays) &&
+                   !viewportDrawsSceneGizmos(EditorMode::Play, true, overlays)),
+                  "enabled Play-mode gizmos never draw over a scene camera's view");
 }
-} // namespace
 
-int main(int, char** argv) {
-    initializeResourceLocator(argv[0]);
-    testLights();
-    testCameras();
-    testCollidersAndVolumes();
-    testCharacterCapsule();
-    testOffsetCollidersAgree();
-    testRuntimeDebug();
-    testVolumes();
-    testSelectionBoundsAndHidden();
-    testLocalViewIsolation();
-    testCollectionInstanceBounds();
-    testNames();
-    testPlayModePolicy();
-    if (failures != 0) {
-        std::cerr << failures << " scene gizmo test(s) failed\n";
-        return 1;
-    }
-    return 0;
-}
+TEST_SUITE_END();

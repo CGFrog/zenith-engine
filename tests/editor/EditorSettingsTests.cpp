@@ -1,172 +1,197 @@
+// The editor's settings file: tool commands and preferences round trip,
+// legacy and version 1 files migrate, invalid values fail with their line,
+// and the settings directory override.
+
 #include "editor/settings/EditorSettings.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <filesystem>
-#include <fstream>
-#include <iostream>
 #include <string>
 
-namespace {
-int failures = 0;
+using testsupport::TempDirectory;
+using testsupport::writeText;
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
-} // namespace
+TEST_SUITE_BEGIN("EditorSettings");
 
-int main() {
-    const std::filesystem::path directory = std::filesystem::temp_directory_path() / "zenith_editor_settings_tests";
-    std::error_code error;
-    std::filesystem::remove_all(directory, error);
-
+TEST_CASE("EditorSettings: build and IDE commands round trip without panel visibility") {
+    const TempDirectory directory("editor-settings-round-trip");
     const std::filesystem::path settingsPath = directory / "settings.ini";
     EditorSettings settings(settingsPath);
-    expect(settings.load().success, "missing settings should use defaults");
+    CHECK_MESSAGE(settings.load().success, "missing settings should use defaults");
     settings.panels().hierarchy = false;
     settings.panels().diagnostics = false;
     settings.panels().build = false;
     settings.panels().properties = false;
     settings.setLayoutVersion(2);
-    expect(settings.tools().ideCommand == R"(code -g "{file}:{line}:{column}")",
-           "the IDE command should default to VS Code at the location");
+    CHECK_MESSAGE(settings.tools().ideCommand == R"(code -g "{file}:{line}:{column}")",
+                  "the IDE command should default to VS Code at the location");
     settings.tools().buildCommand = R"(cmake --build build --config Release -- /p:Flag=1 "x=y")";
     settings.tools().buildDirectory = "C:/My Projects/game";
     settings.tools().ideCommand = R"(clion --line {line} "{file}")";
-    expect(settings.tools().buildOnSave, "build on save should be on by default");
+    CHECK_MESSAGE(settings.tools().buildOnSave, "build on save should be on by default");
     settings.tools().buildOnSave = false;
-    expect(settings.tools().debugCommand == std::string(defaultDebugCommand),
-           "the debugger command should start as the platform default");
+    CHECK_MESSAGE(settings.tools().debugCommand == std::string(defaultDebugCommand),
+                  "the debugger command should start as the platform default");
     settings.tools().debugCommand = "gdb -p {pid}";
-    expect(settings.save().success, "settings should save");
+    CHECK_MESSAGE(settings.save().success, "settings should save");
 
     EditorSettings restored(settingsPath);
-    expect(restored.load().success, "saved settings should load");
+    CHECK_MESSAGE(restored.load().success, "saved settings should load");
     // Panel visibility and the layout version moved to workspaces.json; they
     // are read from old files for migration but no longer saved.
-    expect(restored.panels() == EditorPanelVisibility{} && restored.layoutVersion() == 0,
-           "panel visibility and layout version should not be saved");
-    expect(restored.tools() == settings.tools(),
-           "build and IDE commands containing '=', and build on save, should round trip");
+    CHECK_MESSAGE((restored.panels() == EditorPanelVisibility{} && restored.layoutVersion() == 0),
+                  "panel visibility and layout version should not be saved");
+    CHECK_MESSAGE(restored.tools() == settings.tools(),
+                  "build and IDE commands containing '=', and build on save, should round trip");
+}
 
-    {
-        std::ofstream legacy(directory / "legacy.ini", std::ios::trunc);
-        legacy << "layout.version=4\npanel.build=false\npanel.hierarchy=false\n";
-    }
+TEST_CASE("EditorSettings: legacy panel flags and layout version are read for migration") {
+    const TempDirectory directory("editor-settings-legacy");
+    writeText(directory / "legacy.ini", "layout.version=4\npanel.build=false\npanel.hierarchy=false\n");
     EditorSettings legacySettings(directory / "legacy.ini");
-    expect(legacySettings.load().success && legacySettings.layoutVersion() == 4 && !legacySettings.panels().build &&
-               !legacySettings.panels().hierarchy && legacySettings.panels().viewport,
-           "legacy panel flags and layout version should still be read for migration");
+    CHECK_MESSAGE((legacySettings.load().success && legacySettings.layoutVersion() == 4 &&
+                   !legacySettings.panels().build && !legacySettings.panels().hierarchy &&
+                   legacySettings.panels().viewport),
+                  "legacy panel flags and layout version should still be read for migration");
+}
 
-    // Version 1 files wrote build.on_save=false whether or not it was chosen;
-    // build on save became the default in version 2, so it turns on once.
-    {
-        std::ofstream versionOne(directory / "version1.ini", std::ios::trunc);
-        versionOne << "# Zenith editor settings\nbuild.on_save=false\n";
-    }
+// Version 1 files wrote build.on_save=false whether or not it was chosen;
+// build on save became the default in version 2, so it turns on once.
+TEST_CASE("EditorSettings: a version 1 file turns build on save on once") {
+    const TempDirectory directory("editor-settings-version-one");
+    writeText(directory / "version1.ini", "# Zenith editor settings\nbuild.on_save=false\n");
     EditorSettings upgraded(directory / "version1.ini");
-    expect(upgraded.load().success && upgraded.tools().buildOnSave,
-           "a settings file from before version 2 turns build on save on");
-    expect(upgraded.save().success, "upgraded settings should save");
+    CHECK_MESSAGE((upgraded.load().success && upgraded.tools().buildOnSave),
+                  "a settings file from before version 2 turns build on save on");
+    CHECK_MESSAGE(upgraded.save().success, "upgraded settings should save");
     upgraded.tools().buildOnSave = false;
-    expect(upgraded.save().success, "a chosen build on save should save");
+    CHECK_MESSAGE(upgraded.save().success, "a chosen build on save should save");
     EditorSettings chosen(directory / "version1.ini");
-    expect(chosen.load().success && !chosen.tools().buildOnSave,
-           "build on save turned off after the upgrade stays off");
+    CHECK_MESSAGE((chosen.load().success && !chosen.tools().buildOnSave),
+                  "build on save turned off after the upgrade stays off");
+}
 
+TEST_CASE("EditorSettings: commands with line breaks are rejected on save") {
+    const TempDirectory directory("editor-settings-multiline");
     EditorSettings multiline(directory / "multiline.ini");
     multiline.tools().buildCommand = "first\nsecond";
-    expect(!multiline.save().success, "commands with line breaks should be rejected on save");
+    CHECK_MESSAGE(!multiline.save().success, "commands with line breaks should be rejected on save");
+}
 
-    {
-        std::ofstream emptyValues(settingsPath, std::ios::trunc);
-        emptyValues << "# comment\nbuild.command=\nbuild.directory=\n";
-    }
+TEST_CASE("EditorSettings: empty values load and unspecified tools keep defaults") {
+    const TempDirectory directory("editor-settings-empty-values");
+    const std::filesystem::path settingsPath = directory / "settings.ini";
+    writeText(settingsPath, "# comment\nbuild.command=\nbuild.directory=\n");
     EditorSettings cleared(settingsPath);
-    expect(cleared.load().success && cleared.tools().buildCommand.empty() &&
-               cleared.tools().ideCommand == EditorToolSettings{}.ideCommand,
-           "empty values should load and unspecified tools should keep defaults");
+    CHECK_MESSAGE((cleared.load().success && cleared.tools().buildCommand.empty() &&
+                   cleared.tools().ideCommand == EditorToolSettings{}.ideCommand),
+                  "empty values should load and unspecified tools should keep defaults");
+}
 
-    {
-        std::ofstream malformed(settingsPath, std::ios::trunc);
-        malformed << "panel.hierarchy=maybe\n";
-    }
+TEST_CASE("EditorSettings: a malformed file fails and keeps the current settings") {
+    const TempDirectory directory("editor-settings-malformed");
+    const std::filesystem::path settingsPath = directory / "settings.ini";
+    // Settings loaded from a saved file, as the session holds them.
+    EditorSettings saved(settingsPath);
+    saved.save();
+    EditorSettings restored(settingsPath);
+    restored.load();
+
+    writeText(settingsPath, "panel.hierarchy=maybe\n");
     const EditorPanelVisibility before = restored.panels();
-    expect(!restored.load().success, "malformed settings should fail descriptively");
-    expect(restored.panels() == before, "failed load should preserve current settings");
+    CHECK_MESSAGE(!restored.load().success, "malformed settings should fail descriptively");
+    CHECK_MESSAGE(restored.panels() == before, "failed load should preserve current settings");
+}
 
-    // Preferences: every key round trips, and the defaults are the designed look.
+// Preferences: every key round trips, and the defaults are the designed look.
+TEST_CASE("EditorSettings: a missing file keeps the designed default preferences") {
+    const TempDirectory directory("editor-settings-default-preferences");
     EditorSettings defaults(directory / "defaults.ini");
-    expect(defaults.load().success && defaults.appearance() == EditorAppearanceSettings{} &&
-               defaults.autosave().intervalSeconds == 30.0f && defaults.tools().packageDirectory == "build-release",
-           "a missing file should keep the default preferences");
-    expect(defaults.appearance().theme.accent == ThemeAccent::Blue && defaults.appearance().uiScale == 0,
-           "the default theme is 8-bit Blender as designed, at the display's scale");
+    CHECK_MESSAGE((defaults.load().success && defaults.appearance() == EditorAppearanceSettings{} &&
+                   defaults.autosave().intervalSeconds == 30.0f &&
+                   defaults.tools().packageDirectory == "build-release"),
+                  "a missing file should keep the default preferences");
+    CHECK_MESSAGE((defaults.appearance().theme.accent == ThemeAccent::Blue && defaults.appearance().uiScale == 0),
+                  "the default theme is 8-bit Blender as designed, at the display's scale");
+}
+
+TEST_CASE("EditorSettings: theme and UI scale and autosave and package settings round trip") {
+    const TempDirectory directory("editor-settings-preferences");
     EditorSettings tuned(directory / "tuned.ini");
     tuned.appearance().theme = {.accent = ThemeAccent::Violet};
     tuned.appearance().uiScale = 3;
     tuned.appearance().pieMenus = true;
     tuned.autosave().intervalSeconds = 0.0f;
     tuned.tools().packageDirectory = "out/release pkg";
-    expect(tuned.save().success, "tuned preferences should save");
+    CHECK_MESSAGE(tuned.save().success, "tuned preferences should save");
     EditorSettings tunedRestored(directory / "tuned.ini");
-    expect(tunedRestored.load().success && tunedRestored.appearance() == tuned.appearance() &&
-               tunedRestored.autosave() == tuned.autosave() && tunedRestored.tools() == tuned.tools(),
-           "theme, UI scale, autosave, and package settings should round trip");
+    CHECK_MESSAGE((tunedRestored.load().success && tunedRestored.appearance() == tuned.appearance() &&
+                   tunedRestored.autosave() == tuned.autosave() && tunedRestored.tools() == tuned.tools()),
+                  "theme, UI scale, autosave, and package settings should round trip");
+}
 
+TEST_CASE("EditorSettings: out-of-range preferences are stored clamped") {
+    const TempDirectory directory("editor-settings-clamped");
     EditorSettings clamped(directory / "clamped.ini");
     clamped.appearance().theme.accent = static_cast<ThemeAccent>(99);
     clamped.appearance().uiScale = 12;
     clamped.autosave().intervalSeconds = -4.0f;
-    expect(clamped.save().success, "out-of-range preferences should still save");
+    CHECK_MESSAGE(clamped.save().success, "out-of-range preferences should still save");
     EditorSettings clampedRestored(directory / "clamped.ini");
-    expect(clampedRestored.load().success && clampedRestored.appearance().theme.accent == ThemeAccent::Blue &&
-               clampedRestored.appearance().uiScale == maximumUiScale &&
-               clampedRestored.autosave().intervalSeconds == 0.0f,
-           "out-of-range preferences should be stored clamped so they load again");
+    CHECK_MESSAGE((clampedRestored.load().success && clampedRestored.appearance().theme.accent == ThemeAccent::Blue &&
+                   clampedRestored.appearance().uiScale == maximumUiScale &&
+                   clampedRestored.autosave().intervalSeconds == 0.0f),
+                  "out-of-range preferences should be stored clamped so they load again");
+}
 
+TEST_CASE("EditorSettings: an invalid preference fails with its line") {
+    const TempDirectory directory("editor-settings-invalid");
     for (const char* invalid : {"theme.accent=pink\n", "ui.scale=0\n", "ui.scale=1.5\n", "autosave.interval=-1\n",
                                 "autosave.interval=4000\n"}) {
-        {
-            std::ofstream bad(directory / "bad.ini", std::ios::trunc);
-            bad << "build.command=kept\n" << invalid;
-        }
+        CAPTURE(invalid);
+        writeText(directory / "bad.ini", std::string("build.command=kept\n") + invalid);
         EditorSettings badSettings(directory / "bad.ini");
         const EditorSettingsResult result = badSettings.load();
-        expect(!result.success && result.error.find("line 2") != std::string::npos &&
-                   badSettings.tools() == EditorToolSettings{},
-               "an invalid preference should fail with its line and keep the current settings");
+        CHECK_MESSAGE((!result.success && result.error.find("line 2") != std::string::npos &&
+                       badSettings.tools() == EditorToolSettings{}),
+                      "an invalid preference should fail with its line and keep the current settings");
     }
-    {
-        std::ofstream automatic(directory / "auto.ini", std::ios::trunc);
-        automatic << "ui.scale=auto\ntheme.accent=teal\nautosave.interval=12.5\n";
-    }
+}
+
+TEST_CASE("EditorSettings: an automatic scale and named accents and fractional intervals load") {
+    const TempDirectory directory("editor-settings-automatic");
+    writeText(directory / "auto.ini", "ui.scale=auto\ntheme.accent=teal\nautosave.interval=12.5\n");
     EditorSettings automaticScale(directory / "auto.ini");
     automaticScale.appearance().uiScale = 2;
-    expect(automaticScale.load().success && automaticScale.appearance().uiScale == 0 &&
-               automaticScale.appearance().theme.accent == ThemeAccent::Teal &&
-               automaticScale.autosave().intervalSeconds == 12.5f,
-           "ui.scale=auto, accents by name, and fractional intervals should load");
-    {
-        std::ofstream aero(directory / "aero.ini", std::ios::trunc);
-        aero << "theme.wallpaper=false\ntheme.frost=5\ntheme.glass_opacity=0.6\ntheme.panel_opacity=0.95\n"
-             << "theme.accent=mint\nbuild.command=kept\n";
-    }
-    EditorSettings aeroSettings(directory / "aero.ini");
-    expect(aeroSettings.load().success && aeroSettings.appearance().theme.accent == ThemeAccent::Teal &&
-               aeroSettings.tools().buildCommand == "kept",
-           "a Pixel Aero Night settings file loads, its glass keys skipped and its accent mapped");
-
-    // ZENITH_EDITOR_SETTINGS_DIR replaces the user's directory when set.
-    const std::filesystem::path user = directory / "user";
-    expect(resolveEditorSettingsDirectory("", user) == user, "without an override the user directory should be used");
-    expect(resolveEditorSettingsDirectory("C:/ci/editor-settings", user) ==
-               std::filesystem::path("C:/ci/editor-settings"),
-           "an override should replace the user directory");
-    expect(resolveEditorSettingsDirectory("D:/caf\xC3\xA9", user) == std::filesystem::path(u8"D:/caf\u00e9"),
-           "an override should be read as UTF-8");
-
-    std::filesystem::remove_all(directory, error);
-    return failures == 0 ? 0 : 1;
+    CHECK_MESSAGE((automaticScale.load().success && automaticScale.appearance().uiScale == 0 &&
+                   automaticScale.appearance().theme.accent == ThemeAccent::Teal &&
+                   automaticScale.autosave().intervalSeconds == 12.5f),
+                  "ui.scale=auto, accents by name, and fractional intervals should load");
 }
+
+TEST_CASE("EditorSettings: a Pixel Aero Night settings file loads") {
+    const TempDirectory directory("editor-settings-aero");
+    writeText(directory / "aero.ini",
+              "theme.wallpaper=false\ntheme.frost=5\ntheme.glass_opacity=0.6\ntheme.panel_opacity=0.95\n"
+              "theme.accent=mint\nbuild.command=kept\n");
+    EditorSettings aeroSettings(directory / "aero.ini");
+    CHECK_MESSAGE((aeroSettings.load().success && aeroSettings.appearance().theme.accent == ThemeAccent::Teal &&
+                   aeroSettings.tools().buildCommand == "kept"),
+                  "a Pixel Aero Night settings file loads, its glass keys skipped and its accent mapped");
+}
+
+// ZENITH_EDITOR_SETTINGS_DIR replaces the user's directory when set.
+TEST_CASE("EditorSettings: the settings directory override replaces the user directory") {
+    const TempDirectory directory("editor-settings-directory");
+    const std::filesystem::path user = directory / "user";
+    CHECK_MESSAGE(resolveEditorSettingsDirectory("", user) == user,
+                  "without an override the user directory should be used");
+    CHECK_MESSAGE(resolveEditorSettingsDirectory("C:/ci/editor-settings", user) ==
+                      std::filesystem::path("C:/ci/editor-settings"),
+                  "an override should replace the user directory");
+    CHECK_MESSAGE(resolveEditorSettingsDirectory("D:/caf\xC3\xA9", user) == std::filesystem::path(u8"D:/caf\u00e9"),
+                  "an override should be read as UTF-8");
+}
+
+TEST_SUITE_END();

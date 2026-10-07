@@ -3,8 +3,10 @@
 Jump straight to an implementation without searching the tree. Paths are
 relative to the repository root; include paths in code are rooted at `src/`
 (`engine/scene/Scene.hpp`). **Symbols** are the types and functions to open
-first. **Test** is the CTest name (`ctest --test-dir build -C Debug -R <name>`);
-its source is `tests/<area>/<Name>Tests.cpp`. **Doc** is the reference page
+first. **Test** selects the tests: `<area>.<Suite>` is a unit-test suite, whose
+cases are the CTests `<area>.<Suite>: <behaviour>`
+(`ctest --test-dir build -R "editor.Prefab:"`), and its source is
+`tests/<area>/<Suite>Tests.cpp`; a `zenith_*` name is a standalone test. **Doc** is the reference page
 with the full contract.
 
 Sections:
@@ -26,163 +28,163 @@ capability. `--check` fails when the generated index is stale.
 
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
-| Game executable startup | `src/main.cpp`, `src/game/application/GameLaunch.*`, `RuntimeGameplay.*` | `parseGameLaunchArguments`, `loadLaunchProject`, `loadRuntimeGameplay`, `Engine::init`, `Engine::run` | `zenith_project_runtime` | [Demo](game/demo.md) |
-| The frame loop (fixed step, interpolation, render) | `src/engine/Engine.cpp` | `Engine::run` | `zenith_application_lifecycle` | [Architecture › Frame sequence](ARCHITECTURE.md#frame-sequence) |
-| Application / scene lifecycle hooks | `src/engine/application/Application.hpp` | `Application`, `ApplicationScene::{load,update,fixedUpdate,afterPhysicsStep,lateUpdate,drawUi,unload}`, `ApplicationContext` | `zenith_application_lifecycle` | [Application](engine/application.md) |
-| Pause, time scale, frame step | `src/engine/application/SimulationClock.hpp`, `src/engine/module/GameServiceGroups.*` | `SimulationClock`, `TimeServices::{setPaused,setTimeScale,simulationClock}` | `zenith_game_services` | [Modules › GameServices](engine/modules.md#gameservices) |
+| Game executable startup | `src/main.cpp`, `src/game/application/GameLaunch.*`, `RuntimeGameplay.*` | `parseGameLaunchArguments`, `loadLaunchProject`, `loadRuntimeGameplay`, `Engine::init`, `Engine::run` | `game.ProjectRuntime` | [Demo](game/demo.md) |
+| The frame loop (fixed step, interpolation, render) | `src/engine/Engine.cpp` | `Engine::run` | `game.ApplicationLifecycle` | [Architecture › Frame sequence](ARCHITECTURE.md#frame-sequence) |
+| Application / scene lifecycle hooks | `src/engine/application/Application.hpp` | `Application`, `ApplicationScene::{load,update,fixedUpdate,afterPhysicsStep,lateUpdate,drawUi,unload}`, `ApplicationContext` | `game.ApplicationLifecycle` | [Application](engine/application.md) |
+| Pause, time scale, frame step | `src/engine/application/SimulationClock.hpp`, `src/engine/module/GameServiceGroups.*` | `SimulationClock`, `TimeServices::{setPaused,setTimeScale,simulationClock}` | `engine.GameServices` | [Modules › GameServices](engine/modules.md#gameservices) |
 | Executable-relative asset/shader paths | `src/engine/resources/ResourceLocator.*` | `initializeResourceLocator`, `assetRoot`, `shaderRoot`, `resourceRoot` | – | [Assets › Asset flow](engine/assets.md#asset-flow) |
-| Logging and log categories | `src/engine/diagnostics/Logger.*` | `Logger`, `LogChannel`, `GameServices::log(name)` | `zenith_logger` | [Application](engine/application.md) |
-| Project manifest (`.zenith-project`) | `src/engine/project/ProjectConfig.*` | `ProjectConfig`, `loadProjectConfig`, `saveProjectConfig`, `loadProjectInputActions` | `zenith_project_config` | [Projects](engine/projects.md) |
+| Logging and log categories | `src/engine/diagnostics/Logger.*` | `Logger`, `LogChannel`, `GameServices::log(name)` | `engine.Logger` | [Application](engine/application.md) |
+| Project manifest (`.zenith-project`) | `src/engine/project/ProjectConfig.*` | `ProjectConfig`, `loadProjectConfig`, `saveProjectConfig`, `loadProjectInputActions` | `engine.ProjectConfig` | [Projects](engine/projects.md) |
 
 ### Scene, components, reflection
 
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
-| Core scene API, hierarchy | `src/engine/scene/Scene.*` | `Scene::{createEntity,destroyEntity,setParent,findChild,findDescendant,id,findEntity}` | `zenith_scene_hierarchy`, `zenith_scene_entity_index` | [Scene](engine/scene.md) |
-| Moving entities from code | `src/engine/scene/Scene.hpp`, `SceneTransforms.cpp`, `TransformTrs.*` | `setPosition`, `setRotation`, `setWorldTransform`, `worldTransform`, `markTransformDirty`, `updateWorldTransforms`, `decomposeTrs` | `zenith_scene_transforms` | [Scene › Transforms](engine/scene.md#transforms-from-gameplay-code) |
-| Stable entity ids | `src/engine/scene/SceneEntityId.hpp` | `SceneEntityId`, `Scene::id`, `Scene::findEntity` | `zenith_scene_entity_index` | [Scene](engine/scene.md) |
-| Reflection (`Fields<T>`) and presentation hints | `src/engine/reflection/Reflection.hpp`, `FieldJson.*` | `Fields`, `FieldKind`, `FieldPresentation`, `writeReflectedFields` | `zenith_reflection` | [Scene](engine/scene.md) |
-| Define/register a component type | `src/engine/scene/ComponentTypes.hpp` | `ComponentTypeBuilder`, `ComponentTypeRegistry`, `schemaVersion`, `migration` | `zenith_component_types` | [Playbook](CONTRIBUTOR_PLAYBOOK.md#add-a-serialized-engine-component-type) |
-| Where built-in component types are registered | `src/engine/scene/BuiltInComponentTypes.cpp` + `{Render,Light,Physics,Animation,Audio,Gameplay,Navigation,Collection,Prefab}ComponentTypes.cpp` | `registerBuiltInComponentTypes` | `zenith_component_types` | [`src/engine/AGENTS.md`](../src/engine/AGENTS.md) |
-| Scene save/load, JSON format, migrations, diffs | `src/engine/scene/SceneDocument.*` | `SceneDocument::{serialize,save,load,diff,applyChanges}` | `zenith_scene_document` | [Scene](engine/scene.md) |
-| Asset references in scenes (GUID + path) | `src/engine/scene/SceneAssetReferences.*` | – | `zenith_asset_reference_workflow` | [Assets](engine/assets.md) |
-| Entity references remapped on copy | `src/engine/scene/EntityReferenceRemap.*` | `EntityReferenceSite` | `zenith_scene_document` | [Scene](engine/scene.md) |
-| Prefabs: instantiate, overrides, nesting | `src/engine/scene/Prefab.hpp`, `PrefabSystem.cpp`, `PrefabOverrides.cpp`, `PrefabNesting.cpp`, `PrefabCache.cpp` | `PrefabSystem::{instantiate,refresh,overrides}`, `PrefabDocument`, `PrefabOverride` | `zenith_prefabs`, `zenith_prefab_spawn` | [Scene](engine/scene.md) |
-| Collections and visibility | `src/engine/scene/Collections.*`, `SceneVisibility.*` | `SceneCollections`, `SceneVisibility`, `SceneVisibilityMode` | `zenith_collections` | [Scene](engine/scene.md) |
-| Tags | `src/engine/scene/Tags.*` | `TagsComponent`, `findEntitiesWithTag`, `hasTag` | `zenith_tags` | [Project Settings](editor/project-settings.md) |
-| Transient (unsaved, generated) entities | `src/engine/scene/Scene.hpp` | `TransientComponent`, `markTransient`, `destroyTransient` | `zenith_transient_entities` | [Scene › Transient](engine/scene.md#transient-entities) |
-| Save games | `src/engine/scene/SaveGame.*` | `SaveGameStore`, `OutsideServices::saveGame` | `zenith_save_game` | [Scene](engine/scene.md) |
-| Additive / asynchronous scenes | `src/engine/scene/AdditiveSceneManager.*`, `src/engine/jobs/JobSystem.*` | `AdditiveSceneManager`, `JobSystem` | `zenith_asset_streaming` | [Scene](engine/scene.md) |
+| Core scene API, hierarchy | `src/engine/scene/Scene.*` | `Scene::{createEntity,destroyEntity,setParent,findChild,findDescendant,id,findEntity}` | `engine.SceneHierarchy`, `engine.SceneEntityIndex` | [Scene](engine/scene.md) |
+| Moving entities from code | `src/engine/scene/Scene.hpp`, `SceneTransforms.cpp`, `TransformTrs.*` | `setPosition`, `setRotation`, `setWorldTransform`, `worldTransform`, `markTransformDirty`, `updateWorldTransforms`, `decomposeTrs` | `engine.SceneTransform` | [Scene › Transforms](engine/scene.md#transforms-from-gameplay-code) |
+| Stable entity ids | `src/engine/scene/SceneEntityId.hpp` | `SceneEntityId`, `Scene::id`, `Scene::findEntity` | `engine.SceneEntityIndex` | [Scene](engine/scene.md) |
+| Reflection (`Fields<T>`) and presentation hints | `src/engine/reflection/Reflection.hpp`, `FieldJson.*` | `Fields`, `FieldKind`, `FieldPresentation`, `writeReflectedFields` | `engine.Reflection` | [Scene](engine/scene.md) |
+| Define/register a component type | `src/engine/scene/ComponentTypes.hpp` | `ComponentTypeBuilder`, `ComponentTypeRegistry`, `schemaVersion`, `migration` | `engine.ComponentTypes` | [Playbook](CONTRIBUTOR_PLAYBOOK.md#add-a-serialized-engine-component-type) |
+| Where built-in component types are registered | `src/engine/scene/BuiltInComponentTypes.cpp` + `{Render,Light,Physics,Animation,Audio,Gameplay,Navigation,Collection,Prefab}ComponentTypes.cpp` | `registerBuiltInComponentTypes` | `engine.ComponentTypes` | [`src/engine/AGENTS.md`](../src/engine/AGENTS.md) |
+| Scene save/load, JSON format, migrations, diffs | `src/engine/scene/SceneDocument.*` | `SceneDocument::{serialize,save,load,diff,applyChanges}` | `engine.SceneDocument` | [Scene](engine/scene.md) |
+| Asset references in scenes (GUID + path) | `src/engine/scene/SceneAssetReferences.*` | – | `editor.AssetReferenceWorkflow` | [Assets](engine/assets.md) |
+| Entity references remapped on copy | `src/engine/scene/EntityReferenceRemap.*` | `EntityReferenceSite` | `engine.SceneDocument` | [Scene](engine/scene.md) |
+| Prefabs: instantiate, overrides, nesting | `src/engine/scene/Prefab.hpp`, `PrefabSystem.cpp`, `PrefabOverrides.cpp`, `PrefabNesting.cpp`, `PrefabCache.cpp` | `PrefabSystem::{instantiate,refresh,overrides}`, `PrefabDocument`, `PrefabOverride` | `editor.Prefab`, `engine.PrefabSpawn` | [Scene](engine/scene.md) |
+| Collections and visibility | `src/engine/scene/Collections.*`, `SceneVisibility.*` | `SceneCollections`, `SceneVisibility`, `SceneVisibilityMode` | `engine.Collection` | [Scene](engine/scene.md) |
+| Tags | `src/engine/scene/Tags.*` | `TagsComponent`, `findEntitiesWithTag`, `hasTag` | `engine.Tags` | [Project Settings](editor/project-settings.md) |
+| Transient (unsaved, generated) entities | `src/engine/scene/Scene.hpp` | `TransientComponent`, `markTransient`, `destroyTransient` | `engine.TransientEntity` | [Scene › Transient](engine/scene.md#transient-entities) |
+| Save games | `src/engine/scene/SaveGame.*` | `SaveGameStore`, `OutsideServices::saveGame` | `engine.SaveGame` | [Scene](engine/scene.md) |
+| Additive / asynchronous scenes | `src/engine/scene/AdditiveSceneManager.*`, `src/engine/jobs/JobSystem.*` | `AdditiveSceneManager`, `JobSystem` | `engine.AssetStreaming` | [Scene](engine/scene.md) |
 
 ### Gameplay programming (modules, systems, behaviours)
 
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
-| Module ABI, version, compatibility | `src/engine/module/ModuleApi.*` | `ZENITH_GAME_MODULE`, `ZENITH_MODULE_API_VERSION`, `checkModuleCompatibility` | `zenith_game_module` | [Modules](engine/modules.md) |
-| What a module registers | `src/engine/module/ModuleRegistrar.*` | `addComponentType`, `addSystem`, `addBehaviour`, `addInputActions`, `addDefinitionTable`, `BehaviourOptions` | `zenith_game_module` | [Modules](engine/modules.md) |
-| Loading a module, shadow copies | `src/engine/module/GameModule.*`, `ModuleShadowCopy.*`, `SharedLibrary.*` | `GameModule::load`, `GameModuleLoading`, `ModuleShadowCopy` | `zenith_game_module` | [Modules](engine/modules.md) |
-| Systems: phases, order, RunIn, context | `src/engine/module/SystemScheduler.*` | `SystemPhase`, `RunIn`, `SystemContext`, `SystemDescriptor`, `SystemScheduler::run`, `runGameplayPhase`, `SystemFaults` | `zenith_system_scheduler` | [Modules › Frame order](engine/modules.md#frame-order-and-phases) |
-| Engine built-in systems (`zenith.*`) | `src/engine/module/BuiltInSystems.*` | `zenith.character_input`, `zenith.first_person_camera`, behaviour runners, `zenith.nav_agents`, `zenith.animator`, `zenith.audio_emitters` | `zenith_system_scheduler` | [Modules](engine/modules.md) |
-| Behaviours: hooks and lifecycle | `src/engine/behaviour/Behaviour.hpp`, `BehaviourScheduler.*`, `BehaviourRegistry.*` | `Behaviour`, `BehaviourContext`, `runBehaviours`, `destroyAllBehaviours` | `zenith_behaviours` | [Modules › Behaviours](engine/modules.md#behaviours-srcenginebehaviour) |
-| Exceptions from game code | `src/engine/module/GuardedCall.hpp` | `callGuarded`, `SystemFaults` | `zenith_system_scheduler`, `zenith_behaviours` | [Modules › Fault isolation](engine/modules.md#fault-isolation) |
-| `GameServices` (session hub) | `src/engine/module/GameServices.*`, `src/engine/module/GameServiceGroups.*` | `events`, `log`; `world()` (`commands`, `prefabs`, `effects`), `time()` (`timers`, pause, time scale), `content()` (`resource<T>`, `random`, `assetPath`), `outside()` (`audio`, `navigation`, saves, `debugDraw`) | `zenith_game_services` | [Modules › GameServices](engine/modules.md#gameservices) |
-| Spawn / destroy / reparent deferred | `src/engine/module/EntityCommandBuffer.*` | `EntityCommandBuffer::{spawn,spawnEmpty,destroy,reparent,flush}`, `SpawnPlacement` | `zenith_game_services`, `zenith_prefab_spawn` | [Modules](engine/modules.md) |
-| Events between systems | `src/engine/module/EventQueue.*`, `GameEvents.hpp` | `EventQueue::{publish,read}`, `SceneLoaded`, `EntitySpawned`, `TriggerEntered` | `zenith_game_services` | [Modules](engine/modules.md) |
-| Timers | `src/engine/module/Timers.*` | `Timers::{start,cancel}`, `TimerRepeat`, `TimerContext` | `zenith_game_services` | [Modules](engine/modules.md) |
-| Self-removing effects | `src/engine/module/Effects.*` | `Effects::spawn`, `EffectOptions` | `zenith_game_services` | [Modules](engine/modules.md) |
-| Per-session state | `src/engine/module/SessionResources.*` | `SessionResources`, `resourceKey` | `zenith_game_services` | [Modules](engine/modules.md) |
-| Running a `Gameplay` in a game scene | `src/engine/module/Gameplay.*` | `Gameplay`, `GameplayRunner`, `gameplayFromModule`, `linkGameplay` | `zenith_project_runtime`, `zenith_demo_game_module` | [Modules](engine/modules.md) |
-| First-person player | `src/engine/gameplay/FirstPerson.*`, `src/engine/physics/CharacterController.hpp` | `FirstPersonCameraComponent`, `applyCharacterInput`, `spawnFirstPersonPlayer` | `zenith_character_controller` | [Gameplay](engine/gameplay.md) |
-| Deterministic random | `src/engine/gameplay/Random.*` | `RandomStream`, `RandomStreams`, `entropySeed` | `zenith_random` | [Gameplay › Random](engine/gameplay.md#random) |
-| Data tables | `src/engine/gameplay/DefinitionTable.*`, `DefinitionSchemas.*` | `DefinitionTable<Entry>`, `DefinitionSchemaRegistry` | `zenith_definition_tables` | [Gameplay](engine/gameplay.md) |
-| Procedural meshes at runtime | `src/engine/assets/MeshBuilder.*`, `src/engine/assets/Assets.hpp` | `MeshBuilder`, `AssetManager::{createMesh,createMaterial,lease}` | `zenith_runtime_content` | [Gameplay › Procedural geometry](engine/gameplay.md#procedural-geometry) |
-| Example game code | `templates/cpp_game/src/`, `templates/fps_game/src/` | `SpinnerGameplay`, `HitscanWeapon`, `Target`, `GoalZone`, `FpsGame` | `zenith_fps_template` | [FPS tutorial](tutorials/fps-game/README.md) |
-| Demo gameplay | `src/game/gameplay/` | `registerDemoGameplay`, `ItemCollectionSystem` | `zenith_demo_game_module` | [Demo](game/demo.md) |
+| Module ABI, version, compatibility | `src/engine/module/ModuleApi.*` | `ZENITH_GAME_MODULE`, `ZENITH_MODULE_API_VERSION`, `checkModuleCompatibility` | `engine.GameModule` | [Modules](engine/modules.md) |
+| What a module registers | `src/engine/module/ModuleRegistrar.*` | `addComponentType`, `addSystem`, `addBehaviour`, `addInputActions`, `addDefinitionTable`, `BehaviourOptions` | `engine.GameModule` | [Modules](engine/modules.md) |
+| Loading a module, shadow copies | `src/engine/module/GameModule.*`, `ModuleShadowCopy.*`, `SharedLibrary.*` | `GameModule::load`, `GameModuleLoading`, `ModuleShadowCopy` | `engine.GameModule` | [Modules](engine/modules.md) |
+| Systems: phases, order, RunIn, context | `src/engine/module/SystemScheduler.*` | `SystemPhase`, `RunIn`, `SystemContext`, `SystemDescriptor`, `SystemScheduler::run`, `runGameplayPhase`, `SystemFaults` | `engine.SystemScheduler` | [Modules › Frame order](engine/modules.md#frame-order-and-phases) |
+| Engine built-in systems (`zenith.*`) | `src/engine/module/BuiltInSystems.*` | `zenith.character_input`, `zenith.first_person_camera`, behaviour runners, `zenith.nav_agents`, `zenith.animator`, `zenith.audio_emitters` | `engine.SystemScheduler` | [Modules](engine/modules.md) |
+| Behaviours: hooks and lifecycle | `src/engine/behaviour/Behaviour.hpp`, `BehaviourScheduler.*`, `BehaviourRegistry.*` | `Behaviour`, `BehaviourContext`, `runBehaviours`, `destroyAllBehaviours` | `engine.Behaviour` | [Modules › Behaviours](engine/modules.md#behaviours-srcenginebehaviour) |
+| Exceptions from game code | `src/engine/module/GuardedCall.hpp` | `callGuarded`, `SystemFaults` | `engine.SystemScheduler`, `engine.Behaviour` | [Modules › Fault isolation](engine/modules.md#fault-isolation) |
+| `GameServices` (session hub) | `src/engine/module/GameServices.*`, `src/engine/module/GameServiceGroups.*` | `events`, `log`; `world()` (`commands`, `prefabs`, `effects`), `time()` (`timers`, pause, time scale), `content()` (`resource<T>`, `random`, `assetPath`), `outside()` (`audio`, `navigation`, saves, `debugDraw`) | `engine.GameServices` | [Modules › GameServices](engine/modules.md#gameservices) |
+| Spawn / destroy / reparent deferred | `src/engine/module/EntityCommandBuffer.*` | `EntityCommandBuffer::{spawn,spawnEmpty,destroy,reparent,flush}`, `SpawnPlacement` | `engine.GameServices`, `engine.PrefabSpawn` | [Modules](engine/modules.md) |
+| Events between systems | `src/engine/module/EventQueue.*`, `GameEvents.hpp` | `EventQueue::{publish,read}`, `SceneLoaded`, `EntitySpawned`, `TriggerEntered` | `engine.GameServices` | [Modules](engine/modules.md) |
+| Timers | `src/engine/module/Timers.*` | `Timers::{start,cancel}`, `TimerRepeat`, `TimerContext` | `engine.GameServices` | [Modules](engine/modules.md) |
+| Self-removing effects | `src/engine/module/Effects.*` | `Effects::spawn`, `EffectOptions` | `engine.GameServices` | [Modules](engine/modules.md) |
+| Per-session state | `src/engine/module/SessionResources.*` | `SessionResources`, `resourceKey` | `engine.GameServices` | [Modules](engine/modules.md) |
+| Running a `Gameplay` in a game scene | `src/engine/module/Gameplay.*` | `Gameplay`, `GameplayRunner`, `gameplayFromModule`, `linkGameplay` | `game.ProjectRuntime`, `game.DemoGameModule` | [Modules](engine/modules.md) |
+| First-person player | `src/engine/gameplay/FirstPerson.*`, `src/engine/physics/CharacterController.hpp` | `FirstPersonCameraComponent`, `applyCharacterInput`, `spawnFirstPersonPlayer` | `engine.CharacterController` | [Gameplay](engine/gameplay.md) |
+| Deterministic random | `src/engine/gameplay/Random.*` | `RandomStream`, `RandomStreams`, `entropySeed` | `engine.Random` | [Gameplay › Random](engine/gameplay.md#random) |
+| Data tables | `src/engine/gameplay/DefinitionTable.*`, `DefinitionSchemas.*` | `DefinitionTable<Entry>`, `DefinitionSchemaRegistry` | `engine.DefinitionTable` | [Gameplay](engine/gameplay.md) |
+| Procedural meshes at runtime | `src/engine/assets/MeshBuilder.*`, `src/engine/assets/Assets.hpp` | `MeshBuilder`, `AssetManager::{createMesh,createMaterial,lease}` | `engine.RuntimeContent` | [Gameplay › Procedural geometry](engine/gameplay.md#procedural-geometry) |
+| Example game code | `templates/cpp_game/src/`, `templates/fps_game/src/` | `SpinnerGameplay`, `HitscanWeapon`, `Target`, `GoalZone`, `FpsGame` | `editor.FpsTemplate` | [FPS tutorial](tutorials/fps-game/README.md) |
+| Demo gameplay | `src/game/gameplay/` | `registerDemoGameplay`, `ItemCollectionSystem` | `game.DemoGameModule` | [Demo](game/demo.md) |
 
 ### Input, UI, audio
 
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
 | Raw device input (SDL → state) | `src/engine/input/InputManager.*` | `InputManager`, `InputState`, `Key`, `MouseCapturePolicy` | `zenith_input_manager` | [Window and input](engine/window-input.md) |
-| Input actions | `src/engine/input/InputActions.*`, `InputActionsJson.*` | `InputActionMap::evaluate`, `InputActionState::{pressed,down,released,axis,axis2D}` | `zenith_input_actions`, `zenith_input_actions_json` | [Window and input](engine/window-input.md) |
-| Player rebinding profiles | `src/engine/input/InputProfiles.*` | `InputProfile` | `zenith_input_actions` | [Window and input](engine/window-input.md) |
-| HUD and game UI widgets | `src/engine/ui/GameUi.*` | `GameUiContext::{panel,text,button,toggle,slider,progressBar}`, `UiAnchor`, `UiLayout` | `zenith_game_ui` | [UI](engine/ui.md) |
-| Pause and settings menus | `src/engine/ui/GameMenus.*` | `drawPauseMenu`, `drawSettingsMenu`, `MenuAction` | `zenith_game_menus` | [UI](engine/ui.md) |
-| Audio playback, buses, spatial | `src/engine/audio/AudioSystem.*` | `AudioSystem::{play,playAt,stop}`, `AudioPlaybackOptions`, `AudioSpatialOptions` | `zenith_audio` | [Audio](engine/audio.md) |
+| Input actions | `src/engine/input/InputActions.*`, `InputActionsJson.*` | `InputActionMap::evaluate`, `InputActionState::{pressed,down,released,axis,axis2D}` | `engine.InputAction`, `engine.InputActionsJson` | [Window and input](engine/window-input.md) |
+| Player rebinding profiles | `src/engine/input/InputProfiles.*` | `InputProfile` | `engine.InputAction` | [Window and input](engine/window-input.md) |
+| HUD and game UI widgets | `src/engine/ui/GameUi.*` | `GameUiContext::{panel,text,button,toggle,slider,progressBar}`, `UiAnchor`, `UiLayout` | `engine.GameUi` | [UI](engine/ui.md) |
+| Pause and settings menus | `src/engine/ui/GameMenus.*` | `drawPauseMenu`, `drawSettingsMenu`, `MenuAction` | `engine.GameMenus` | [UI](engine/ui.md) |
+| Audio playback, buses, spatial | `src/engine/audio/AudioSystem.*` | `AudioSystem::{play,playAt,stop}`, `AudioPlaybackOptions`, `AudioSpatialOptions` | `engine.AudioSystem` | [Audio](engine/audio.md) |
 
 ### Physics, navigation, animation
 
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
-| Physics components | `src/engine/physics/PhysicsComponents.hpp`, `CharacterController.hpp` | `ColliderComponent`, `RigidBodyComponent`, `PhysicsMotionType`, `CharacterControllerComponent` | `zenith_physics` | [Physics](engine/physics.md) |
-| Stepping, body sync, interpolation | `src/engine/physics/PhysicsWorld.*` | `PhysicsWorld::{step,interpolate,refreshBody}` | `zenith_physics` | [Physics › PhysicsWorld](engine/physics.md#srcenginephysicsphysicsworld) |
-| Raycasts, shape casts, overlaps | `src/engine/physics/PhysicsWorld.hpp` | `raycast`, `raycastAll`, `shapeCast`, `overlap`, `closestPoint`, `PhysicsQueryFilter` | `zenith_physics_queries` | [Physics](engine/physics.md) |
-| Contacts and triggers | `src/engine/physics/PhysicsWorld.hpp` | `contactEvents`, `triggerEvents`, `ContactEvent`, `TriggerEvent` | `zenith_physics_queries` | [Physics](engine/physics.md) |
-| Collision layers | `src/engine/physics/PhysicsLayers.*` | `PhysicsLayerTable`, `physicsLayerMask` | `zenith_physics_queries` | [Physics](engine/physics.md) |
-| Navigation mesh and paths | `src/engine/navigation/NavigationWorld.*`, `NavMeshBuildSettings.hpp` | `NavigationWorld::{bake,findPath}`, `gatherNavigationGeometry` | `zenith_navigation` | [Navigation](engine/navigation.md) |
-| AI agents and crowds | `src/engine/navigation/NavAgent.*`, `NavigationCrowd.*` | `NavAgentComponent`, `setNavDestination`, `NavigationCrowd` | `zenith_navigation` | [Navigation](engine/navigation.md) |
-| Animation playback | `src/engine/animation/AnimationSystem.*` | `updateAnimations`, `beginAnimationCrossFade` | `zenith_animation` | [Animation](engine/animation.md) |
-| Animator state machine | `src/engine/animation/Animator.*` | `AnimatorComponent::{setFloat,setBool,setTrigger}`, `updateAnimator`, `AnimationEvent` | `zenith_animator` | [Animation](engine/animation.md) |
+| Physics components | `src/engine/physics/PhysicsComponents.hpp`, `CharacterController.hpp` | `ColliderComponent`, `RigidBodyComponent`, `PhysicsMotionType`, `CharacterControllerComponent` | `engine.Physics` | [Physics](engine/physics.md) |
+| Stepping, body sync, interpolation | `src/engine/physics/PhysicsWorld.*` | `PhysicsWorld::{step,interpolate,refreshBody}` | `engine.Physics` | [Physics › PhysicsWorld](engine/physics.md#srcenginephysicsphysicsworld) |
+| Raycasts, shape casts, overlaps | `src/engine/physics/PhysicsWorld.hpp` | `raycast`, `raycastAll`, `shapeCast`, `overlap`, `closestPoint`, `PhysicsQueryFilter` | `engine.PhysicsQuery` | [Physics](engine/physics.md) |
+| Contacts and triggers | `src/engine/physics/PhysicsWorld.hpp` | `contactEvents`, `triggerEvents`, `ContactEvent`, `TriggerEvent` | `engine.PhysicsQuery` | [Physics](engine/physics.md) |
+| Collision layers | `src/engine/physics/PhysicsLayers.*` | `PhysicsLayerTable`, `physicsLayerMask` | `engine.PhysicsQuery` | [Physics](engine/physics.md) |
+| Navigation mesh and paths | `src/engine/navigation/NavigationWorld.*`, `NavMeshBuildSettings.hpp` | `NavigationWorld::{bake,findPath}`, `gatherNavigationGeometry` | `engine.Navigation` | [Navigation](engine/navigation.md) |
+| AI agents and crowds | `src/engine/navigation/NavAgent.*`, `NavigationCrowd.*` | `NavAgentComponent`, `setNavDestination`, `NavigationCrowd` | `engine.Navigation` | [Navigation](engine/navigation.md) |
+| Animation playback | `src/engine/animation/AnimationSystem.*` | `updateAnimations`, `beginAnimationCrossFade` | `engine.Animation` | [Animation](engine/animation.md) |
+| Animator state machine | `src/engine/animation/Animator.*` | `AnimatorComponent::{setFloat,setBool,setTrigger}`, `updateAnimator`, `AnimationEvent` | `engine.Animator` | [Animation](engine/animation.md) |
 
 ### Assets
 
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
-| Asset manager, handles, leases, collection | `src/engine/assets/Assets.*` | `AssetManager::{loadModel,reloadModel,lease,collectUnused}`, `ModelHandle`, `MeshHandle` | `zenith_asset_scene`, `zenith_asset_collection` | [Assets](engine/assets.md) |
-| glTF import | `src/engine/assets/ModelImporter.*`, `MeshOptimization.*` | `ModelImporter` | `zenith_asset_scene` | [Assets](engine/assets.md) |
-| Instantiate a model into a scene | `src/engine/scene/Scene.hpp` | `Scene::instantiateModel`, `attachMesh` | `zenith_asset_scene` | [Development › Common tasks](DEVELOPMENT.md#common-tasks) |
-| Asset GUIDs and `.meta` | `src/engine/assets/AssetDatabase.*`, `AssetGuid.*`, `AssetMeta.*` | `AssetDatabase`, `AssetGuid`, `AssetMeta` | `zenith_asset_database` | [Assets](engine/assets.md) |
-| Material files (`.zmat`) | `src/engine/assets/MaterialAssetFile.*` | `MaterialFile` | `zenith_material_assets` | [Assets](engine/assets.md) |
-| Texture cooking (BC7/BC5 KTX2) | `src/engine/assets/TextureCooker.*`, `CompressedTexture.*`, `src/asset_build_main.cpp` | `zenith_asset_build cook-model-textures` | `zenith_compressed_texture` | [Assets](engine/assets.md) |
-| Import limits, derived-data cache | `src/engine/assets/ProductionAssetPipeline.*` | `AssetImportLimits`, `DerivedAssetCache` | `zenith_production_milestones` | [Assets](engine/assets.md) |
-| Reloading changed assets | `src/engine/assets/Assets.hpp`, `src/editor/project/AssetReload.*` | `reloadModel`, `reloadTexture` | `zenith_asset_reload` | [Assets](engine/assets.md) |
+| Asset manager, handles, leases, collection | `src/engine/assets/Assets.*` | `AssetManager::{loadModel,reloadModel,lease,collectUnused}`, `ModelHandle`, `MeshHandle` | `engine.AssetScene`, `engine.AssetCollection` | [Assets](engine/assets.md) |
+| glTF import | `src/engine/assets/ModelImporter.*`, `MeshOptimization.*` | `ModelImporter` | `engine.AssetScene` | [Assets](engine/assets.md) |
+| Instantiate a model into a scene | `src/engine/scene/Scene.hpp` | `Scene::instantiateModel`, `attachMesh` | `engine.AssetScene` | [Development › Common tasks](DEVELOPMENT.md#common-tasks) |
+| Asset GUIDs and `.meta` | `src/engine/assets/AssetDatabase.*`, `AssetGuid.*`, `AssetMeta.*` | `AssetDatabase`, `AssetGuid`, `AssetMeta` | `engine.AssetDatabase` | [Assets](engine/assets.md) |
+| Material files (`.zmat`) | `src/engine/assets/MaterialAssetFile.*` | `MaterialFile` | `engine.MaterialAsset` | [Assets](engine/assets.md) |
+| Texture cooking (BC7/BC5 KTX2) | `src/engine/assets/TextureCooker.*`, `CompressedTexture.*`, `src/asset_build_main.cpp` | `zenith_asset_build cook-model-textures` | `engine.CompressedTexture` | [Assets](engine/assets.md) |
+| Import limits, derived-data cache | `src/engine/assets/ProductionAssetPipeline.*` | `AssetImportLimits`, `DerivedAssetCache` | `engine.ProductionMilestones` | [Assets](engine/assets.md) |
+| Reloading changed assets | `src/engine/assets/Assets.hpp`, `src/editor/project/AssetReload.*` | `reloadModel`, `reloadTexture` | `engine.AssetReload` | [Assets](engine/assets.md) |
 
 ### Rendering
 
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
-| Renderer interface used by engine/editor/games | `src/engine/graphics/Rendering.hpp` | `RenderRuntime`, `RenderSettings`, `ViewShading` | `zenith_render_views` | [Graphics](engine/graphics.md) |
-| Recording a frame | `src/engine/graphics/Renderer.*` | `Renderer::drawFrame`, `updateRenderGraphPlan`, `RenderGraphShape` | `zenith_render_graph` | [Graphics › Render flow](engine/graphics.md#render-flow) |
-| Render graph model | `src/engine/graphics/graph/RenderGraph.*` | `RenderGraph` | `zenith_render_graph` | [Graphics](engine/graphics.md) |
-| Main scene pass | `src/engine/graphics/passes/MeshPass*.cpp`, `MeshPassInternal.hpp`, `src/engine/graphics/MeshPassFramePlan.*` | `MeshPass::{planFrame,record}`, `MeshPassFramePlan` | `zenith_mesh_pass_frame_plan` | [Scene passes](engine/graphics-passes.md) |
-| PBR shading (BRDF) | `shaders/mesh.frag` | `distributionGGX`, `geometrySchlickGGX`, `fresnelSchlick`, `directResponse` | `zenith_render_regression` | [Shaders](engine/shaders.md) |
-| Clustered lights | `src/engine/graphics/Lighting.*`, `passes/ClusteredLightingPass.*`, `shaders/light_clusters.comp` | `ClusterGrid`, `ClusterGridConfiguration` | `zenith_clustered_lighting` | [Scene passes](engine/graphics-passes.md) |
-| Shadows | `passes/MeshPassShadows.cpp`, `LocalShadows.*`, `passes/LocalShadowPass.*` | `LocalShadowCache` | `zenith_local_shadows` | [Scene passes](engine/graphics-passes.md) |
-| GPU-driven culling | `GpuCullLayout.*`, `passes/GpuDrivenPass.*`, `passes/MeshPassGpuDriven.cpp`, `shaders/gpu_visibility.comp` | `GpuCullLayout` | `zenith_gpu_cull_layout` | [Scene passes](engine/graphics-passes.md) |
-| AO / SSR / fog / particles / decals | `AmbientOcclusion.*`, `ScreenSpaceReflectionTrace.hpp`, `VolumetricFog.*`, `Particles.*`, `Decals.*` and their `passes/*Pass.*` | – | `zenith_ambient_occlusion`, `zenith_screen_space_reflections`, `zenith_volumetric_fog`, `zenith_particles`, `zenith_decals` | [Scene passes](engine/graphics-passes.md) |
-| Environment lighting, probes, irradiance | `EnvironmentLighting.*`, `ReflectionProbes.*`, `IrradianceVolume.*`, `passes/EnvironmentPass.*` | – | `zenith_environment_lighting`, `zenith_reflection_probes`, `zenith_irradiance_volume` | [Scene passes](engine/graphics-passes.md) |
-| Post: TAA, upscaling, DoF, motion blur, bloom, tone map, grade | `TemporalQuality.*`, `SpatialUpscale.*`, `DepthOfField.*`, `MotionBlur.*`, `ToneMapping.*`, `ColorGrading.*` and `passes/` | – | `zenith_temporal_quality`, `zenith_tone_mapping`, `zenith_color_grading`, ... | [Post-processing](engine/graphics-post.md) |
-| Debug drawing | `src/engine/graphics/DebugDraw.*`, `passes/DebugDrawPass.*` | `DebugDraw::{line,box,sphere,label,channel}` | `zenith_debug_draw` | [Graphics › DebugDraw](engine/graphics.md) |
-| GPU picking | `src/engine/graphics/RenderPicking.*`, `passes/IdBufferPass.*` | `RenderRuntime::requestPick`, `PickResult` | `zenith_render_picking` | [Render views › Picking](engine/graphics-views.md#picking) |
-| Multiple views / secondary scenes | `RenderViewPlanning.*`, `RenderIds.hpp` | `RenderRuntime::{createView,createScene,setViewScene}` | `zenith_render_views` | [Render views](engine/graphics-views.md#render-views) |
-| Vulkan device, swapchain | `graphics/vulkan/VulkanContext.*`, `graphics/swapchain/Swapchain.*` | `VulkanContext`, `Swapchain` | `zenith_graphics_validation` | [Graphics](engine/graphics.md) |
+| Renderer interface used by engine/editor/games | `src/engine/graphics/Rendering.hpp` | `RenderRuntime`, `RenderSettings`, `ViewShading` | `engine.RenderView` | [Graphics](engine/graphics.md) |
+| Recording a frame | `src/engine/graphics/Renderer.*` | `Renderer::drawFrame`, `updateRenderGraphPlan`, `RenderGraphShape` | `engine.RenderGraph` | [Graphics › Render flow](engine/graphics.md#render-flow) |
+| Render graph model | `src/engine/graphics/graph/RenderGraph.*` | `RenderGraph` | `engine.RenderGraph` | [Graphics](engine/graphics.md) |
+| Main scene pass | `src/engine/graphics/passes/MeshPass*.cpp`, `MeshPassInternal.hpp`, `src/engine/graphics/MeshPassFramePlan.*` | `MeshPass::{planFrame,record}`, `MeshPassFramePlan` | `engine.MeshPassFramePlan` | [Scene passes](engine/graphics-passes.md) |
+| PBR shading (BRDF) | `shaders/mesh.frag` | `distributionGGX`, `geometrySchlickGGX`, `fresnelSchlick`, `directResponse` | `engine.RenderRegression` | [Shaders](engine/shaders.md) |
+| Clustered lights | `src/engine/graphics/Lighting.*`, `passes/ClusteredLightingPass.*`, `shaders/light_clusters.comp` | `ClusterGrid`, `ClusterGridConfiguration` | `engine.ClusteredLighting` | [Scene passes](engine/graphics-passes.md) |
+| Shadows | `passes/MeshPassShadows.cpp`, `LocalShadows.*`, `passes/LocalShadowPass.*` | `LocalShadowCache` | `engine.LocalShadow` | [Scene passes](engine/graphics-passes.md) |
+| GPU-driven culling | `GpuCullLayout.*`, `passes/GpuDrivenPass.*`, `passes/MeshPassGpuDriven.cpp`, `shaders/gpu_visibility.comp` | `GpuCullLayout` | `engine.GpuCullLayout` | [Scene passes](engine/graphics-passes.md) |
+| AO / SSR / fog / particles / decals | `AmbientOcclusion.*`, `ScreenSpaceReflectionTrace.hpp`, `VolumetricFog.*`, `Particles.*`, `Decals.*` and their `passes/*Pass.*` | – | `engine.AmbientOcclusion`, `engine.ScreenSpaceReflection`, `engine.VolumetricFog`, `engine.Particle`, `engine.Decal` | [Scene passes](engine/graphics-passes.md) |
+| Environment lighting, probes, irradiance | `EnvironmentLighting.*`, `ReflectionProbes.*`, `IrradianceVolume.*`, `passes/EnvironmentPass.*` | – | `engine.EnvironmentLighting`, `engine.ReflectionProbe`, `engine.IrradianceVolume` | [Scene passes](engine/graphics-passes.md) |
+| Post: TAA, upscaling, DoF, motion blur, bloom, tone map, grade | `TemporalQuality.*`, `SpatialUpscale.*`, `DepthOfField.*`, `MotionBlur.*`, `ToneMapping.*`, `ColorGrading.*` and `passes/` | – | `engine.TemporalQuality`, `engine.ToneMapping`, `engine.ColorGrading`, ... | [Post-processing](engine/graphics-post.md) |
+| Debug drawing | `src/engine/graphics/DebugDraw.*`, `passes/DebugDrawPass.*` | `DebugDraw::{line,box,sphere,label,channel}` | `engine.DebugDraw` | [Graphics › DebugDraw](engine/graphics.md) |
+| GPU picking | `src/engine/graphics/RenderPicking.*`, `passes/IdBufferPass.*` | `RenderRuntime::requestPick`, `PickResult` | `engine.RenderPicking` | [Render views › Picking](engine/graphics-views.md#picking) |
+| Multiple views / secondary scenes | `RenderViewPlanning.*`, `RenderIds.hpp` | `RenderRuntime::{createView,createScene,setViewScene}` | `engine.RenderView` | [Render views](engine/graphics-views.md#render-views) |
+| Vulkan device, swapchain | `graphics/vulkan/VulkanContext.*`, `graphics/swapchain/Swapchain.*` | `VulkanContext`, `Swapchain` | `engine.GraphicsValidation` | [Graphics](engine/graphics.md) |
 | Add a shader | `shaders/*.{vert,frag,comp}` | – | – | [Shaders](engine/shaders.md), [Playbook](CONTRIBUTOR_PLAYBOOK.md#add-a-render-pass-or-shader) |
 
 ### Editor
 
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
-| Editor startup | `src/editor/main.cpp`, `application/EditorApplication.*` | `EditorApplication`, `EditorSession` | `zenith_editor_session` | [Editor overview](editor/overview.md) |
-| The per-project coordinator | `src/editor/application/EditorSession.*` (+ `Editor*.cpp` workflow files) | `EditorSession::{update,drawUi}` | `zenith_editor_session` | [Editor overview](editor/overview.md) |
-| Undoable scene edits | `application/SceneEditing.*`, `document/CommandHistory.*` | `SceneEditing` (capture/commit), `CommandHistory`, `EntityDiffCommand` | `zenith_scene_editing`, `zenith_command_history` | [Scene editing](editor/scene-editing.md) |
-| Create/duplicate/delete/paste entities | `application/EntityCommands.*`, `document/SceneFragment.*` | `EntityCommands::{createEntity,deleteSelection,duplicateSelection,pasteBesideSources}` | `zenith_scene_editing` | [Scene editing](editor/scene-editing.md) |
-| Play / Simulate / Stop | `application/EditorPlayback.cpp`, `EditorPlayMode.*`, `PlayTargets.*` | `EditorSession::{startPlay,enterPlayMode,stopPlayMode,runGameplayStage}`, `EditorPlayMode::enter` | `zenith_editor_play_mode`, `zenith_play_targets` | [Play mode](editor/play-mode.md) |
-| Live edits and Apply to Edit Scene | `document/RuntimeApply.*`, `application/SceneEditing.*` | `SceneEditing::{runtime,applyToEditScene}` | `zenith_live_editing` | [Scene editing](editor/scene-editing.md) |
-| Hosting/hot reloading the game module | `src/editor/modules/GameModuleHost.*`, `application/GameModuleController.*`, `application/EditorModuleCommands.cpp` | `GameModuleController::{load,pollReload}`, `GameModuleHost::{load,reload,unload,startGameplay,stopGameplay,runSystems}` | `zenith_game_module_host` | [Game module hosting](editor/modules.md) |
-| Editor extensions from a module | `src/editor/modules/EditorModuleApi.hpp` | `ZENITH_EDITOR_MODULE_REGISTER`, `EditorModuleContext` | `zenith_game_module_host` | [Editor extensions](EDITOR_EXTENSIONS.md) |
-| Operators (commands) | `src/editor/operators/Operator.*`, `OperatorRegistry.*`, `OperatorRunner.*`, `EditorOperatorFamilies.cpp` | `Operator`, `OperatorRunner::invoke`, `editorOperatorFamilies` | `zenith_operators`, `zenith_operator_families` | [Operators](editor/operators.md) |
-| Default keys, keymap, gestures | `operators/DefaultKeymap.cpp`, `Keymap.*`, `KeymapDispatch.*`, `KeymapEditor.*` | `defaultEditorKeymap`, `Keymap`, `KeyTrigger` | `zenith_operators` | [Operators](editor/operators.md) |
-| F3 search | `operators/OperatorSearch.*` | `OperatorSearch` | `zenith_operators` | [Operators](editor/operators.md) |
-| Adjust Last Operation panel | `operators/LastOperatorPanel.*` | `LastOperatorPanel` | `zenith_operators` | [Operators](editor/operators.md) |
-| Menus, Add menu, pies | `src/editor/menus/MenuRegistry.*`, `DefaultMenus.*`, `PieMenu.*`, `application/EditorMainMenu.cpp` | `MenuRegistry::{addMenu,addEntry,addSection}`, `wm.call_menu` | `zenith_menus` | [Menus](editor/menus.md) |
-| Inspector / Properties drawing | `interaction/EntityPropertiesView.*`, `ReflectedFieldEditor.*`, `ComponentEditors.*`, `panels/InspectorPanel.*`, `panels/PropertiesPanel.*` | `EntityPropertiesView`, `ComponentEditorOverrides` | `zenith_reflected_field_editor`, `zenith_properties_panel`, `zenith_component_editor` | [Inspector](editor/inspector.md) |
-| Entity / asset reference fields, eyedropper | `interaction/EntityReferenceField.*`, `AssetReferenceField.*`, `EntityEyedropper.*` | – | `zenith_entity_reference_field`, `zenith_asset_reference_field` | [Inspector](editor/inspector.md) |
-| Hierarchy (outliner) | `panels/HierarchyPanel.*`, `panels/outliner/` | `HierarchyPanel`, `OutlinerTree`, `OutlinerFilter` | `zenith_outliner` | [Outliner](editor/outliner.md) |
-| Asset Browser | `panels/AssetBrowserPanel.*`, `project/ProjectAssets.*`, `project/AssetCatalog.*` | `AssetBrowserPanel::drawBrowser`, `ProjectAssets` | `zenith_asset_browser`, `zenith_project_assets` | [Asset Browser](editor/asset-browser.md) |
-| Viewport panel and chrome | `panels/ViewportPanel.*`, `ViewportChrome.*`, `ViewportRegistry.*`, `ViewportOperators.*` | `ViewportPanel`, `ViewportRegistry::active` | `zenith_viewport_chrome`, `zenith_multi_viewport` | [Viewports](editor/viewport.md) |
-| Editor camera navigation | `interaction/EditorCamera.*` | `EditorCamera` (RMB fly + WASD/QE, MMB orbit, Shift pan, Ctrl/wheel zoom) | `zenith_editor_camera` | [Viewports](editor/viewport.md) |
-| Click / box / lasso selection, picking | `viewport/ViewportPicker.*`, `ViewportSelectOperators.*`, `BoxSelect.*`, `LassoSelect.*`, `interaction/Selection.*` | `ViewportPicker`, `Selection` | `zenith_viewport_picking`, `zenith_selection_tools`, `zenith_selection` | [Viewports](editor/viewport.md) |
-| Gizmo and modal G/R/S | `viewport/MultiGizmo.*`, `interaction/ModalTransform.*` | `ModalTransformView`, `GizmoPlacement` | `zenith_modal_transform`, `zenith_multi_gizmo` | [Viewports](editor/viewport.md) |
-| Snapping and 3D cursor | `viewport/SnapQueries.*`, `viewport/Cursor3D.*` | `view3d.cursor3d_place`, `view3d.snap_cursor_to_selected` | `zenith_snapping_cursor` | [Viewports](editor/viewport.md) |
-| Viewport overlays (lights, colliders, names) | `viewport/SceneGizmoDraw.*`, `ColliderHandles.*`, `IconPicking.*` | `SceneGizmoOverlays` | `zenith_scene_gizmo`, `zenith_collider_tools` | [Viewports](editor/viewport.md) |
-| Dropping models/prefabs into the viewport | `viewport/ViewportDrop.*`, `operators/PlacementOperators.*` | `object.place_model`, `object.array`, `object.scatter` | `zenith_placement` | [Viewports](editor/viewport.md) |
-| Game UI over the game view | `viewport/GameUiOverlay.*` | – | `zenith_play_targets` | [Play mode](editor/play-mode.md) |
-| Prefab windows | `application/PrefabWindowSet.*`, `application/PrefabWindowController.*`, `document/PrefabEditDocument.*` | `PrefabWindowSet`, `PrefabWindowController`, `PrefabWindowHost`, `PrefabWindowDocument`, `DocumentBinding` | `zenith_prefab_windows` | [Prefab windows](editor/prefab-windows.md) |
-| Prefab authoring commands | `document/PrefabAuthoring.*`, `operators/PrefabOperators.*` | `PrefabAuthoring` | `zenith_prefabs`, `zenith_prefab_ui`, `zenith_prefab_writes` | [Scene editing](editor/scene-editing.md) |
-| Areas and workspaces | `src/editor/areas/`, `application/EditorAreas.cpp`, `application/EditorAreaTypes.*` | `Workspace`, `AreaRegistry`, `builtInAreaTypes` | `zenith_workspaces`, `zenith_editor_area_types` | [Areas](editor/areas-workspaces.md) |
-| Theme, palette, widgets | `src/editor/theme/` | `EditorPalette`, `widgets::Button`, `ThemeChrome` | `zenith_editor_theme`, `zenith_editor_palette` | [Theme](editor/theme-settings.md) |
-| Preferences and settings files | `panels/PreferencesWindow.*`, `settings/EditorSettings.*` | `PreferencesWindow`, `EditorSettings` | `zenith_preferences`, `zenith_editor_settings` | [Theme and settings](editor/theme-settings.md) |
-| Project Settings window | `panels/ProjectSettingsWindow.*`, `application/EditorProjectSettings.cpp` | `ProjectSettingsWindow` | `zenith_project_settings` | [Project Settings](editor/project-settings.md) |
-| Render settings in the editor | `settings/RenderSettingsController.*`, `panels/GraphicsPanel.*`, `panels/RenderSettingsControls.*` | `RenderSettingsController` | `zenith_editor_render_settings` | [Theme and settings](editor/theme-settings.md) |
-| Project Hub, templates | `project/ProjectHub.*`, `project/ProjectTemplate.*`, `project/RecentProjects.*`, `templates/` | `ProjectHub`, `generateProjectFromTemplate` | `zenith_project_hub`, `zenith_fps_template` | [Getting started](guide/01-getting-started.md) |
-| Build panel, compiler errors, IDE | `project/ProjectBuild.*`, `BuildRunner.*`, `FastProjectBuild.*`, `CompilerOutputParser.*`, `ExternalEditor.*`, `panels/BuildPanel.*` | `ProjectBuild`, `BuildRunner`, `CompilerOutputParser` | `zenith_build_workflow` | [Build and IDE](editor/build-ide.md) |
-| New Behaviour/Component/System generators | `project/CodeGenerator.*`, `operators/CodeOperators.*`, `application/NewCodeDialog.*`, `templates/cpp_game/snippets/` | `generateModuleCode`, `module.generate_code` | `zenith_code_generator` | [Build and IDE](editor/build-ide.md) |
-| Build and Package | `project/PackageRunner.*`, `operators/PackageOperators.*` | `file.build_package` | `zenith_package_workflow` | [Releasing](RELEASING.md) |
-| Watches, attach debugger | `interaction/WatchList.*`, `operators/DebugOperators.*` | `debug.watch_field`, `debug.attach` | `zenith_debug_tools` | [Play mode](editor/play-mode.md) |
-| Info log, Diagnostics, System Profiler | `panels/InfoPanel.*`, `panels/DiagnosticsPanel.*`, `panels/SystemProfilerPanel.*` | `InfoLog`, `EditorDiagnostics` | `zenith_info_panel`, `zenith_system_profiler` | [Editor overview](editor/overview.md) |
-| Autosave and recovery | `application/EditorSessionRecovery.cpp`, `document/EditorRecovery.*`, `document/PrefabWindowRecovery.*` | `EditorRecovery` | `zenith_editor_hardening` | [Editor overview](editor/overview.md) |
-| Navigation and probe/irradiance baking | `operators/NavigationOperators.*`, `project/IrradianceVolumeBaker.*`, `project/ReflectionProbeBaker.*` | `navigation.bake` | `zenith_irradiance_volume_baker` | [Viewports](editor/viewport.md) |
-| Editor smoke run | `src/editor/smoke/` | `EditorSmokeScenario`, `SmokeStep` | `zenith_editor_vulkan_smoke`, `zenith_editor_module_smoke`, `zenith_smoke_runner` | [Editor smoke](editor/smoke.md) |
+| Editor startup | `src/editor/main.cpp`, `application/EditorApplication.*` | `EditorApplication`, `EditorSession` | `editor.EditorSession` | [Editor overview](editor/overview.md) |
+| The per-project coordinator | `src/editor/application/EditorSession.*` (+ `Editor*.cpp` workflow files) | `EditorSession::{update,drawUi}` | `editor.EditorSession` | [Editor overview](editor/overview.md) |
+| Undoable scene edits | `application/SceneEditing.*`, `document/CommandHistory.*` | `SceneEditing` (capture/commit), `CommandHistory`, `EntityDiffCommand` | `editor.SceneEditing`, `editor.CommandHistory` | [Scene editing](editor/scene-editing.md) |
+| Create/duplicate/delete/paste entities | `application/EntityCommands.*`, `document/SceneFragment.*` | `EntityCommands::{createEntity,deleteSelection,duplicateSelection,pasteBesideSources}` | `editor.SceneEditing` | [Scene editing](editor/scene-editing.md) |
+| Play / Simulate / Stop | `application/EditorPlayback.cpp`, `EditorPlayMode.*`, `PlayTargets.*` | `EditorSession::{startPlay,enterPlayMode,stopPlayMode,runGameplayStage}`, `EditorPlayMode::enter` | `editor.EditorPlayMode`, `editor.PlayTargets` | [Play mode](editor/play-mode.md) |
+| Live edits and Apply to Edit Scene | `document/RuntimeApply.*`, `application/SceneEditing.*` | `SceneEditing::{runtime,applyToEditScene}` | `editor.LiveEditing` | [Scene editing](editor/scene-editing.md) |
+| Hosting/hot reloading the game module | `src/editor/modules/GameModuleHost.*`, `application/GameModuleController.*`, `application/EditorModuleCommands.cpp` | `GameModuleController::{load,pollReload}`, `GameModuleHost::{load,reload,unload,startGameplay,stopGameplay,runSystems}` | `editor.GameModuleHost` | [Game module hosting](editor/modules.md) |
+| Editor extensions from a module | `src/editor/modules/EditorModuleApi.hpp` | `ZENITH_EDITOR_MODULE_REGISTER`, `EditorModuleContext` | `editor.GameModuleHost` | [Editor extensions](EDITOR_EXTENSIONS.md) |
+| Operators (commands) | `src/editor/operators/Operator.*`, `OperatorRegistry.*`, `OperatorRunner.*`, `EditorOperatorFamilies.cpp` | `Operator`, `OperatorRunner::invoke`, `editorOperatorFamilies` | `editor.Operator`, `editor.OperatorFamily` | [Operators](editor/operators.md) |
+| Default keys, keymap, gestures | `operators/DefaultKeymap.cpp`, `Keymap.*`, `KeymapDispatch.*`, `KeymapEditor.*` | `defaultEditorKeymap`, `Keymap`, `KeyTrigger` | `editor.Operator` | [Operators](editor/operators.md) |
+| F3 search | `operators/OperatorSearch.*` | `OperatorSearch` | `editor.Operator` | [Operators](editor/operators.md) |
+| Adjust Last Operation panel | `operators/LastOperatorPanel.*` | `LastOperatorPanel` | `editor.Operator` | [Operators](editor/operators.md) |
+| Menus, Add menu, pies | `src/editor/menus/MenuRegistry.*`, `DefaultMenus.*`, `PieMenu.*`, `application/EditorMainMenu.cpp` | `MenuRegistry::{addMenu,addEntry,addSection}`, `wm.call_menu` | `editor.Menu` | [Menus](editor/menus.md) |
+| Inspector / Properties drawing | `interaction/EntityPropertiesView.*`, `ReflectedFieldEditor.*`, `ComponentEditors.*`, `panels/InspectorPanel.*`, `panels/PropertiesPanel.*` | `EntityPropertiesView`, `ComponentEditorOverrides` | `editor.ReflectedFieldEditor`, `editor.PropertiesPanel`, `editor.ComponentEditor` | [Inspector](editor/inspector.md) |
+| Entity / asset reference fields, eyedropper | `interaction/EntityReferenceField.*`, `AssetReferenceField.*`, `EntityEyedropper.*` | – | `editor.EntityReferenceField`, `editor.AssetReferenceField` | [Inspector](editor/inspector.md) |
+| Hierarchy (outliner) | `panels/HierarchyPanel.*`, `panels/outliner/` | `HierarchyPanel`, `OutlinerTree`, `OutlinerFilter` | `editor.Outliner` | [Outliner](editor/outliner.md) |
+| Asset Browser | `panels/AssetBrowserPanel.*`, `project/ProjectAssets.*`, `project/AssetCatalog.*` | `AssetBrowserPanel::drawBrowser`, `ProjectAssets` | `editor.AssetBrowser`, `editor.ProjectAsset` | [Asset Browser](editor/asset-browser.md) |
+| Viewport panel and chrome | `panels/ViewportPanel.*`, `ViewportChrome.*`, `ViewportRegistry.*`, `ViewportOperators.*` | `ViewportPanel`, `ViewportRegistry::active` | `editor.ViewportChrome`, `editor.MultiViewport` | [Viewports](editor/viewport.md) |
+| Editor camera navigation | `interaction/EditorCamera.*` | `EditorCamera` (RMB fly + WASD/QE, MMB orbit, Shift pan, Ctrl/wheel zoom) | `editor.EditorCamera` | [Viewports](editor/viewport.md) |
+| Click / box / lasso selection, picking | `viewport/ViewportPicker.*`, `ViewportSelectOperators.*`, `BoxSelect.*`, `LassoSelect.*`, `interaction/Selection.*` | `ViewportPicker`, `Selection` | `editor.ViewportPicking`, `editor.SelectionTools`, `editor.Selection` | [Viewports](editor/viewport.md) |
+| Gizmo and modal G/R/S | `viewport/MultiGizmo.*`, `interaction/ModalTransform.*` | `ModalTransformView`, `GizmoPlacement` | `editor.ModalTransform`, `editor.MultiGizmo` | [Viewports](editor/viewport.md) |
+| Snapping and 3D cursor | `viewport/SnapQueries.*`, `viewport/Cursor3D.*` | `view3d.cursor3d_place`, `view3d.snap_cursor_to_selected` | `editor.SnappingCursor` | [Viewports](editor/viewport.md) |
+| Viewport overlays (lights, colliders, names) | `viewport/SceneGizmoDraw.*`, `ColliderHandles.*`, `IconPicking.*` | `SceneGizmoOverlays` | `editor.SceneGizmoDraw`, `editor.ColliderTools` | [Viewports](editor/viewport.md) |
+| Dropping models/prefabs into the viewport | `viewport/ViewportDrop.*`, `operators/PlacementOperators.*` | `object.place_model`, `object.array`, `object.scatter` | `editor.Placement` | [Viewports](editor/viewport.md) |
+| Game UI over the game view | `viewport/GameUiOverlay.*` | – | `editor.PlayTargets` | [Play mode](editor/play-mode.md) |
+| Prefab windows | `application/PrefabWindowSet.*`, `application/PrefabWindowController.*`, `document/PrefabEditDocument.*` | `PrefabWindowSet`, `PrefabWindowController`, `PrefabWindowHost`, `PrefabWindowDocument`, `DocumentBinding` | `editor.PrefabWindow` | [Prefab windows](editor/prefab-windows.md) |
+| Prefab authoring commands | `document/PrefabAuthoring.*`, `operators/PrefabOperators.*` | `PrefabAuthoring` | `editor.Prefab`, `editor.PrefabUi`, `editor.PrefabWrite` | [Scene editing](editor/scene-editing.md) |
+| Areas and workspaces | `src/editor/areas/`, `application/EditorAreas.cpp`, `application/EditorAreaTypes.*` | `Workspace`, `AreaRegistry`, `builtInAreaTypes` | `editor.Workspace`, `editor.EditorAreaTypes` | [Areas](editor/areas-workspaces.md) |
+| Theme, palette, widgets | `src/editor/theme/` | `EditorPalette`, `widgets::Button`, `ThemeChrome` | `editor.EditorTheme`, `editor.EditorPalette` | [Theme](editor/theme-settings.md) |
+| Preferences and settings files | `panels/PreferencesWindow.*`, `settings/EditorSettings.*` | `PreferencesWindow`, `EditorSettings` | `editor.Preferences`, `editor.EditorSettings` | [Theme and settings](editor/theme-settings.md) |
+| Project Settings window | `panels/ProjectSettingsWindow.*`, `application/EditorProjectSettings.cpp` | `ProjectSettingsWindow` | `editor.ProjectSettings` | [Project Settings](editor/project-settings.md) |
+| Render settings in the editor | `settings/RenderSettingsController.*`, `panels/GraphicsPanel.*`, `panels/RenderSettingsControls.*` | `RenderSettingsController` | `editor.EditorRenderSettings` | [Theme and settings](editor/theme-settings.md) |
+| Project Hub, templates | `project/ProjectHub.*`, `project/ProjectTemplate.*`, `project/RecentProjects.*`, `templates/` | `ProjectHub`, `generateProjectFromTemplate` | `editor.ProjectHub`, `editor.FpsTemplate` | [Getting started](guide/01-getting-started.md) |
+| Build panel, compiler errors, IDE | `project/ProjectBuild.*`, `BuildRunner.*`, `FastProjectBuild.*`, `CompilerOutputParser.*`, `ExternalEditor.*`, `panels/BuildPanel.*` | `ProjectBuild`, `BuildRunner`, `CompilerOutputParser` | `editor.BuildWorkflow` | [Build and IDE](editor/build-ide.md) |
+| New Behaviour/Component/System generators | `project/CodeGenerator.*`, `operators/CodeOperators.*`, `application/NewCodeDialog.*`, `templates/cpp_game/snippets/` | `generateModuleCode`, `module.generate_code` | `editor.CodeGenerator` | [Build and IDE](editor/build-ide.md) |
+| Build and Package | `project/PackageRunner.*`, `operators/PackageOperators.*` | `file.build_package` | `editor.PackageWorkflow` | [Releasing](RELEASING.md) |
+| Watches, attach debugger | `interaction/WatchList.*`, `operators/DebugOperators.*` | `debug.watch_field`, `debug.attach` | `editor.DebugTools` | [Play mode](editor/play-mode.md) |
+| Info log, Diagnostics, System Profiler | `panels/InfoPanel.*`, `panels/DiagnosticsPanel.*`, `panels/SystemProfilerPanel.*` | `InfoLog`, `EditorDiagnostics` | `editor.InfoPanel`, `editor.SystemProfiler` | [Editor overview](editor/overview.md) |
+| Autosave and recovery | `application/EditorSessionRecovery.cpp`, `document/EditorRecovery.*`, `document/PrefabWindowRecovery.*` | `EditorRecovery` | `editor.EditorHardening` | [Editor overview](editor/overview.md) |
+| Navigation and probe/irradiance baking | `operators/NavigationOperators.*`, `project/IrradianceVolumeBaker.*`, `project/ReflectionProbeBaker.*` | `navigation.bake` | `editor.IrradianceVolumeBaker` | [Viewports](editor/viewport.md) |
+| Editor smoke run | `src/editor/smoke/` | `EditorSmokeScenario`, `SmokeStep` | `zenith_editor_vulkan_smoke`, `zenith_editor_module_smoke`, `editor.SmokeRunner` | [Editor smoke](editor/smoke.md) |
 
 ### Build, packaging, tooling
 
@@ -191,8 +193,8 @@ capability. `--check` fails when the generated index is stale.
 | Third-party dependency pins | `cmake/Dependencies.cmake` | FetchContent; `ZENITH_SHARED_DEPS_DIR` reuses another checkout's sources. |
 | Warnings and exports | `cmake/CompilerSettings.cmake`, `cmake/WindowsExports.cmake`, `tools/export_definitions/` | `zenith_target_warnings`, `zenith_export_defined_symbols`. |
 | Registering tests | `cmake/ZenithTesting.cmake`, `tests/*/CMakeLists.txt` | `zenith_add_test_suite` (doctest unit binaries), `zenith_add_test` (standalone), `zenith_add_test_executable`, `zenith_add_test_module`; tier defaults ([Testing](TESTING.md)). |
-| Test helpers | `tests/support/` | `support/Doctest.hpp`, `testsupport::TempDirectory`, `readText`/`writeText`, `approxEqual`, `skipExitCode`, `zenith_test_main`. |
-| Test rules check | `tools/tests/check_tests.py`, `tools/tests/legacy_tests.txt` | Enforces [Testing](TESTING.md); CI's `docs` job and `tools/check.ps1` run it. |
+| Test helpers | `tests/support/` | `support/Doctest.hpp`, `testsupport::TempDirectory`, `readText`/`writeText`, `failureArtifactPath`, `approxEqual`, `skipExitCode`, `StandaloneChecks`, `vulkanDeviceAvailable`, `zenith_test_main`. |
+| Test rules check | `tools/tests/check_tests.py` | Enforces [Testing](TESTING.md); CI's `docs` job and `tools/check.ps1` run it. |
 | Game modules built outside the tree | `cmake/ZenithEngineConfig.cmake.in`, `templates/*/CMakeLists.txt` | Templates `include("${ZENITH_ROOT}/ZenithEngineConfig.cmake")` written by the engine build. |
 | Packaging | `cmake/PackageProject.cmake`, root `CMakeLists.txt` (CPack) | [Releasing](RELEASING.md). |
 | Presets | `CMakePresets.json` | `default`/`worktree` configure, `debug` build, `unit`/`cpu`/`gpu`/`benchmark`/`all` test ([Testing](TESTING.md)). |
@@ -290,7 +292,7 @@ Function names are real; follow them in the files named.
   controls from `theme/EditorWidgets`.
 - **Naming.** Files are named after their main type (`PhysicsWorld.hpp` →
   `PhysicsWorld`); tests after what they cover (`PhysicsQueryTests.cpp` →
-  `zenith_physics_queries`); built-in systems `zenith.<name>`; module systems
+  `engine.PhysicsQuery`); built-in systems `zenith.<name>`; module systems
   `<module>.<name>`; event and resource keys `"<game>.<name>"`.
 - **Coordinates.** Right-handed, +Y up, −Z forward, metres, radians in code;
   GLM column-major; `world = parentWorld * local`. Scene depth uses reversed Z
@@ -319,8 +321,8 @@ Rules ([Testing](TESTING.md)):
   `zenith_add_test(<name> SOURCES ...)`.
 - Tiers are labels: `unit`, `slow`, `vulkan`, `benchmark`, each with a test
   preset of that name, plus `cpu` (unit and slow) and `all`.
-- Shared helpers are in `tests/support/`. Files not converted yet are listed
-  in `tools/tests/legacy_tests.txt`.
+- Shared helpers are in `tests/support/` (`TempDirectory`, `readText`,
+  `writeText`, `readBytes`, `writeBytes`); the checker refuses local copies.
 - Editor tests build contexts from `tests/editor/EditorTestFixture.hpp`.
 
 ## Source index

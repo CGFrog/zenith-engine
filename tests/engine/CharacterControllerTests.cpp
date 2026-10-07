@@ -9,6 +9,8 @@
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -17,15 +19,9 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("CharacterController");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 bool near(float value, float expected, float tolerance) {
     return std::abs(value - expected) <= tolerance;
@@ -68,7 +64,7 @@ CharacterControllerComponent& controllerOf(Scene& scene, Entity entity) {
 void step(PhysicsWorld& physics, Scene& scene, const AssetManager& assets, int steps = 1) {
     for (int index = 0; index < steps; ++index) {
         const PhysicsResult result = physics.step(scene, assets, physics.config().fixedTimeStep);
-        expect(result.success, "physics steps");
+        CHECK_MESSAGE(result.success, "physics steps");
         if (!result) {
             std::cerr << result.error << '\n';
             return;
@@ -80,7 +76,7 @@ void step(PhysicsWorld& physics, Scene& scene, const AssetManager& assets, int s
 // and returns where it ended up.
 glm::vec3 walkInto(const std::function<void(Scene&)>& build, CharacterControllerComponent controller = {}) {
     PhysicsWorld physics;
-    expect(static_cast<bool>(physics.init()), "physics initializes");
+    CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");
     Scene scene;
     AssetManager assets;
     addFloor(scene);
@@ -92,17 +88,17 @@ glm::vec3 walkInto(const std::function<void(Scene&)>& build, CharacterController
     return positionOf(scene, character);
 }
 
-void testSteps() {
+TEST_CASE("CharacterController: steps") {
     // A 0.25 m step starting at x = 1.5, within the default 0.35 m step height.
     const glm::vec3 low = walkInto([](Scene& scene) { addBox(scene, {4.0f, 0.125f, 0.0f}, {2.5f, 0.125f, 3.0f}); });
-    expect(low.x > 3.0f && near(low.y, 0.25f + standingHeight, 0.1f), "a character walks up a low step");
+    CHECK_MESSAGE((low.x > 3.0f && near(low.y, 0.25f + standingHeight, 0.1f)), "a character walks up a low step");
 
     // A 0.8 m ledge is a wall.
     const glm::vec3 high = walkInto([](Scene& scene) { addBox(scene, {4.0f, 0.4f, 0.0f}, {2.5f, 0.4f, 3.0f}); });
-    expect(high.x < 1.5f && near(high.y, standingHeight, 0.1f), "a character cannot walk up a tall ledge");
+    CHECK_MESSAGE((high.x < 1.5f && near(high.y, standingHeight, 0.1f)), "a character cannot walk up a tall ledge");
 }
 
-void testSlopeLimit() {
+TEST_CASE("CharacterController: slope limit") {
     // Ramps rising along +x from x = 2.
     const auto gentle = [](Scene& scene) {
         const float angle = glm::radians(20.0f);
@@ -117,22 +113,22 @@ void testSlopeLimit() {
     CharacterControllerComponent controller;
     controller.slopeLimitRadians = glm::radians(35.0f);
     const glm::vec3 climbed = walkInto(gentle, controller);
-    expect(climbed.y > standingHeight + 0.8f, "a character walks up a slope within its limit");
+    CHECK_MESSAGE(climbed.y > standingHeight + 0.8f, "a character walks up a slope within its limit");
     const glm::vec3 refused = walkInto(steep, controller);
-    expect(refused.y < standingHeight + 0.4f && refused.x < 2.5f,
-           "a character cannot walk up a slope beyond its limit");
+    CHECK_MESSAGE((refused.y < standingHeight + 0.4f && refused.x < 2.5f),
+                  "a character cannot walk up a slope beyond its limit");
 }
 
-void testMovingPlatform() {
+TEST_CASE("CharacterController: moving platform") {
     PhysicsWorld physics;
-    expect(static_cast<bool>(physics.init()), "physics initializes");
+    CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");
     Scene scene;
     AssetManager assets;
     // A platform whose top is at y = 0, with nothing else to stand on.
     const Entity platform = addBox(scene, {0.0f, -0.25f, 0.0f}, {2.0f, 0.25f, 2.0f}, PhysicsMotionType::Kinematic);
     const Entity character = addCharacter(scene, {0.0f, standingHeight + 0.05f, 0.0f});
     step(physics, scene, assets, 30);
-    expect(controllerOf(scene, character).grounded, "a character stands on a kinematic platform");
+    CHECK_MESSAGE(controllerOf(scene, character).grounded, "a character stands on a kinematic platform");
 
     const float dt = physics.config().fixedTimeStep;
     for (int index = 1; index <= 120; ++index) {
@@ -143,78 +139,81 @@ void testMovingPlatform() {
     }
     const glm::vec3 position = positionOf(scene, character);
     const CharacterControllerComponent& controller = controllerOf(scene, character);
-    expect(near(position.x, 2.0f, 0.15f) && near(position.y, standingHeight, 0.1f),
-           "a character rides a moving platform");
-    expect(controller.grounded && near(controller.groundVelocity.x, 1.0f, 0.1f),
-           "a character on a moving platform reports the platform's velocity");
+    CHECK_MESSAGE((near(position.x, 2.0f, 0.15f) && near(position.y, standingHeight, 0.1f)),
+                  "a character rides a moving platform");
+    CHECK_MESSAGE((controller.grounded && near(controller.groundVelocity.x, 1.0f, 0.1f)),
+                  "a character on a moving platform reports the platform's velocity");
 }
 
-void testJump() {
+TEST_CASE("CharacterController: jump") {
     PhysicsWorld physics;
-    expect(static_cast<bool>(physics.init()), "physics initializes");
+    CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");
     Scene scene;
     AssetManager assets;
     addFloor(scene);
     const Entity character = addCharacter(scene, {0.0f, standingHeight + 0.05f, 0.0f});
     step(physics, scene, assets, 30);
     const CharacterControllerComponent& controller = controllerOf(scene, character);
-    expect(controller.grounded && near(controller.groundNormal.y, 1.0f, 0.01f), "a character settles on the floor");
-    expect(controller.groundDistance >= 0.0f && controller.groundDistance < 0.05f,
-           "the ground probe finds the floor under a standing character");
+    CHECK_MESSAGE((controller.grounded && near(controller.groundNormal.y, 1.0f, 0.01f)),
+                  "a character settles on the floor");
+    CHECK_MESSAGE((controller.groundDistance >= 0.0f && controller.groundDistance < 0.05f),
+                  "the ground probe finds the floor under a standing character");
 
     controllerOf(scene, character).jumpRequested = true;
     step(physics, scene, assets, 5);
-    expect(!controller.grounded && controller.velocity.y > 0.0f && !controller.jumpRequested,
-           "a jump request lifts the character off the ground and is consumed");
+    CHECK_MESSAGE((!controller.grounded && controller.velocity.y > 0.0f && !controller.jumpRequested),
+                  "a jump request lifts the character off the ground and is consumed");
     float peak = 0.0f;
     for (int index = 0; index < 120; ++index) {
         step(physics, scene, assets);
         peak = std::max(peak, positionOf(scene, character).y);
     }
     // jumpSpeed 5.5 m/s rises about 1.5 m.
-    expect(peak > standingHeight + 1.2f, "a jump rises by its jump speed");
-    expect(controller.grounded && near(positionOf(scene, character).y, standingHeight, 0.1f),
-           "a jumping character lands");
+    CHECK_MESSAGE(peak > standingHeight + 1.2f, "a jump rises by its jump speed");
+    CHECK_MESSAGE((controller.grounded && near(positionOf(scene, character).y, standingHeight, 0.1f)),
+                  "a jumping character lands");
 
     controllerOf(scene, character).jumpRequested = true;
     step(physics, scene, assets);
     controllerOf(scene, character).jumpRequested = true;
     step(physics, scene, assets, 5);
-    expect(positionOf(scene, character).y < standingHeight + 0.6f, "an airborne character cannot jump again");
+    CHECK_MESSAGE(positionOf(scene, character).y < standingHeight + 0.6f, "an airborne character cannot jump again");
 }
 
-void testGroundProbeAndTeleport() {
+TEST_CASE("CharacterController: ground probe and teleport") {
     PhysicsWorld physics;
-    expect(static_cast<bool>(physics.init()), "physics initializes");
+    CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");
     Scene scene;
     AssetManager assets;
     addFloor(scene);
     const Entity character = addCharacter(scene, {0.0f, standingHeight + 0.15f, 0.0f});
     step(physics, scene, assets);
-    expect(near(controllerOf(scene, character).groundDistance, 0.15f, 0.05f), "the ground probe measures a short drop");
+    CHECK_MESSAGE(near(controllerOf(scene, character).groundDistance, 0.15f, 0.05f),
+                  "the ground probe measures a short drop");
 
     // Gameplay moves the entity; the character follows it.
     scene.registry().get<TransformComponent>(character).local = glm::translate(glm::mat4(1.0f), {5.0f, 8.0f, 0.0f});
     scene.markTransformDirty(character);
     step(physics, scene, assets);
     const glm::vec3 teleported = positionOf(scene, character);
-    expect(near(teleported.x, 5.0f, 0.01f) && teleported.y > 7.5f, "a character follows its entity when moved");
-    expect(!controllerOf(scene, character).grounded && controllerOf(scene, character).groundDistance < 0.0f,
-           "a character high above the floor finds no ground");
+    CHECK_MESSAGE((near(teleported.x, 5.0f, 0.01f) && teleported.y > 7.5f),
+                  "a character follows its entity when moved");
+    CHECK_MESSAGE((!controllerOf(scene, character).grounded && controllerOf(scene, character).groundDistance < 0.0f),
+                  "a character high above the floor finds no ground");
 
     // Interpolation blends the last step for rendering.
     step(physics, scene, assets);
     const float current = positionOf(scene, character).y;
     physics.interpolate(scene, 0.0f);
-    expect(positionOf(scene, character).y > current, "interpolation shows the previous step's position");
+    CHECK_MESSAGE(positionOf(scene, character).y > current, "interpolation shows the previous step's position");
     physics.interpolate(scene, 1.0f);
     step(physics, scene, assets);
-    expect(positionOf(scene, character).y < current, "interpolated positions are not mistaken for a teleport");
+    CHECK_MESSAGE(positionOf(scene, character).y < current, "interpolated positions are not mistaken for a teleport");
 }
 
-void testQueriesAndSensors() {
+TEST_CASE("CharacterController: queries and sensors") {
     PhysicsWorld physics;
-    expect(static_cast<bool>(physics.init()), "physics initializes");
+    CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");
     Scene scene;
     AssetManager assets;
     addFloor(scene);
@@ -226,12 +225,12 @@ void testQueriesAndSensors() {
     step(physics, scene, assets, 10);
 
     PhysicsRayHit hit;
-    expect(physics.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, hit) && hit.entity == character,
-           "rays hit a character as its entity");
+    CHECK_MESSAGE((physics.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, hit) && hit.entity == character),
+                  "rays hit a character as its entity");
     const Entity self[] = {character};
-    expect(physics.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, hit, {.ignore = self}) &&
-               hit.entity != character,
-           "a ray can ignore a character");
+    CHECK_MESSAGE((physics.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, hit, {.ignore = self}) &&
+                   hit.entity != character),
+                  "a ray can ignore a character");
 
     bool entered = false;
     controllerOf(scene, character).desiredVelocity = {3.0f, 0.0f, 0.0f};
@@ -242,7 +241,7 @@ void testQueriesAndSensors() {
                                   event.other == character && event.otherId == scene.id(character));
         }
     }
-    expect(entered, "a character walking into a sensor enters it");
+    CHECK_MESSAGE(entered, "a character walking into a sensor enters it");
 
     scene.registry().remove<CharacterControllerComponent>(character);
     step(physics, scene, assets);
@@ -250,14 +249,14 @@ void testQueriesAndSensors() {
     for (const TriggerEvent& event : physics.triggerEvents()) {
         exited = exited || (event.type == TriggerEventType::Exited && event.other == character);
     }
-    expect(exited, "removing a character inside a sensor exits it");
-    expect(!physics.raycast({3.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, hit) || hit.entity != character,
-           "a removed character leaves no inner body");
+    CHECK_MESSAGE(exited, "removing a character inside a sensor exits it");
+    CHECK_MESSAGE((!physics.raycast({3.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, hit) || hit.entity != character),
+                  "a removed character leaves no inner body");
 }
 
-void testCharacterReplacesRigidBody() {
+TEST_CASE("CharacterController: character replaces rigid body") {
     PhysicsWorld physics;
-    expect(static_cast<bool>(physics.init()), "physics initializes");
+    CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");
     Scene scene;
     AssetManager assets;
     addFloor(scene);
@@ -267,19 +266,20 @@ void testCharacterReplacesRigidBody() {
                                                  RigidBodyComponent{.motionType = PhysicsMotionType::Dynamic});
     scene.markPhysicsDirty(character);
     step(physics, scene, assets, 30);
-    expect(physics.linearVelocity(character) == glm::vec3(0.0f) && !physics.setLinearVelocity(character, {1, 0, 0}),
-           "a character controller replaces the entity's rigid body");
-    expect(controllerOf(scene, character).grounded, "the character still stands on the floor");
+    CHECK_MESSAGE(
+        (physics.linearVelocity(character) == glm::vec3(0.0f) && !physics.setLinearVelocity(character, {1, 0, 0})),
+        "a character controller replaces the entity's rigid body");
+    CHECK_MESSAGE(controllerOf(scene, character).grounded, "the character still stands on the floor");
 }
 
-void testSchemaMigration() {
+TEST_CASE("CharacterController: schema migration") {
     const std::shared_ptr<const ComponentTypeRegistry> types = builtInComponentTypes();
     AssetManager assets;
     Scene original;
     const Entity character = addCharacter(original, {0.0f, 1.0f, 0.0f});
     std::string text;
-    expect(SceneDocument::serialize(original, assets, {.componentTypes = types}, text).success,
-           "a scene with a character serializes");
+    CHECK_MESSAGE(SceneDocument::serialize(original, assets, {.componentTypes = types}, text).success,
+                  "a scene with a character serializes");
     nlohmann::json document = nlohmann::json::parse(text);
     // The demo's version 1 controller, before the engine took the key over.
     for (nlohmann::json& entity : document.at("entities")) {
@@ -293,7 +293,7 @@ void testSchemaMigration() {
     Scene loaded;
     const SceneDocumentResult result =
         SceneDocument::deserialize(document.dump(), assets, {.componentTypes = types}, loaded);
-    expect(result.success, "a version 1 character controller loads");
+    CHECK_MESSAGE(result.success, "a version 1 character controller loads");
     if (!result) {
         std::cerr << result.error << '\n';
         return;
@@ -302,33 +302,34 @@ void testSchemaMigration() {
     const auto* controller =
         migrated != entt::null ? loaded.registry().try_get<CharacterControllerComponent>(migrated) : nullptr;
     const CharacterControllerComponent defaults;
-    expect(controller != nullptr && controller->radius == 0.3f && controller->halfHeight == 0.6f &&
-               controller->moveSpeed == 6.0f && controller->airControl == 0.5f &&
-               controller->stepHeight == defaults.stepHeight && controller->layer == PhysicsLayer::Player &&
-               controller->moveAction == "Move",
-           "a version 1 controller keeps its tuning and takes the new fields' defaults");
+    CHECK_MESSAGE((controller != nullptr && controller->radius == 0.3f && controller->halfHeight == 0.6f &&
+                   controller->moveSpeed == 6.0f && controller->airControl == 0.5f &&
+                   controller->stepHeight == defaults.stepHeight && controller->layer == PhysicsLayer::Player &&
+                   controller->moveAction == "Move"),
+                  "a version 1 controller keeps its tuning and takes the new fields' defaults");
 
     std::string resaved;
-    expect(SceneDocument::serialize(loaded, assets, {.componentTypes = types}, resaved).success &&
-               resaved.find("look_sensitivity") == std::string::npos &&
-               resaved.find("\"$version\": 2") != std::string::npos,
-           "a migrated controller saves as version 2 without the look settings");
+    CHECK_MESSAGE((SceneDocument::serialize(loaded, assets, {.componentTypes = types}, resaved).success &&
+                   resaved.find("look_sensitivity") == std::string::npos &&
+                   resaved.find("\"$version\": 2") != std::string::npos),
+                  "a migrated controller saves as version 2 without the look settings");
 }
 
 // The engine's first-person systems: input walks a character relative to its
 // camera's yaw, and look input turns the camera within its pitch limits.
-void testFirstPersonInput() {
+TEST_CASE("CharacterController: first person input") {
     Scene scene;
     const Entity player = spawnFirstPersonPlayer(scene, {0.0f, 1.0f, 0.0f});
     scene.updateWorldTransforms();
     const Entity camera = findCameraChild(scene, player);
-    expect(camera != entt::null && scene.registry().all_of<FirstPersonCameraComponent, AudioListenerComponent>(camera),
-           "a spawned player has a first-person camera that listens");
+    CHECK_MESSAGE(
+        (camera != entt::null && scene.registry().all_of<FirstPersonCameraComponent, AudioListenerComponent>(camera)),
+        "a spawned player has a first-person camera that listens");
     if (camera == entt::null) {
         return;
     }
-    expect(near(scene.registry().get<TransformComponent>(camera).local[3].y, 0.9f, 1.0e-4f),
-           "the spawned camera sits at the top of the capsule");
+    CHECK_MESSAGE(near(scene.registry().get<TransformComponent>(camera).local[3].y, 0.9f, 1.0e-4f),
+                  "the spawned camera sits at the top of the capsule");
 
     InputActionMap actions;
     actions.addAction("Move", InputActionValueType::Axis2D);
@@ -347,9 +348,9 @@ void testFirstPersonInput() {
     forward.setKeyPressed(Key::Space);
     applyCharacterInput(scene, actions.evaluate(forward));
     const CharacterControllerComponent& controller = scene.registry().get<CharacterControllerComponent>(player);
-    expect(near(controller.desiredVelocity.z, -controller.moveSpeed, 1.0e-4f) &&
-               near(controller.desiredVelocity.x, 0.0f, 1.0e-4f) && controller.jumpRequested,
-           "forward input walks a character toward -Z and requests a jump");
+    CHECK_MESSAGE((near(controller.desiredVelocity.z, -controller.moveSpeed, 1.0e-4f) &&
+                   near(controller.desiredVelocity.x, 0.0f, 1.0e-4f) && controller.jumpRequested),
+                  "forward input walks a character toward -Z and requests a jump");
 
     // Turning the view a quarter left walks the character toward -X.
     scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians = glm::radians(90.0f);
@@ -357,9 +358,9 @@ void testFirstPersonInput() {
     sprint.setKeyDown(Key::W);
     sprint.setKeyDown(Key::LeftShift);
     applyCharacterInput(scene, actions.evaluate(sprint));
-    expect(near(controller.desiredVelocity.x, -controller.moveSpeed * controller.sprintMultiplier, 1.0e-3f) &&
-               near(controller.desiredVelocity.z, 0.0f, 1.0e-3f),
-           "a character walks relative to its camera's yaw and sprints");
+    CHECK_MESSAGE((near(controller.desiredVelocity.x, -controller.moveSpeed * controller.sprintMultiplier, 1.0e-3f) &&
+                   near(controller.desiredVelocity.z, 0.0f, 1.0e-3f)),
+                  "a character walks relative to its camera's yaw and sprints");
 
     scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians = 0.0f;
     InputState look;
@@ -368,33 +369,22 @@ void testFirstPersonInput() {
     const InputActionState lookActions = actions.evaluate(look);
     updateFirstPersonCameras(scene, &lookActions, 0.016f);
     const auto& view = scene.registry().get<FirstPersonCameraComponent>(camera);
-    expect(view.yawRadians < 0.0f && view.pitchRadians == view.maximumPitchRadians,
-           "look input turns the camera and its pitch is clamped");
-    expect(near(scene.registry().get<TransformComponent>(camera).local[3].y, 0.9f, 1.0e-4f),
-           "turning the camera keeps its eye height");
+    CHECK_MESSAGE((view.yawRadians < 0.0f && view.pitchRadians == view.maximumPitchRadians),
+                  "look input turns the camera and its pitch is clamped");
+    CHECK_MESSAGE(near(scene.registry().get<TransformComponent>(camera).local[3].y, 0.9f, 1.0e-4f),
+                  "turning the camera keeps its eye height");
 
     scene.registry().ctx().insert_or_assign(FirstPersonViewPreferences{.lookScale = 2.0f});
     const float yawBefore = view.yawRadians;
     updateFirstPersonCameras(scene, &lookActions, 0.016f);
-    expect(near(yawBefore - view.yawRadians, 2.0f * 100.0f * view.sensitivity, 1.0e-4f),
-           "the player's look scale multiplies look input");
+    CHECK_MESSAGE(near(yawBefore - view.yawRadians, 2.0f * 100.0f * view.sensitivity, 1.0e-4f),
+                  "the player's look scale multiplies look input");
 
     scene.registry().get<CharacterControllerComponent>(player).moveAction.clear();
     scene.registry().get<CharacterControllerComponent>(player).desiredVelocity = {1.0f, 0.0f, 0.0f};
     applyCharacterInput(scene, actions.evaluate(forward));
-    expect(controller.desiredVelocity.x == 1.0f, "a character without a move action is left to code");
+    CHECK_MESSAGE(controller.desiredVelocity.x == 1.0f, "a character without a move action is left to code");
 }
 } // namespace
 
-int main() {
-    testFirstPersonInput();
-    testSteps();
-    testSlopeLimit();
-    testMovingPlatform();
-    testJump();
-    testGroundProbeAndTeleport();
-    testQueriesAndSensors();
-    testCharacterReplacesRigidBody();
-    testSchemaMigration();
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

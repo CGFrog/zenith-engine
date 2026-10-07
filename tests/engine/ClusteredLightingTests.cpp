@@ -1,6 +1,8 @@
 #include "engine/graphics/Lighting.hpp"
 #include "engine/graphics/RenderConfiguration.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -10,15 +12,9 @@
 #include <string>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("ClusteredLighting");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 constexpr float nearPlane = 0.1f;
 constexpr float farPlane = 1000.0f;
@@ -105,15 +101,15 @@ bool lit(const LocalLight& light, const glm::vec3& point) {
     return glm::dot(toPoint / distance, light.direction) > light.outerConeCosine;
 }
 
-void testSliceBoundaries() {
+TEST_CASE("ClusteredLighting: slice boundaries") {
     const ClusterGrid grid = sceneGrid();
     const uint32_t slices = grid.configuration.depthSlices;
-    expect(grid.clusterCount() == 16u * 9u * 24u, "the default grid is 16x9 tiles by 24 depth slices");
-    expect(std::abs(grid.sliceStart(0) - nearPlane) < 1e-6f && grid.sliceStart(slices) == farPlane,
-           "slices cover the view depth range from the near plane to the far plane");
-    expect(std::abs(grid.sliceEndDepth - 500.0f) < 1e-3f &&
-               std::abs(grid.sliceStart(slices - 1) - nearPlane * std::pow(5000.0f, 23.0f / 24.0f)) < 1e-2f,
-           "exponential slicing ends at the configured depth and the last slice extends to the far plane");
+    CHECK_MESSAGE(grid.clusterCount() == 16u * 9u * 24u, "the default grid is 16x9 tiles by 24 depth slices");
+    CHECK_MESSAGE((std::abs(grid.sliceStart(0) - nearPlane) < 1e-6f && grid.sliceStart(slices) == farPlane),
+                  "slices cover the view depth range from the near plane to the far plane");
+    CHECK_MESSAGE((std::abs(grid.sliceEndDepth - 500.0f) < 1e-3f &&
+                   std::abs(grid.sliceStart(slices - 1) - nearPlane * std::pow(5000.0f, 23.0f / 24.0f)) < 1e-2f),
+                  "exponential slicing ends at the configured depth and the last slice extends to the far plane");
     bool monotone = true;
     bool exponential = true;
     bool lookupMatches = true;
@@ -129,18 +125,19 @@ void testSliceBoundaries() {
         lookupMatches = lookupMatches && grid.sliceIndex(start * 1.001f) == slice &&
                         grid.sliceIndex(end * 0.999f) == slice && grid.sliceIndex(std::sqrt(start * end)) == slice;
     }
-    expect(monotone && exponential, "slice boundaries increase with a constant ratio");
-    expect(lookupMatches, "the shader slice lookup inverts the slice boundaries");
-    expect(grid.sliceIndex(0.0f) == 0 && grid.sliceIndex(farPlane * 2.0f) == slices - 1,
-           "depths outside the view range clamp to the first and last slices");
+    CHECK_MESSAGE((monotone && exponential), "slice boundaries increase with a constant ratio");
+    CHECK_MESSAGE(lookupMatches, "the shader slice lookup inverts the slice boundaries");
+    CHECK_MESSAGE((grid.sliceIndex(0.0f) == 0 && grid.sliceIndex(farPlane * 2.0f) == slices - 1),
+                  "depths outside the view range clamp to the first and last slices");
 
     const ClusterGrid shortView =
         makeClusterGrid(ClusterGridConfiguration{}, sceneProjection(), renderExtent, nearPlane, 50.0f);
-    expect(shortView.sliceEndDepth == 50.0f && shortView.sliceStart(shortView.configuration.depthSlices) == 50.0f,
-           "a far plane nearer than the slicing limit bounds the slices");
+    CHECK_MESSAGE(
+        (shortView.sliceEndDepth == 50.0f && shortView.sliceStart(shortView.configuration.depthSlices) == 50.0f),
+        "a far plane nearer than the slicing limit bounds the slices");
 }
 
-void testFragmentClusterMirror() {
+TEST_CASE("ClusteredLighting: fragment cluster mirror") {
     const ClusterGrid grid = sceneGrid();
     const glm::mat4 projection = sceneProjection();
     std::mt19937 random(7);
@@ -162,19 +159,19 @@ void testFragmentClusterMirror() {
             grid.bounds(cluster % columns, (cluster / columns) % rows, cluster / (columns * rows));
         clusterContainsPoint = clusterContainsPoint && contains(bounds, point.viewPosition, point.depth * 1e-3f);
     }
-    expect(depthMatches, "view depth reconstructs from reversed-Z fragment depth");
-    expect(clusterContainsPoint, "a fragment's cluster bounds contain the fragment's view position");
-    expect(grid.clusterIndexAt({0.0f, 0.0f}, nearPlane) == 0 &&
-               grid.clusterIndexAt(glm::vec2(renderExtent), farPlane) == grid.clusterCount() - 1,
-           "cluster indices run column-major within rows within slices and clamp at the extent");
+    CHECK_MESSAGE(depthMatches, "view depth reconstructs from reversed-Z fragment depth");
+    CHECK_MESSAGE(clusterContainsPoint, "a fragment's cluster bounds contain the fragment's view position");
+    CHECK_MESSAGE((grid.clusterIndexAt({0.0f, 0.0f}, nearPlane) == 0 &&
+                   grid.clusterIndexAt(glm::vec2(renderExtent), farPlane) == grid.clusterCount() - 1),
+                  "cluster indices run column-major within rows within slices and clamp at the extent");
 }
 
-void testAssignmentMatchesBruteForce() {
+TEST_CASE("ClusteredLighting: assignment matches brute force") {
     const ClusterGrid grid = sceneGrid();
     std::mt19937 random(11);
     const std::vector<LocalLight> lights = randomViewSpaceLights(random, 96);
     const ClusterLightLists lists = assignLightsToClusters(grid, lights);
-    expect(lists.discardedAssignments == 0, "a moderate light count fits every cluster");
+    CHECK_MESSAGE(lists.discardedAssignments == 0, "a moderate light count fits every cluster");
 
     bool conservative = true;
     for (int sample = 0; sample < 20000; ++sample) {
@@ -186,7 +183,7 @@ void testAssignmentMatchesBruteForce() {
             }
         }
     }
-    expect(conservative, "every light that reaches a point is listed in that point's cluster");
+    CHECK_MESSAGE(conservative, "every light that reaches a point is listed in that point's cluster");
 
     bool exact = true;
     uint64_t assignments = 0;
@@ -211,12 +208,12 @@ void testAssignmentMatchesBruteForce() {
             }
         }
     }
-    expect(exact, "cluster lists hold exactly the intersecting lights in ascending order");
-    expect(assignments < static_cast<uint64_t>(grid.clusterCount()) * lights.size() / 4,
-           "clusters cull most lights instead of listing every light everywhere");
+    CHECK_MESSAGE(exact, "cluster lists hold exactly the intersecting lights in ascending order");
+    CHECK_MESSAGE((assignments < static_cast<uint64_t>(grid.clusterCount()) * lights.size() / 4),
+                  "clusters cull most lights instead of listing every light everywhere");
 }
 
-void testSpotConeCulling() {
+TEST_CASE("ClusteredLighting: spot cone culling") {
     const ClusterGrid grid = sceneGrid();
     LocalLight sideways{.type = LocalLightType::Spot,
                         .position = {0.0f, 0.0f, -10.0f},
@@ -238,12 +235,12 @@ void testSpotConeCulling() {
         pointClusters += pointListed ? 1u : 0u;
         spotWithinPoint = spotWithinPoint && (!spotListed || pointListed);
     }
-    expect(spotWithinPoint && spotClusters < pointClusters / 2,
-           "a spot cone culls clusters its range sphere would reach");
+    CHECK_MESSAGE((spotWithinPoint && spotClusters < pointClusters / 2),
+                  "a spot cone culls clusters its range sphere would reach");
     const uint32_t behind = grid.clusterIndexAt(grid.renderExtent * glm::vec2(0.25f, 0.5f), 10.0f);
     const uint32_t ahead = grid.clusterIndexAt(grid.renderExtent * glm::vec2(0.75f, 0.5f), 10.0f);
-    expect(listed(lists, ahead, 0) && !listed(lists, behind, 0),
-           "a spot reaches clusters along its axis but not those behind it");
+    CHECK_MESSAGE((listed(lists, ahead, 0) && !listed(lists, behind, 0)),
+                  "a spot reaches clusters along its axis but not those behind it");
 
     std::mt19937 random(3);
     bool conservative = true;
@@ -254,10 +251,10 @@ void testSpotConeCulling() {
             conservative = false;
         }
     }
-    expect(conservative, "spot cone culling never drops a lit point");
+    CHECK_MESSAGE(conservative, "spot cone culling never drops a lit point");
 }
 
-void testClusterCapacity() {
+TEST_CASE("ClusteredLighting: cluster capacity") {
     const ClusterGrid grid = sceneGrid();
     std::vector<LocalLight> lights(maximumLightsPerCluster + 40);
     for (uint32_t index = 0; index < lights.size(); ++index) {
@@ -267,30 +264,31 @@ void testClusterCapacity() {
     }
     const ClusterLightLists lists = assignLightsToClusters(grid, lights);
     const uint32_t center = grid.clusterIndexAt(grid.renderExtent * 0.5f, 5.0f);
-    expect(lists.ranges[center].y == maximumLightsPerCluster && lists.maximumLightsInCluster == lights.size() &&
-               lists.discardedAssignments > 0 && lists.lightIndices[lists.ranges[center].x] == 0,
-           "full clusters keep their first lights and report the dropped assignments");
+    CHECK_MESSAGE((lists.ranges[center].y == maximumLightsPerCluster && lists.maximumLightsInCluster == lights.size() &&
+                   lists.discardedAssignments > 0 && lists.lightIndices[lists.ranges[center].x] == 0),
+                  "full clusters keep their first lights and report the dropped assignments");
 }
 
-void testLightSelection() {
+TEST_CASE("ClusteredLighting: light selection") {
     std::vector<LocalLight> lights(10);
     for (uint32_t index = 0; index < lights.size(); ++index) {
         lights[index].position = {static_cast<float>(index) * 10.0f, 0.0f, 0.0f};
         lights[index].range = 1.0f;
         lights[index].stableId = 100 - index;
     }
-    expect(selectLocalLights(lights, glm::vec3(0.0f), 64).size() == lights.size(),
-           "scenes within the light limit upload every light");
+    CHECK_MESSAGE(selectLocalLights(lights, glm::vec3(0.0f), 64).size() == lights.size(),
+                  "scenes within the light limit upload every light");
     const std::vector<LocalLight> nearest = selectLocalLights(lights, glm::vec3(0.0f), 3);
-    expect(nearest.size() == 3 && nearest[0].stableId == 98 && nearest[1].stableId == 99 && nearest[2].stableId == 100,
-           "over the limit the nearest lights are kept in stable-id order");
+    CHECK_MESSAGE(
+        (nearest.size() == 3 && nearest[0].stableId == 98 && nearest[1].stableId == 99 && nearest[2].stableId == 100),
+        "over the limit the nearest lights are kept in stable-id order");
 
     LocalLight light{.type = LocalLightType::Spot, .position = {1.0f, 2.0f, 3.0f}, .direction = {0.0f, -1.0f, 0.0f}};
     const glm::mat4 view = glm::lookAtRH(glm::vec3(0.0f, 0.0f, 10.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     const LocalLight viewSpace = transformLocalLight(light, view);
-    expect(glm::length(viewSpace.position - glm::vec3(1.0f, 2.0f, -7.0f)) < 1e-5f &&
-               glm::length(viewSpace.direction - glm::vec3(0.0f, -1.0f, 0.0f)) < 1e-5f,
-           "lights transform into view space for cluster assignment");
+    CHECK_MESSAGE((glm::length(viewSpace.position - glm::vec3(1.0f, 2.0f, -7.0f)) < 1e-5f &&
+                   glm::length(viewSpace.direction - glm::vec3(0.0f, -1.0f, 0.0f)) < 1e-5f),
+                  "lights transform into view space for cluster assignment");
 }
 
 std::string withLocalLighting(const std::string& document, const std::string& localLights, bool keepLimit) {
@@ -304,56 +302,44 @@ std::string withLocalLighting(const std::string& document, const std::string& lo
     return result;
 }
 
-void testSettingsMigration() {
+TEST_CASE("ClusteredLighting: settings migration") {
     RenderSettings source;
     source.maximumLocalLights = 2048;
     std::string encoded;
     RenderSettings decoded;
-    expect(serializeRenderSettings(source, encoded) && deserializeRenderSettings(encoded, decoded) &&
-               decoded.localLights == LocalLightingQuality::Clustered && decoded.maximumLocalLights == 2048,
-           "clustered lighting and its light limit round trip");
+    CHECK_MESSAGE((serializeRenderSettings(source, encoded) && deserializeRenderSettings(encoded, decoded) &&
+                   decoded.localLights == LocalLightingQuality::Clustered && decoded.maximumLocalLights == 2048),
+                  "clustered lighting and its light limit round trip");
 
     for (const char* legacy : {"1", "2"}) {
         RenderSettings migrated;
         migrated.localLights = LocalLightingQuality::Disabled;
-        expect(deserializeRenderSettings(withLocalLighting(encoded, legacy, false), migrated) &&
-                   migrated.localLights == LocalLightingQuality::Clustered &&
-                   migrated.maximumLocalLights == RenderSettings{}.maximumLocalLights,
-               "retired tiled light modes load as clustered lighting with the default limit");
+        CHECK_MESSAGE((deserializeRenderSettings(withLocalLighting(encoded, legacy, false), migrated) &&
+                       migrated.localLights == LocalLightingQuality::Clustered &&
+                       migrated.maximumLocalLights == RenderSettings{}.maximumLocalLights),
+                      "retired tiled light modes load as clustered lighting with the default limit");
     }
     RenderSettings disabled;
-    expect(deserializeRenderSettings(withLocalLighting(encoded, "0", true), disabled) &&
-               disabled.localLights == LocalLightingQuality::Disabled,
-           "disabled local lighting still loads");
+    CHECK_MESSAGE((deserializeRenderSettings(withLocalLighting(encoded, "0", true), disabled) &&
+                   disabled.localLights == LocalLightingQuality::Disabled),
+                  "disabled local lighting still loads");
     RenderSettings rejected;
-    expect(!deserializeRenderSettings(withLocalLighting(encoded, "3", true), rejected),
-           "unknown local-lighting values are rejected");
+    CHECK_MESSAGE(!deserializeRenderSettings(withLocalLighting(encoded, "3", true), rejected),
+                  "unknown local-lighting values are rejected");
     std::string zeroLimit = encoded;
     zeroLimit.replace(zeroLimit.find("2048"), 4, "0");
-    expect(!deserializeRenderSettings(zeroLimit, rejected), "a zero local-light limit is rejected");
+    CHECK_MESSAGE(!deserializeRenderSettings(zeroLimit, rejected), "a zero local-light limit is rejected");
 
     RenderCapabilities capabilities;
     capabilities.maximumLocalLights = 1024;
     const ValidatedRenderSettings clamped = validateRenderSettings(source, capabilities);
-    expect(clamped.settings.maximumLocalLights == 1024 &&
-               clamped.settings.localLights == LocalLightingQuality::Clustered && !clamped.fallbacks.empty(),
-           "a light limit above the renderer's capacity is reduced with a reported fallback");
+    CHECK_MESSAGE((clamped.settings.maximumLocalLights == 1024 &&
+                   clamped.settings.localLights == LocalLightingQuality::Clustered && !clamped.fallbacks.empty()),
+                  "a light limit above the renderer's capacity is reduced with a reported fallback");
     capabilities.maximumLocalLights = 0;
-    expect(validateRenderSettings(source, capabilities).settings.localLights == LocalLightingQuality::Disabled,
-           "renderers without clustered lighting disable local lights");
+    CHECK_MESSAGE(validateRenderSettings(source, capabilities).settings.localLights == LocalLightingQuality::Disabled,
+                  "renderers without clustered lighting disable local lights");
 }
 } // namespace
 
-int main() {
-    testSliceBoundaries();
-    testFragmentClusterMirror();
-    testAssignmentMatchesBruteForce();
-    testSpotConeCulling();
-    testClusterCapacity();
-    testLightSelection();
-    testSettingsMigration();
-    if (failures == 0) {
-        std::cout << "Clustered lighting tests passed\n";
-    }
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

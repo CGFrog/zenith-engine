@@ -4,6 +4,8 @@
 #include "engine/graphics/ScreenSpaceReflectionTrace.hpp"
 #include "engine/graphics/TemporalQuality.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -13,17 +15,11 @@
 #include <optional>
 #include <vector>
 
+TEST_SUITE_BEGIN("ScreenSpaceReflection");
+
 namespace ssr = screen_space_reflection;
 
 namespace {
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
 
 constexpr float nearPlane = 0.1f;
 constexpr float farPlane = 200.0f;
@@ -142,7 +138,7 @@ glm::vec2 projectPixel(glm::vec3 viewPosition, const ssr::PerspectiveTerms& term
     return ssr::ndcToPixel(glm::vec2(ssr::projectToNdc(viewPosition, terms)), glm::vec2(renderExtent));
 }
 
-void testViewPositionRoundTrip() {
+TEST_CASE("ScreenSpaceReflection: view position round trip") {
     const ssr::PerspectiveTerms terms = ssr::perspectiveTerms(sceneProjection({0.0031f, -0.0047f}));
     float worst = 0.0f;
     for (float x = -0.95f; x <= 0.95f; x += 0.19f) {
@@ -154,17 +150,18 @@ void testViewPositionRoundTrip() {
             }
         }
     }
-    expect(worst < 1e-4f, "depth reconstruction round-trips through the jittered projection");
-    expect(std::abs(ssr::viewZFromDepth(1.0f, terms) + nearPlane) < 1e-4f, "reversed-Z depth 1 is the near plane");
-    expect(std::abs(ssr::viewZFromDepth(0.0f, terms) + farPlane) < 1e-2f, "reversed-Z depth 0 is the far plane");
-    expect(ssr::projectToNdc({0, 0, -2}, terms).z > ssr::projectToNdc({0, 0, -20}, terms).z,
-           "closer points have greater reversed-Z depth");
+    CHECK_MESSAGE(worst < 1e-4f, "depth reconstruction round-trips through the jittered projection");
+    CHECK_MESSAGE(std::abs(ssr::viewZFromDepth(1.0f, terms) + nearPlane) < 1e-4f,
+                  "reversed-Z depth 1 is the near plane");
+    CHECK_MESSAGE(std::abs(ssr::viewZFromDepth(0.0f, terms) + farPlane) < 1e-2f, "reversed-Z depth 0 is the far plane");
+    CHECK_MESSAGE(ssr::projectToNdc({0, 0, -2}, terms).z > ssr::projectToNdc({0, 0, -20}, terms).z,
+                  "closer points have greater reversed-Z depth");
     const glm::vec2 pixel =
         ssr::ndcToPixel(ssr::pixelToNdc({12.5f, 99.5f}, glm::vec2(renderExtent)), glm::vec2(renderExtent));
-    expect(glm::length(pixel - glm::vec2(12.5f, 99.5f)) < 1e-4f, "pixel and NDC conversions are inverse");
+    CHECK_MESSAGE(glm::length(pixel - glm::vec2(12.5f, 99.5f)) < 1e-4f, "pixel and NDC conversions are inverse");
 }
 
-void testPyramidOrdering() {
+TEST_CASE("ScreenSpaceReflection: pyramid ordering") {
     const ssr::PerspectiveTerms terms = ssr::perspectiveTerms(sceneProjection({0.0f, 0.0f}));
     SyntheticScene scene = floorAndWall();
     scene.render(terms);
@@ -174,15 +171,15 @@ void testPyramidOrdering() {
             ordered = ordered && texel.y >= texel.x;
         }
     }
-    expect(ordered, "pyramid closest depth (g) is never below the farthest (r) in reversed Z");
+    CHECK_MESSAGE(ordered, "pyramid closest depth (g) is never below the farthest (r) in reversed Z");
     const glm::vec2 top = scene.pyramid.back().front();
-    expect(top.x == 0.0f, "the top level's farthest depth is the sky");
-    expect(std::abs(top.y - scene.closest(0, {renderExtent.x / 2, renderExtent.y - 1})) < 1e-6f,
-           "the top level's closest depth is the nearest floor texel");
+    CHECK_MESSAGE(top.x == 0.0f, "the top level's farthest depth is the sky");
+    CHECK_MESSAGE(std::abs(top.y - scene.closest(0, {renderExtent.x / 2, renderExtent.y - 1})) < 1e-6f,
+                  "the top level's closest depth is the nearest floor texel");
 }
 
 // Mirror ray from the floor up to the wall.
-void testRayHitsWall() {
+TEST_CASE("ScreenSpaceReflection: ray hits wall") {
     const ssr::PerspectiveTerms terms = ssr::perspectiveTerms(sceneProjection({0.0f, 0.0f}));
     SyntheticScene scene = floorAndWall();
     scene.render(terms);
@@ -191,21 +188,21 @@ void testRayHitsWall() {
     const glm::vec3 direction = glm::reflect(-toCamera, glm::vec3(0, 1, 0));
     const std::optional<ssr::ScreenRay> ray =
         ssr::makeScreenRay(origin + glm::vec3(0, 0.01f, 0), direction, 60.0f, terms, glm::vec2(renderExtent));
-    expect(ray.has_value(), "a ray away from the camera produces a screen segment");
+    CHECK_MESSAGE(ray.has_value(), "a ray away from the camera produces a screen segment");
     if (!ray) {
         return;
     }
     const ssr::TraceResult result = trace(scene, *ray, terms, direction);
     // The mirror direction is (0, 1, -6) normalized: it meets z = -10 at y = -1/3.
     const glm::vec2 expected = projectPixel({0.0f, -1.0f / 3.0f, -10.0f}, terms);
-    expect(result.hit, "the floor reflection ray hits the wall");
-    expect(glm::length(glm::vec2(result.position) - expected) < 1.5f, "the hit lands at the expected texel");
-    expect(result.iterations < ssr::TraceSettings{}.maximumIterations, "the trace finishes within its budget");
+    CHECK_MESSAGE(result.hit, "the floor reflection ray hits the wall");
+    CHECK_MESSAGE(glm::length(glm::vec2(result.position) - expected) < 1.5f, "the hit lands at the expected texel");
+    CHECK_MESSAGE(result.iterations < ssr::TraceSettings{}.maximumIterations, "the trace finishes within its budget");
     const glm::uvec2 texel = ssr::pyramidCell(glm::vec2(result.position), 0, renderExtent);
-    expect(scene.normalAt(texel).z > 0.5f, "the hit surface is the wall, not the reflecting floor");
+    CHECK_MESSAGE(scene.normalAt(texel).z > 0.5f, "the hit surface is the wall, not the reflecting floor");
 }
 
-void testRayAboveSceneMisses() {
+TEST_CASE("ScreenSpaceReflection: ray above scene misses") {
     const ssr::PerspectiveTerms terms = ssr::perspectiveTerms(sceneProjection({0.0f, 0.0f}));
     SyntheticScene scene = floorAndWall();
     scene.render(terms);
@@ -214,16 +211,16 @@ void testRayAboveSceneMisses() {
     const glm::vec3 direction = glm::normalize(glm::vec3(0.0f, 1.0f, -0.4f));
     const std::optional<ssr::ScreenRay> ray =
         ssr::makeScreenRay(origin + glm::vec3(0, 0.01f, 0), direction, 60.0f, terms, glm::vec2(renderExtent));
-    expect(ray.has_value(), "a ray above the scene still produces a screen segment");
+    CHECK_MESSAGE(ray.has_value(), "a ray above the scene still produces a screen segment");
     if (!ray) {
         return;
     }
-    expect(!trace(scene, *ray, terms, direction).hit, "a ray above every surface misses");
+    CHECK_MESSAGE(!trace(scene, *ray, terms, direction).hit, "a ray above every surface misses");
 }
 
 // A bar close to the camera covers part of the ray's screen path; the ray
 // passes far behind it, so only a large thickness accepts it as the hit.
-void testThicknessRejectsOccluderInFront() {
+TEST_CASE("ScreenSpaceReflection: thickness rejects occluder in front") {
     const ssr::PerspectiveTerms terms = ssr::perspectiveTerms(sceneProjection({0.0f, 0.0f}));
     SyntheticScene scene = floorAndWall();
     scene.planes.push_back({{0, 0, 1}, -3.0f, {-5, -0.36f, -3}, {5, -0.24f, -3}});
@@ -233,42 +230,44 @@ void testThicknessRejectsOccluderInFront() {
     const std::optional<ssr::ScreenRay> ray =
         ssr::makeScreenRay(origin + glm::vec3(0, 0.01f, 0), direction, 60.0f, terms, glm::vec2(renderExtent));
     if (!ray) {
-        expect(false, "occluder test ray exists");
+        CHECK_MESSAGE(false, "occluder test ray exists");
         return;
     }
     const glm::vec2 wallHit = projectPixel({0.0f, -1.0f / 3.0f, -10.0f}, terms);
     const ssr::TraceResult thin = trace(scene, *ray, terms, direction);
-    expect(thin.hit && glm::length(glm::vec2(thin.position) - wallHit) < 1.5f,
-           "a thin occluder in front of the ray is skipped and the wall is hit");
+    CHECK_MESSAGE((thin.hit && glm::length(glm::vec2(thin.position) - wallHit) < 1.5f),
+                  "a thin occluder in front of the ray is skipped and the wall is hit");
     ssr::TraceSettings thick;
     thick.thickness = 100.0f;
     const ssr::TraceResult blocked = trace(scene, *ray, terms, direction, thick);
-    expect(blocked.hit && glm::length(glm::vec2(blocked.position) - wallHit) > 3.0f &&
-               std::abs(ssr::viewZFromDepth(
-                            scene.closest(0, ssr::pyramidCell(glm::vec2(blocked.position), 0, renderExtent)), terms) +
-                        3.0f) < 0.01f,
-           "with unlimited thickness the closer occluder is reported");
+    CHECK_MESSAGE(
+        (blocked.hit && glm::length(glm::vec2(blocked.position) - wallHit) > 3.0f &&
+         std::abs(ssr::viewZFromDepth(scene.closest(0, ssr::pyramidCell(glm::vec2(blocked.position), 0, renderExtent)),
+                                      terms) +
+                  3.0f) < 0.01f),
+        "with unlimited thickness the closer occluder is reported");
 }
 
-void testRayClipsToNearPlane() {
+TEST_CASE("ScreenSpaceReflection: ray clips to near plane") {
     const ssr::PerspectiveTerms terms = ssr::perspectiveTerms(sceneProjection({0.0f, 0.0f}));
     const glm::vec3 origin(0.3f, -0.5f, -4.0f);
     const glm::vec3 direction = glm::normalize(glm::vec3(0.1f, 0.2f, 1.0f));
     const std::optional<ssr::ScreenRay> ray =
         ssr::makeScreenRay(origin, direction, 60.0f, terms, glm::vec2(renderExtent));
-    expect(ray.has_value(), "a ray towards the camera keeps a segment");
+    CHECK_MESSAGE(ray.has_value(), "a ray towards the camera keeps a segment");
     if (ray) {
         const float endDepth = ray->origin.z + ray->direction.z;
-        expect(endDepth <= 1.0f && endDepth > ray->origin.z, "a ray towards the camera stops before the near plane");
-        expect(ray->viewLength < 4.0f, "the clipped length is shorter than the distance to the camera");
+        CHECK_MESSAGE((endDepth <= 1.0f && endDepth > ray->origin.z),
+                      "a ray towards the camera stops before the near plane");
+        CHECK_MESSAGE(ray->viewLength < 4.0f, "the clipped length is shorter than the distance to the camera");
     }
-    expect(!ssr::makeScreenRay(origin, direction, 0.0f, terms, glm::vec2(renderExtent)).has_value(),
-           "a zero-length ray has no segment");
+    CHECK_MESSAGE(!ssr::makeScreenRay(origin, direction, 0.0f, terms, glm::vec2(renderExtent)).has_value(),
+                  "a zero-length ray has no segment");
 }
 
-void testFadesAndCompositeWeight() {
-    expect(ssr::roughnessFade(0.0f, 0.35f, 0.6f) == 1.0f, "smooth surfaces keep full reflections");
-    expect(ssr::roughnessFade(1.0f, 0.35f, 0.6f) == 0.0f, "rough surfaces lose reflections");
+TEST_CASE("ScreenSpaceReflection: fades and composite weight") {
+    CHECK_MESSAGE(ssr::roughnessFade(0.0f, 0.35f, 0.6f) == 1.0f, "smooth surfaces keep full reflections");
+    CHECK_MESSAGE(ssr::roughnessFade(1.0f, 0.35f, 0.6f) == 0.0f, "rough surfaces lose reflections");
     float previous = 1.0f;
     bool monotonic = true;
     for (float roughness = 0.0f; roughness <= 1.0f; roughness += 0.01f) {
@@ -276,17 +275,17 @@ void testFadesAndCompositeWeight() {
         monotonic = monotonic && fade <= previous + 1e-6f && fade >= 0.0f && fade <= 1.0f;
         previous = fade;
     }
-    expect(monotonic, "the roughness fade decreases within [0, 1]");
+    CHECK_MESSAGE(monotonic, "the roughness fade decreases within [0, 1]");
 
     const glm::vec2 extent(renderExtent);
-    expect(ssr::screenEdgeFade(extent * 0.5f, extent, 0.08f) == 1.0f, "hits at the screen center are not faded");
-    expect(ssr::screenEdgeFade({0.0f, extent.y * 0.5f}, extent, 0.08f) == 0.0f, "hits at the border fade out");
+    CHECK_MESSAGE(ssr::screenEdgeFade(extent * 0.5f, extent, 0.08f) == 1.0f, "hits at the screen center are not faded");
+    CHECK_MESSAGE(ssr::screenEdgeFade({0.0f, extent.y * 0.5f}, extent, 0.08f) == 0.0f, "hits at the border fade out");
     bool edgeBounded = true;
     for (float x = -10.0f; x <= extent.x + 10.0f; x += 7.0f) {
         const float fade = ssr::screenEdgeFade({x, 20.0f}, extent, 0.08f);
         edgeBounded = edgeBounded && fade >= 0.0f && fade <= 1.0f;
     }
-    expect(edgeBounded, "the edge fade stays within [0, 1]");
+    CHECK_MESSAGE(edgeBounded, "the edge fade stays within [0, 1]");
     bool confidenceBounded = true;
     for (float travelled = -0.5f; travelled <= 1.5f; travelled += 0.1f) {
         for (float iterations = -0.5f; iterations <= 1.5f; iterations += 0.1f) {
@@ -294,13 +293,13 @@ void testFadesAndCompositeWeight() {
             confidenceBounded = confidenceBounded && confidence >= 0.0f && confidence <= 1.0f;
         }
     }
-    expect(confidenceBounded, "hit confidence stays within [0, 1]");
-    expect(ssr::hitConfidence(extent * 0.5f, extent, 0.08f, 0.2f, 0.2f) == 1.0f,
-           "short, cheap hits at the screen center have full confidence");
-    expect(ssr::hitConfidence(extent * 0.5f, extent, 0.08f, 0.2f, 1.0f) == 0.0f,
-           "hits at the end of the iteration budget fade out");
-    expect(ssr::hitConfidence(extent * 0.5f, extent, 0.08f, 1.0f, 0.2f) == 0.0f,
-           "hits at the end of the ray's reach fade out");
+    CHECK_MESSAGE(confidenceBounded, "hit confidence stays within [0, 1]");
+    CHECK_MESSAGE(ssr::hitConfidence(extent * 0.5f, extent, 0.08f, 0.2f, 0.2f) == 1.0f,
+                  "short, cheap hits at the screen center have full confidence");
+    CHECK_MESSAGE(ssr::hitConfidence(extent * 0.5f, extent, 0.08f, 0.2f, 1.0f) == 0.0f,
+                  "hits at the end of the iteration budget fade out");
+    CHECK_MESSAGE(ssr::hitConfidence(extent * 0.5f, extent, 0.08f, 1.0f, 0.2f) == 0.0f,
+                  "hits at the end of the ray's reach fade out");
 
     bool weightBounded = true;
     float grazingWeight = 0.0f;
@@ -325,35 +324,37 @@ void testFadesAndCompositeWeight() {
         }
         grazingWeight = std::max(grazingWeight, ssr::compositeWeight(confidence, 0.0f, 0.045f, dielectric, {}).x);
     }
-    expect(weightBounded, "the composite weight never leaves [0, 1]");
-    expect(ssr::compositeWeight(0.0f, 0.5f, 0.1f, dielectric, {}) == glm::vec3(0.0f),
-           "a miss leaves the scene unchanged");
+    CHECK_MESSAGE(weightBounded, "the composite weight never leaves [0, 1]");
+    CHECK_MESSAGE(ssr::compositeWeight(0.0f, 0.5f, 0.1f, dielectric, {}) == glm::vec3(0.0f),
+                  "a miss leaves the scene unchanged");
     const glm::vec3 headOnDielectric = ssr::compositeWeight(1.0f, 1.0f, 0.045f, dielectric, {});
-    expect(glm::all(glm::lessThan(glm::abs(headOnDielectric - glm::vec3(0.04f)), glm::vec3(1e-4f))),
-           "head-on dielectric reflections use an untinted F0 = 0.04");
-    expect(grazingWeight > 0.9f, "smooth grazing reflections approach full weight");
+    CHECK_MESSAGE(glm::all(glm::lessThan(glm::abs(headOnDielectric - glm::vec3(0.04f)), glm::vec3(1e-4f))),
+                  "head-on dielectric reflections use an untinted F0 = 0.04");
+    CHECK_MESSAGE(grazingWeight > 0.9f, "smooth grazing reflections approach full weight");
 }
 
 // Metals store their base color as F0, so reflections take on the metal's
 // tint; the stored representation keeps dielectric F0 close to 0.04.
-void testMetalReflectionsAreTinted() {
+TEST_CASE("ScreenSpaceReflection: metal reflections are tinted") {
     const glm::vec3 gold(1.0f, 0.78f, 0.34f);
     const glm::vec3 stored = scene_specular::storeAndLoadReflectance(scene_specular::reflectanceAtNormal(gold, 1.0f));
-    expect(glm::all(glm::lessThan(glm::abs(stored - gold), glm::vec3(0.01f))), "metal F0 is the stored base color");
+    CHECK_MESSAGE(glm::all(glm::lessThan(glm::abs(stored - gold), glm::vec3(0.01f))),
+                  "metal F0 is the stored base color");
     const glm::vec3 storedDielectric =
         scene_specular::storeAndLoadReflectance(scene_specular::reflectanceAtNormal(gold, 0.0f));
-    expect(glm::all(glm::lessThan(glm::abs(storedDielectric - glm::vec3(0.04f)), glm::vec3(0.002f))),
-           "dielectric F0 survives the 8-bit sRGB store");
+    CHECK_MESSAGE(glm::all(glm::lessThan(glm::abs(storedDielectric - glm::vec3(0.04f)), glm::vec3(0.002f))),
+                  "dielectric F0 survives the 8-bit sRGB store");
 
     const glm::vec3 headOn = ssr::compositeWeight(1.0f, 1.0f, 0.045f, stored, {});
-    expect(glm::all(glm::lessThan(glm::abs(headOn - stored), glm::vec3(1e-4f))),
-           "head-on metal reflections are weighted by the metal's F0");
-    expect(headOn.r > headOn.g && headOn.g > headOn.b, "gold reflections are tinted towards red and green");
-    expect(headOn.b > 0.04f, "metals reflect far more than dielectrics");
+    CHECK_MESSAGE(glm::all(glm::lessThan(glm::abs(headOn - stored), glm::vec3(1e-4f))),
+                  "head-on metal reflections are weighted by the metal's F0");
+    CHECK_MESSAGE((headOn.r > headOn.g && headOn.g > headOn.b), "gold reflections are tinted towards red and green");
+    CHECK_MESSAGE(headOn.b > 0.04f, "metals reflect far more than dielectrics");
     const glm::vec3 grazing = ssr::compositeWeight(1.0f, 0.0f, 0.045f, stored, {});
-    expect(glm::all(glm::greaterThan(grazing, glm::vec3(0.9f))), "metal reflections lose their tint at grazing angles");
+    CHECK_MESSAGE(glm::all(glm::greaterThan(grazing, glm::vec3(0.9f))),
+                  "metal reflections lose their tint at grazing angles");
     const glm::vec3 rough = ssr::compositeWeight(1.0f, 1.0f, 0.8f, stored, {});
-    expect(rough == glm::vec3(0.0f), "rough metals fade out of screen-space reflections");
+    CHECK_MESSAGE(rough == glm::vec3(0.0f), "rough metals fade out of screen-space reflections");
 
     // The lit metal holds its IBL specular, environment * F0. A confident
     // head-on hit replaces it with the reflected radiance * F0, leaving no
@@ -362,21 +363,21 @@ void testMetalReflectionsAreTinted() {
     const glm::vec3 reflected(0.5f, 0.4f, 0.3f);
     const glm::vec3 blendedMetal =
         ssr::blendReflection(environment * gold, reflected, ssr::compositeWeight(1.0f, 1.0f, 0.045f, gold, {}));
-    expect(glm::all(glm::lessThan(glm::abs(blendedMetal - reflected * gold), glm::vec3(1e-4f))),
-           "a confident metal reflection replaces the metal's IBL specular with tinted radiance");
+    CHECK_MESSAGE(glm::all(glm::lessThan(glm::abs(blendedMetal - reflected * gold), glm::vec3(1e-4f))),
+                  "a confident metal reflection replaces the metal's IBL specular with tinted radiance");
 
     // Grey (dielectric) weights blend exactly like a scalar mix.
     const glm::vec3 scene(0.6f, 0.3f, 0.1f);
     const glm::vec3 dielectricWeight = ssr::compositeWeight(0.7f, 0.6f, 0.2f, glm::vec3(0.04f), {});
     const glm::vec3 blendedDielectric = ssr::blendReflection(scene, reflected, dielectricWeight);
-    expect(glm::all(glm::lessThan(glm::abs(blendedDielectric - glm::mix(scene, reflected, dielectricWeight.x)),
-                                  glm::vec3(1e-6f))),
-           "dielectric reflections blend as before");
+    CHECK_MESSAGE(glm::all(glm::lessThan(glm::abs(blendedDielectric - glm::mix(scene, reflected, dielectricWeight.x)),
+                                         glm::vec3(1e-6f))),
+                  "dielectric reflections blend as before");
 }
 
 // A shallow floor reflection: the ray hugs the floor in screen space, so
 // coarse cells keep descending; it must still reach the far wall in budget.
-void testGrazingFloorRayReachesWall() {
+TEST_CASE("ScreenSpaceReflection: grazing floor ray reaches wall") {
     const ssr::PerspectiveTerms terms = ssr::perspectiveTerms(sceneProjection({0.0021f, 0.0013f}));
     SyntheticScene scene;
     scene.planes.push_back({{0, 1, 0}, -1.7f, {-100, -1.7f, -30}, {100, -1.7f, 0}});
@@ -387,47 +388,30 @@ void testGrazingFloorRayReachesWall() {
     const std::optional<ssr::ScreenRay> ray =
         ssr::makeScreenRay(origin + glm::vec3(0, 0.016f, 0), direction, 60.0f, terms, glm::vec2(renderExtent));
     if (!ray) {
-        expect(false, "grazing ray exists");
+        CHECK_MESSAGE(false, "grazing ray exists");
         return;
     }
     const ssr::TraceResult result = trace(scene, *ray, terms, direction);
     const float travel = (30.0f - 8.0f) / -direction.z;
     const glm::vec2 expected = projectPixel(origin + direction * travel, terms);
-    expect(result.hit && glm::length(glm::vec2(result.position) - expected) < 2.0f,
-           "a grazing floor reflection reaches the far wall");
-    expect(result.iterations < ssr::TraceSettings{}.maximumIterations * 7 / 10,
-           "the grazing trace stays clear of the iteration fade");
+    CHECK_MESSAGE((result.hit && glm::length(glm::vec2(result.position) - expected) < 2.0f),
+                  "a grazing floor reflection reaches the far wall");
+    CHECK_MESSAGE(result.iterations < ssr::TraceSettings{}.maximumIterations * 7 / 10,
+                  "the grazing trace stays clear of the iteration fade");
 }
 
-void testReflectionsRequireDepthPrepass() {
+TEST_CASE("ScreenSpaceReflection: reflections require depth prepass") {
     RenderSettings requested;
     requested.reflections = ReflectionQuality::ScreenSpaceHalfResolution;
     const ValidatedRenderSettings withPrepass = validateRenderSettings(requested, RenderCapabilities{});
-    expect(withPrepass.settings.reflections == ReflectionQuality::ScreenSpaceHalfResolution,
-           "screen-space reflections stay enabled with the depth prepass");
+    CHECK_MESSAGE(withPrepass.settings.reflections == ReflectionQuality::ScreenSpaceHalfResolution,
+                  "screen-space reflections stay enabled with the depth prepass");
     requested.depthPrepass = false;
     const ValidatedRenderSettings withoutPrepass = validateRenderSettings(requested, RenderCapabilities{});
-    expect(withoutPrepass.settings.reflections == ReflectionQuality::ProbesOnly &&
-               withoutPrepass.fallbacks.size() == withPrepass.fallbacks.size() + 1,
-           "screen-space reflections fall back to probes and IBL without the depth prepass");
+    CHECK_MESSAGE((withoutPrepass.settings.reflections == ReflectionQuality::ProbesOnly &&
+                   withoutPrepass.fallbacks.size() == withPrepass.fallbacks.size() + 1),
+                  "screen-space reflections fall back to probes and IBL without the depth prepass");
 }
 } // namespace
 
-int main() {
-    testReflectionsRequireDepthPrepass();
-    testGrazingFloorRayReachesWall();
-    testViewPositionRoundTrip();
-    testPyramidOrdering();
-    testRayHitsWall();
-    testRayAboveSceneMisses();
-    testThicknessRejectsOccluderInFront();
-    testRayClipsToNearPlane();
-    testFadesAndCompositeWeight();
-    testMetalReflectionsAreTinted();
-    if (failures != 0) {
-        std::cerr << failures << " screen-space reflection test(s) failed\n";
-        return 1;
-    }
-    std::cout << "Screen-space reflection tests passed\n";
-    return 0;
-}
+TEST_SUITE_END();

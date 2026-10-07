@@ -12,6 +12,8 @@
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <algorithm>
 #include <iostream>
 #include <optional>
@@ -20,15 +22,9 @@
 #include <string_view>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("Behaviour");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 // Every hook call, as "<behaviour> <entity name> <hook>".
 std::vector<std::string> calls;
@@ -160,7 +156,7 @@ void registerBehaviours(ModuleRegistrar& registrar) {
 struct Fixture {
     Fixture() {
         const GameplayResult linked = linkGameplay(registerBehaviours, gameplay);
-        expect(linked.success, "behaviours register through a module registrar");
+        CHECK_MESSAGE(linked.success, "behaviours register through a module registrar");
         if (!linked) {
             std::cerr << linked.error << '\n';
         }
@@ -202,23 +198,23 @@ bool sameCalls(const std::vector<std::string>& expected) {
     return false;
 }
 
-void testRegistration() {
+TEST_CASE("Behaviour: registration") {
     Fixture fixture;
     const BehaviourRegistry& behaviours = *fixture.gameplay.behaviours;
-    expect(behaviours.types().size() == 4 && behaviours.types()[0].key == "recorder_b" &&
-               behaviours.types()[1].key == "recorder_a",
-           "behaviour types keep their registration order");
+    CHECK_MESSAGE((behaviours.types().size() == 4 && behaviours.types()[0].key == "recorder_b" &&
+                   behaviours.types()[1].key == "recorder_a"),
+                  "behaviour types keep their registration order");
     registeredA = behaviours.find("recorder_a");
-    expect(registeredA != nullptr && registeredA->source.file.find("BehaviourTests.cpp") != std::string::npos &&
-               registeredA->source.line > 0,
-           "a behaviour records where it was registered");
+    CHECK_MESSAGE((registeredA != nullptr && registeredA->source.file.find("BehaviourTests.cpp") != std::string::npos &&
+                   registeredA->source.line > 0),
+                  "a behaviour records where it was registered");
 
     const ComponentType* type = fixture.gameplay.componentTypes->find("recorder_a");
-    expect(type != nullptr && type->category() == "Behaviours" && type->fields().size() == 2 &&
-               type->fields()[0].key == "enabled" && type->fields()[1].key == "destroy_on_update",
-           "a behaviour is a component type with an enabled field before its own fields");
-    expect(fixture.gameplay.componentTypes->find("edit_ticker")->category() == "Tools",
-           "a behaviour may choose its category");
+    CHECK_MESSAGE((type != nullptr && type->category() == "Behaviours" && type->fields().size() == 2 &&
+                   type->fields()[0].key == "enabled" && type->fields()[1].key == "destroy_on_update"),
+                  "a behaviour is a component type with an enabled field before its own fields");
+    CHECK_MESSAGE(fixture.gameplay.componentTypes->find("edit_ticker")->category() == "Tools",
+                  "a behaviour may choose its category");
 
     // Behaviours serialize like any component.
     const Entity entity = fixture.add("Saved");
@@ -227,22 +223,24 @@ void testRegistration() {
     recorder.destroyOnUpdate = true;
     std::string text;
     const SceneDocumentOptions options{.componentTypes = fixture.gameplay.componentTypes};
-    expect(SceneDocument::serialize(fixture.scene, fixture.assets, options, text).success, "behaviours serialize");
+    CHECK_MESSAGE(SceneDocument::serialize(fixture.scene, fixture.assets, options, text).success,
+                  "behaviours serialize");
     Scene loaded;
-    expect(SceneDocument::deserialize(text, fixture.assets, options, loaded).success, "behaviours deserialize");
+    CHECK_MESSAGE(SceneDocument::deserialize(text, fixture.assets, options, loaded).success, "behaviours deserialize");
     const Entity reloaded = loaded.findEntity(fixture.scene.id(entity));
     const auto* restored = reloaded != entt::null ? loaded.registry().try_get<RecorderA>(reloaded) : nullptr;
-    expect(restored != nullptr && !restored->enabled && restored->destroyOnUpdate && !restored->created(),
-           "a loaded behaviour keeps its fields and starts uncreated");
+    CHECK_MESSAGE((restored != nullptr && !restored->enabled && restored->destroyOnUpdate && !restored->created()),
+                  "a loaded behaviour keeps its fields and starts uncreated");
 
     const SystemScheduler& systems = *fixture.gameplay.systems;
-    expect(systems.schedule(SystemPhase::Update, SimulationMode::Play) ==
-               std::vector<std::string>{std::string(EngineSystems::Behaviours), std::string(EngineSystems::NavAgents),
-                                        std::string(EngineSystems::Animator)},
-           "the engine's behaviour system runs Update behaviours");
+    CHECK_MESSAGE(
+        (systems.schedule(SystemPhase::Update, SimulationMode::Play) ==
+         std::vector<std::string>{std::string(EngineSystems::Behaviours), std::string(EngineSystems::NavAgents),
+                                  std::string(EngineSystems::Animator)}),
+        "the engine's behaviour system runs Update behaviours");
 }
 
-void testLifecycleOrder() {
+TEST_CASE("Behaviour: lifecycle order") {
     Fixture fixture;
     const Entity first = fixture.add("First");
     const Entity second = fixture.add("Second");
@@ -253,27 +251,27 @@ void testLifecycleOrder() {
     fixture.scene.registry().emplace<RecorderB>(second);
 
     fixture.run(SystemPhase::Update);
-    expect(sameCalls({"B Second create", "B Second enable", "A First create", "A First enable", "A Second create",
-                      "A Second enable", "B Second start", "A First start", "A Second start", "B Second update",
-                      "A First update", "A Second update"}),
-           "the first pass creates, enables, and starts every behaviour before updating");
+    CHECK_MESSAGE(sameCalls({"B Second create", "B Second enable", "A First create", "A First enable",
+                             "A Second create", "A Second enable", "B Second start", "A First start", "A Second start",
+                             "B Second update", "A First update", "A Second update"}),
+                  "the first pass creates, enables, and starts every behaviour before updating");
 
     calls.clear();
     fixture.run(SystemPhase::Update);
     fixture.run(SystemPhase::FixedUpdate);
     fixture.run(SystemPhase::LateUpdate);
-    expect(sameCalls({"B Second update", "A First update", "A Second update", "B Second fixed", "A First fixed",
-                      "A Second fixed", "B Second late", "A First late", "A Second late"}),
-           "later passes run only the phase's hook, and onStart runs once");
+    CHECK_MESSAGE(sameCalls({"B Second update", "A First update", "A Second update", "B Second fixed", "A First fixed",
+                             "A Second fixed", "B Second late", "A First late", "A Second late"}),
+                  "later passes run only the phase's hook, and onStart runs once");
 
     calls.clear();
     fixture.scene.registry().get<RecorderA>(first).enabled = false;
     fixture.run(SystemPhase::Update);
     fixture.scene.registry().get<RecorderA>(first).enabled = true;
     fixture.run(SystemPhase::Update);
-    expect(sameCalls({"A First disable", "B Second update", "A Second update", "A First enable", "B Second update",
-                      "A First update", "A Second update"}),
-           "disabling stops a behaviour's updates and enabling resumes them without a second start");
+    CHECK_MESSAGE(sameCalls({"A First disable", "B Second update", "A Second update", "A First enable",
+                             "B Second update", "A First update", "A Second update"}),
+                  "disabling stops a behaviour's updates and enabling resumes them without a second start");
 
     calls.clear();
     const Entity late = fixture.add("Late");
@@ -281,12 +279,12 @@ void testLifecycleOrder() {
     disabled.enabled = false;
     fixture.run(SystemPhase::Update);
     fixture.run(SystemPhase::Update);
-    expect(sameCalls({"A Late create", "B Second update", "A First update", "A Second update", "B Second update",
-                      "A First update", "A Second update"}),
-           "a behaviour created disabled is created but not enabled or started");
+    CHECK_MESSAGE(sameCalls({"A Late create", "B Second update", "A First update", "A Second update", "B Second update",
+                             "A First update", "A Second update"}),
+                  "a behaviour created disabled is created but not enabled or started");
 }
 
-void testDestroyAndSpawnFromHooks() {
+TEST_CASE("Behaviour: destroy and spawn from hooks") {
     Fixture fixture;
     const Entity doomed = fixture.add("Doomed");
     const Entity child = fixture.add("Child");
@@ -303,20 +301,20 @@ void testDestroyAndSpawnFromHooks() {
         "A Survivor create", "A Survivor enable", "B Child start",   "A Doomed start",
         "A Survivor start",  "B Child update",    "A Doomed update", "A Survivor update",
         "A Doomed disable",  "A Doomed destroy",  "B Child disable", "B Child destroy"};
-    expect(sameCalls(expected),
-           "a destroy recorded in a hook applies after the pass, after onDisable and onDestroy of the subtree");
-    expect(fixture.scene.findEntity(fixture.scene.id(survivor)) != entt::null &&
-               !fixture.scene.registry().valid(doomed) && !fixture.scene.registry().valid(child),
-           "the destroyed subtree is gone and the rest of the scene stays");
+    CHECK_MESSAGE(sameCalls(expected),
+                  "a destroy recorded in a hook applies after the pass, after onDisable and onDestroy of the subtree");
+    CHECK_MESSAGE((fixture.scene.findEntity(fixture.scene.id(survivor)) != entt::null &&
+                   !fixture.scene.registry().valid(doomed) && !fixture.scene.registry().valid(child)),
+                  "the destroyed subtree is gone and the rest of the scene stays");
 
     calls.clear();
     fixture.run(SystemPhase::Update);
-    expect(
+    CHECK_MESSAGE(
         sameCalls({"A Spawned create", "A Spawned enable", "A Spawned start", "A Survivor update", "A Spawned update"}),
         "an entity spawned from a hook runs its behaviours from the next pass");
 }
 
-void testTriggerAndCollisionHooks() {
+TEST_CASE("Behaviour: trigger and collision hooks") {
     Fixture fixture;
     const Entity sensor = fixture.add("Sensor");
     const Entity visitor = fixture.add("Visitor");
@@ -340,13 +338,13 @@ void testTriggerAndCollisionHooks() {
     const ContactEvent contacts[] = {touched, persisted};
     fixture.services->publishPhysicsEvents(fixture.scene, triggers, contacts);
     fixture.run(SystemPhase::FixedUpdate);
-    expect(sameCalls({"A Sensor enter Visitor", "A Visitor enter Sensor", "A Visitor collide Wall +x",
-                      "B Wall collide Visitor -x", "B Wall fixed", "A Sensor fixed", "A Visitor fixed"}),
-           "trigger and collision hooks run on both sides before the next fixed update");
+    CHECK_MESSAGE(sameCalls({"A Sensor enter Visitor", "A Visitor enter Sensor", "A Visitor collide Wall +x",
+                             "B Wall collide Visitor -x", "B Wall fixed", "A Sensor fixed", "A Visitor fixed"}),
+                  "trigger and collision hooks run on both sides before the next fixed update");
 
     calls.clear();
     fixture.run(SystemPhase::FixedUpdate);
-    expect(sameCalls({"B Wall fixed", "A Sensor fixed", "A Visitor fixed"}), "physics hooks run once per event");
+    CHECK_MESSAGE(sameCalls({"B Wall fixed", "A Sensor fixed", "A Visitor fixed"}), "physics hooks run once per event");
 
     calls.clear();
     fixture.scene.registry().get<RecorderA>(visitor).enabled = false;
@@ -358,43 +356,44 @@ void testTriggerAndCollisionHooks() {
     const TriggerEvent exits[] = {exited};
     fixture.services->publishPhysicsEvents(fixture.scene, exits, {});
     fixture.run(SystemPhase::FixedUpdate);
-    expect(sameCalls({"A Visitor disable", "A Sensor exit Visitor", "B Wall fixed", "A Sensor fixed"}),
-           "a disabled behaviour gets no trigger hooks");
+    CHECK_MESSAGE(sameCalls({"A Visitor disable", "A Sensor exit Visitor", "B Wall fixed", "A Sensor fixed"}),
+                  "a disabled behaviour gets no trigger hooks");
 }
 
-void testModes() {
+TEST_CASE("Behaviour: modes") {
     Fixture fixture;
     const Entity entity = fixture.add("Tool");
     fixture.scene.registry().emplace<EditTicker>(entity);
     fixture.scene.registry().emplace<RecorderA>(entity);
     fixture.run(SystemPhase::Update, SimulationMode::Edit);
-    expect(fixture.scene.registry().get<EditTicker>(entity).ticks == 1 && calls.empty(),
-           "Edit mode runs only the behaviours that opt into it");
+    CHECK_MESSAGE((fixture.scene.registry().get<EditTicker>(entity).ticks == 1 && calls.empty()),
+                  "Edit mode runs only the behaviours that opt into it");
 
     // Simulate runs the behaviour systems the Simulate mask enables:
     // FixedUpdate by default.
     const SystemScheduler& systems = *fixture.gameplay.systems;
     const std::vector<std::string> simulateUpdate = systems.schedule(SystemPhase::Update, SimulationMode::Simulate);
     const std::vector<std::string> simulateFixed = systems.schedule(SystemPhase::FixedUpdate, SimulationMode::Simulate);
-    expect(std::ranges::find(simulateUpdate, EngineSystems::Behaviours) == simulateUpdate.end() &&
-               std::ranges::find(simulateFixed, EngineSystems::FixedBehaviours) != simulateFixed.end(),
-           "Simulate runs fixed-update behaviours and not update behaviours by default");
+    CHECK_MESSAGE((std::ranges::find(simulateUpdate, EngineSystems::Behaviours) == simulateUpdate.end() &&
+                   std::ranges::find(simulateFixed, EngineSystems::FixedBehaviours) != simulateFixed.end()),
+                  "Simulate runs fixed-update behaviours and not update behaviours by default");
 }
 
-void testCopiesAreNewBehaviours() {
+TEST_CASE("Behaviour: copies are new behaviours") {
     Fixture fixture;
     const Entity original = fixture.add("Original");
     fixture.scene.registry().emplace<RecorderA>(original);
     fixture.run(SystemPhase::Update);
     auto& behaviour = fixture.scene.registry().get<RecorderA>(original);
-    expect(behaviour.created() && behaviour.started() && behaviour.updates == 1, "the original has run");
+    CHECK_MESSAGE((behaviour.created() && behaviour.started() && behaviour.updates == 1), "the original has run");
 
     const RecorderA copy = behaviour;
-    expect(!copy.created() && !copy.started() && copy.updates == 1, "a copy keeps fields but not lifecycle state");
+    CHECK_MESSAGE((!copy.created() && !copy.started() && copy.updates == 1),
+                  "a copy keeps fields but not lifecycle state");
     RecorderA assigned;
     assigned = copy;
     behaviour = copy;
-    expect(behaviour.created() && behaviour.started(), "assigning fields keeps the target's lifecycle state");
+    CHECK_MESSAGE((behaviour.created() && behaviour.started()), "assigning fields keeps the target's lifecycle state");
 
     const Entity duplicate = fixture.add("Duplicate");
     // As duplicating an entity does: a copy of the component.
@@ -402,12 +401,12 @@ void testCopiesAreNewBehaviours() {
     fixture.scene.registry().emplace<RecorderA>(duplicate, source);
     calls.clear();
     fixture.run(SystemPhase::Update);
-    expect(sameCalls({"A Duplicate create", "A Duplicate enable", "A Duplicate start", "A Original update",
-                      "A Duplicate update"}),
-           "a duplicated behaviour is created and started on its own");
+    CHECK_MESSAGE(sameCalls({"A Duplicate create", "A Duplicate enable", "A Duplicate start", "A Original update",
+                             "A Duplicate update"}),
+                  "a duplicated behaviour is created and started on its own");
 }
 
-void testSessionEnd() {
+TEST_CASE("Behaviour: session end") {
     Fixture fixture;
     const Entity first = fixture.add("First");
     const Entity second = fixture.add("Second");
@@ -422,20 +421,21 @@ void testSessionEnd() {
 
     calls.clear();
     destroyAllBehaviours(*fixture.gameplay.behaviours, fixture.scene, &*fixture.services, &fixture.logger);
-    expect(sameCalls({"B Second disable", "B Second destroy", "A First disable", "A First destroy", "A Second disable",
-                      "A Second destroy", "A Idle destroy"}),
-           "ending a session disables and destroys every created behaviour in run order, and skips uncreated ones");
-    expect(fixture.scene.registry().valid(first) && fixture.scene.registry().valid(unseen),
-           "ending a session leaves the entities to their owner");
-    expect(!fixture.scene.registry().get<RecorderA>(first).created() &&
-               !fixture.scene.registry().get<RecorderA>(first).started(),
-           "an ended behaviour counts as uncreated");
+    CHECK_MESSAGE(
+        sameCalls({"B Second disable", "B Second destroy", "A First disable", "A First destroy", "A Second disable",
+                   "A Second destroy", "A Idle destroy"}),
+        "ending a session disables and destroys every created behaviour in run order, and skips uncreated ones");
+    CHECK_MESSAGE((fixture.scene.registry().valid(first) && fixture.scene.registry().valid(unseen)),
+                  "ending a session leaves the entities to their owner");
+    CHECK_MESSAGE((!fixture.scene.registry().get<RecorderA>(first).created() &&
+                   !fixture.scene.registry().get<RecorderA>(first).started()),
+                  "an ended behaviour counts as uncreated");
 
     calls.clear();
     fixture.run(SystemPhase::Update);
-    expect(std::ranges::find(calls, "A First create") != calls.end() &&
-               std::ranges::find(calls, "A First start") != calls.end(),
-           "a later session creates and starts the behaviour again");
+    CHECK_MESSAGE((std::ranges::find(calls, "A First create") != calls.end() &&
+                   std::ranges::find(calls, "A First start") != calls.end()),
+                  "a later session creates and starts the behaviour again");
 }
 
 bool loggedError(const Logger& logger, std::string_view text) {
@@ -444,7 +444,7 @@ bool loggedError(const Logger& logger, std::string_view text) {
     });
 }
 
-void testThrowingHooks() {
+TEST_CASE("Behaviour: throwing hooks") {
     Fixture fixture;
     const Entity faulty = fixture.add("Faulty");
     const Entity starter = fixture.add("Starter");
@@ -454,38 +454,29 @@ void testThrowingHooks() {
     fixture.scene.registry().emplace<RecorderA>(fine);
 
     fixture.run(SystemPhase::Update);
-    expect(std::ranges::find(calls, "A Fine update") != calls.end(),
-           "a throwing hook does not stop the other behaviours");
+    CHECK_MESSAGE(std::ranges::find(calls, "A Fine update") != calls.end(),
+                  "a throwing hook does not stop the other behaviours");
     const auto& thrower = fixture.scene.registry().get<Thrower>(faulty);
-    expect(thrower.updates == 1 && !thrower.enabled, "a behaviour whose hook throws is disabled");
-    expect(!fixture.scene.registry().get<Thrower>(starter).enabled &&
-               fixture.scene.registry().get<Thrower>(starter).updates == 0,
-           "a behaviour whose onStart throws is disabled before its first update");
+    CHECK_MESSAGE((thrower.updates == 1 && !thrower.enabled), "a behaviour whose hook throws is disabled");
+    CHECK_MESSAGE((!fixture.scene.registry().get<Thrower>(starter).enabled &&
+                   fixture.scene.registry().get<Thrower>(starter).updates == 0),
+                  "a behaviour whose onStart throws is disabled before its first update");
     const std::string faultyId = std::to_string(fixture.scene.id(faulty).value);
-    expect(loggedError(fixture.logger, "Behaviour 'thrower' on entity " + faultyId +
-                                           " (Faulty) threw in onUpdate: "
-                                           "boom in update; it is disabled"),
-           "the error names the behaviour, its entity, the hook, and the exception");
-    expect(loggedError(fixture.logger, "(Starter) threw in onStart: boom in start"),
-           "a throwing onStart is reported too");
+    CHECK_MESSAGE(loggedError(fixture.logger, "Behaviour 'thrower' on entity " + faultyId +
+                                                  " (Faulty) threw in onUpdate: "
+                                                  "boom in update; it is disabled"),
+                  "the error names the behaviour, its entity, the hook, and the exception");
+    CHECK_MESSAGE(loggedError(fixture.logger, "(Starter) threw in onStart: boom in start"),
+                  "a throwing onStart is reported too");
 
     calls.clear();
     fixture.run(SystemPhase::Update);
-    expect(fixture.scene.registry().get<Thrower>(faulty).updates == 1, "a disabled behaviour gets no more updates");
-    expect(std::ranges::find(calls, "T Faulty disable") != calls.end() &&
-               std::ranges::find(calls, "T Starter disable") != calls.end(),
-           "a behaviour disabled by a failure gets onDisable on the next pass");
+    CHECK_MESSAGE((fixture.scene.registry().get<Thrower>(faulty).updates == 1),
+                  "a disabled behaviour gets no more updates");
+    CHECK_MESSAGE((std::ranges::find(calls, "T Faulty disable") != calls.end() &&
+                   std::ranges::find(calls, "T Starter disable") != calls.end()),
+                  "a behaviour disabled by a failure gets onDisable on the next pass");
 }
 } // namespace
 
-int main() {
-    testRegistration();
-    testLifecycleOrder();
-    testDestroyAndSpawnFromHooks();
-    testTriggerAndCollisionHooks();
-    testModes();
-    testCopiesAreNewBehaviours();
-    testSessionEnd();
-    testThrowingHooks();
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

@@ -13,6 +13,10 @@
 #include "engine/graphics/GraphicsValidation.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
+#include "support/Skip.hpp"
+#include "support/StandaloneChecks.hpp"
+#include "support/VulkanProbe.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <SDL3/SDL_stdinc.h>
@@ -33,14 +37,8 @@ const glm::vec3 cameraPosition{0.0f, 0.0f, 9.0f};
 constexpr float verticalFov = glm::radians(50.0f);
 
 struct SmokeResults {
-    std::vector<std::string> failures;
+    testsupport::StandaloneChecks checks;
     uint32_t checkedFrames{0};
-
-    void expect(bool condition, const std::string& message) {
-        if (!condition) {
-            failures.push_back(message);
-        }
-    }
 };
 
 class RuntimeContentScene final : public ApplicationScene {
@@ -113,9 +111,9 @@ class RuntimeContentScene final : public ApplicationScene {
             return;
         }
         const RenderStats& stats = context.rendering.stats();
-        m_results.expect(stats.renderableCount == 3,
-                         "the three runtime boxes are drawn, not " + std::to_string(stats.renderableCount));
-        m_results.expect(stats.droppedRenderItems == 0, "no render item is dropped");
+        m_results.checks.check(stats.renderableCount == 3,
+                               "the three runtime boxes are drawn, not " + std::to_string(stats.renderableCount));
+        m_results.checks.check(stats.droppedRenderItems == 0, "no render item is dropped");
         ++m_results.checkedFrames;
     }
 
@@ -189,8 +187,8 @@ std::string describe(const glm::vec3& color) {
 
 void checkCapture(const std::filesystem::path& path, SmokeResults& results) {
     RgbaImage image;
-    if (const ImageFileResult loaded = loadPng(path, image); !loaded || !image.valid()) {
-        results.failures.push_back("cannot read the capture " + path.string() + ": " + loaded.error);
+    if (const ImageFileResult loaded = loadPng(path, image); !results.checks.check(
+            loaded && image.valid(), "cannot read the capture " + path.string() + ": " + loaded.error)) {
         return;
     }
     // The front faces' centres.
@@ -199,13 +197,13 @@ void checkCapture(const std::filesystem::path& path, SmokeResults& results) {
     const glm::vec3 green = sampleAt(image, {boxSpacing, 0.0f, boxHalfExtent});
     // Ambient and specular light add white to every box, so the tints are
     // judged by how far their channel stands above the others.
-    results.expect(red.r > red.g + 40.0f && red.r > red.b + 40.0f, "the tinted box is red, not " + describe(red));
+    results.checks.check(red.r > red.g + 40.0f && red.r > red.b + 40.0f, "the tinted box is red, not " + describe(red));
     const float whiteMax = std::max({white.r, white.g, white.b});
     const float whiteMin = std::min({white.r, white.g, white.b});
-    results.expect(whiteMin > 40.0f && whiteMax < 1.35f * whiteMin,
-                   "the plain box is a light neutral grey, not " + describe(white));
-    results.expect(green.g > green.r + 40.0f && green.g > green.b + 40.0f,
-                   "the box with a replacement material is green, not " + describe(green));
+    results.checks.check(whiteMin > 40.0f && whiteMax < 1.35f * whiteMin,
+                         "the plain box is a light neutral grey, not " + describe(white));
+    results.checks.check(green.g > green.r + 40.0f && green.g > green.b + 40.0f,
+                         "the box with a replacement material is green, not " + describe(green));
 }
 } // namespace
 
@@ -224,23 +222,20 @@ int main(int, char** argv) {
     if (!engine.init()) {
         std::cerr << "Engine initialization failed\n";
         engine.shutdown();
+        if (std::string reason; !testsupport::vulkanDeviceAvailable(testsupport::VulkanDeviceKind::Any, reason)) {
+            std::cout << "Skipping: " << reason << '\n';
+            return testsupport::skipExitCode;
+        }
         return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
     SmokeResults results;
     RuntimeContentApplication application(results);
     const bool ran = engine.run(application);
     engine.shutdown();
-    if (!ran) {
-        results.failures.push_back("the run ended with an error");
-    }
-    if (results.checkedFrames == 0) {
-        results.failures.push_back("no frame was checked (is ZENITH_CAPTURE_FRAME at least 5?)");
-    }
+    results.checks.check(ran, "the run ended with an error");
+    results.checks.check(results.checkedFrames != 0, "no frame was checked (is ZENITH_CAPTURE_FRAME at least 5?)");
     checkCapture(capturePath, results);
-    for (const std::string& failure : results.failures) {
-        std::cerr << "FAILED: " << failure << '\n';
-    }
-    const bool passed = results.failures.empty();
+    const bool passed = results.checks.failures() == 0;
     if (passed) {
         std::cout << "Runtime content smoke test passed\n";
     }

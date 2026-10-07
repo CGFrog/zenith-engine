@@ -15,13 +15,16 @@
 #include "engine/graphics/GraphicsValidation.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
+#include "support/Skip.hpp"
+#include "support/StandaloneChecks.hpp"
+#include "support/VulkanProbe.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
-#include <vector>
 
 namespace {
 // Ids the secondary scene burns before creating its objects, so its objects'
@@ -29,15 +32,9 @@ namespace {
 constexpr uint64_t secondaryIdFloor = 100;
 
 struct SmokeResults {
-    std::vector<std::string> failures;
+    testsupport::StandaloneChecks checks;
     uint32_t framesWithSecondaryView{0};
     bool secondaryPickHit{false};
-
-    void expect(bool condition, uint32_t frame, const std::string& message) {
-        if (!condition) {
-            failures.push_back("frame " + std::to_string(frame) + ": " + message);
-        }
-    }
 };
 
 glm::mat4 cameraWorld(const glm::vec3& position, const glm::vec3& target) {
@@ -106,31 +103,32 @@ class TwoSceneScene final : public ApplicationScene {
             rendering.setSceneVisibilityMode(SceneVisibilityMode::Runtime);
             m_view = rendering.createView();
             m_scene = rendering.createScene();
-            m_results.expect(m_view && m_scene, m_frame, "a view and a secondary scene are created");
-            m_results.expect(rendering.setViewScene(m_view, m_scene), m_frame, "the view binds the scene");
-            m_results.expect(rendering.setViewOverride(m_view, RenderView{.position = {0.0f, 1.0f, 6.0f},
-                                                                          .forward = {0.0f, -0.15f, -1.0f},
-                                                                          .verticalFovRadians = glm::radians(50.0f),
-                                                                          .nearPlane = 0.1f,
-                                                                          .farPlane = 50.0f}),
-                             m_frame, "the view accepts a camera");
+            m_results.checks.check(m_view && m_scene, m_frame, "a view and a secondary scene are created");
+            m_results.checks.check(rendering.setViewScene(m_view, m_scene), m_frame, "the view binds the scene");
+            m_results.checks.check(
+                rendering.setViewOverride(m_view, RenderView{.position = {0.0f, 1.0f, 6.0f},
+                                                             .forward = {0.0f, -0.15f, -1.0f},
+                                                             .verticalFovRadians = glm::radians(50.0f),
+                                                             .nearPlane = 0.1f,
+                                                             .farPlane = 50.0f}),
+                m_frame, "the view accepts a camera");
         }
         if (m_frame == 20) {
             const Entity first = firstPreviewCube();
             const RenderObjectId outlined = static_cast<RenderObjectId>(entt::to_integral(first));
-            m_results.expect(rendering.setViewOutlinedObjects(m_view, std::span(&outlined, 1)), m_frame,
-                             "the view outlines a secondary object");
+            m_results.checks.check(rendering.setViewOutlinedObjects(m_view, std::span(&outlined, 1)), m_frame,
+                                   "the view outlines a secondary object");
         }
         if (m_frame == 30) {
             m_pick = rendering.requestPick(m_view, {.x = 150, .y = 100, .width = 20, .height = 20});
-            m_results.expect(static_cast<bool>(m_pick), m_frame, "a pick is requested in the secondary view");
+            m_results.checks.check(static_cast<bool>(m_pick), m_frame, "a pick is requested in the secondary view");
         }
         if (m_frame == 60) {
             // Destroyed and created again in the same slot, with other content.
-            m_results.expect(rendering.destroyScene(m_scene), m_frame, "the scene is destroyed");
+            m_results.checks.check(rendering.destroyScene(m_scene), m_frame, "the scene is destroyed");
             m_scene = rendering.createScene();
             buildSecondaryScene(m_secondary, m_cube, 5);
-            m_results.expect(rendering.setViewScene(m_view, m_scene), m_frame, "the view binds the new scene");
+            m_results.checks.check(rendering.setViewScene(m_view, m_scene), m_frame, "the view binds the new scene");
         }
         if (m_pick && rendering.pickStatus(m_pick) == PickStatus::Ready) {
             const PickResult result = rendering.pickResult(m_pick);
@@ -138,15 +136,16 @@ class TwoSceneScene final : public ApplicationScene {
                 const Entity entity = m_secondary.findEntity(object.entity);
                 m_results.secondaryPickHit =
                     m_results.secondaryPickHit || (object.entity.value > secondaryIdFloor && entity != entt::null);
-                m_results.expect(object.entity.value > secondaryIdFloor, m_frame,
-                                 "the secondary view's pick names only secondary objects");
+                m_results.checks.check(object.entity.value > secondaryIdFloor, m_frame,
+                                       "the secondary view's pick names only secondary objects");
             }
             m_pick = {};
         }
         // Frames 40-44 leave the scene unbound: the view must not render.
         const bool bound = m_frame < 40 || m_frame >= 45;
         if (bound) {
-            m_results.expect(rendering.setSceneContent(m_scene, &m_secondary), m_frame, "the scene content binds");
+            m_results.checks.check(rendering.setSceneContent(m_scene, &m_secondary), m_frame,
+                                   "the scene content binds");
         }
         rendering.requestViewSize(m_view, 320, 240);
     }
@@ -174,23 +173,25 @@ class TwoSceneScene final : public ApplicationScene {
         }
         const RenderViewStats level = rendering.viewStats(rendering.defaultView());
         const RenderViewStats preview = rendering.viewStats(m_view);
-        m_results.expect(level.rendered, frame, "the default view renders every frame");
+        m_results.checks.check(level.rendered, frame, "the default view renders every frame");
         if (frame >= 40 && frame < 45) {
-            m_results.expect(!preview.rendered, frame, "the view skips frames its scene was not bound on");
-            m_results.expect(static_cast<bool>(rendering.viewTexture(m_view)), frame, "the view keeps its texture");
+            m_results.checks.check(!preview.rendered, frame, "the view skips frames its scene was not bound on");
+            m_results.checks.check(static_cast<bool>(rendering.viewTexture(m_view)), frame,
+                                   "the view keeps its texture");
             return;
         }
         if (frame == 60) {
             return;
         }
-        m_results.expect(preview.rendered && preview.width == 320, frame, "the secondary view renders at 320x240");
+        m_results.checks.check(preview.rendered && preview.width == 320, frame,
+                               "the secondary view renders at 320x240");
         // Three (later five) cubes; the hidden one stays hidden in the
         // Editor mode secondary scenes use, though the frame's scene plays.
         const uint32_t expected = frame < 60 ? 3u : 5u;
-        m_results.expect(preview.visibleCount <= expected && preview.visibleCount > 0, frame,
-                         "the secondary view draws only its own visible objects (" +
-                             std::to_string(preview.visibleCount) + " visible)");
-        m_results.expect(level.visibleCount > expected, frame, "the default view draws the application's scene");
+        m_results.checks.check(preview.visibleCount <= expected && preview.visibleCount > 0, frame,
+                               "the secondary view draws only its own visible objects (" +
+                                   std::to_string(preview.visibleCount) + " visible)");
+        m_results.checks.check(level.visibleCount > expected, frame, "the default view draws the application's scene");
         if (preview.rendered) {
             ++m_results.framesWithSecondaryView;
         }
@@ -229,24 +230,21 @@ int main(int, char** argv) {
     if (!engine.init()) {
         std::cerr << "Engine initialization failed\n";
         engine.shutdown();
+        if (std::string reason; !testsupport::vulkanDeviceAvailable(testsupport::VulkanDeviceKind::Any, reason)) {
+            std::cout << "Skipping: " << reason << '\n';
+            return testsupport::skipExitCode;
+        }
         return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
     SmokeResults results;
     TwoSceneApplication application(results);
     const bool ran = engine.run(application);
     engine.shutdown();
-    for (const std::string& failure : results.failures) {
-        std::cerr << "FAILED: " << failure << '\n';
-    }
-    if (results.framesWithSecondaryView < 40) {
-        std::cerr << "FAILED: the secondary view rendered on " << results.framesWithSecondaryView
-                  << " frames (is ZENITH_SMOKE_FRAMES at least 90?)\n";
-    }
-    if (!results.secondaryPickHit) {
-        std::cerr << "FAILED: no pick in the secondary view hit a secondary object\n";
-    }
-    const bool passed =
-        ran && results.failures.empty() && results.framesWithSecondaryView >= 40 && results.secondaryPickHit;
+    results.checks.check(results.framesWithSecondaryView >= 40, "the secondary view rendered on " +
+                                                                    std::to_string(results.framesWithSecondaryView) +
+                                                                    " frames (is ZENITH_SMOKE_FRAMES at least 90?)");
+    results.checks.check(results.secondaryPickHit, "no pick in the secondary view hit a secondary object");
+    const bool passed = ran && results.checks.failures() == 0;
     if (passed) {
         std::cout << "Two-scene smoke test passed\n";
     }

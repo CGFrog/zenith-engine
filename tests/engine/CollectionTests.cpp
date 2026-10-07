@@ -7,34 +7,28 @@
 #include "engine/scene/SceneDocument.hpp"
 #include "engine/scene/SceneVisibility.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <nlohmann/json.hpp>
 
-#include <iostream>
 #include <string>
 #include <string_view>
 #include <vector>
 
+TEST_SUITE_BEGIN("Collection");
+
 namespace {
-int failures = 0;
-
-void expect(bool condition, std::string_view message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
-
 std::string serialize(const Scene& scene, const AssetManager& assets, const SceneDocumentOptions& options) {
     std::string output;
     const SceneDocumentResult result = SceneDocument::serialize(scene, assets, options, output);
-    expect(result.success, result.error);
+    CHECK_MESSAGE(result.success, (result.error));
     return output;
 }
 
 SceneCollectionId create(SceneCollections& collections, std::string name, SceneCollectionId parent = {}) {
     SceneCollectionId id;
-    expect(collections.create(std::move(name), parent, id).success, "a collection should be created");
+    CHECK_MESSAGE(collections.create(std::move(name), parent, id).success, "a collection should be created");
     return id;
 }
 
@@ -45,29 +39,32 @@ Entity entityAt(Scene& scene, std::string name, glm::vec3 position) {
     return entity;
 }
 
-void testCollectionDefinitions() {
+} // namespace
+
+TEST_CASE("Collection: collection definitions") {
     SceneCollections collections;
     const SceneCollectionId props = create(collections, "Props");
     const SceneCollectionId crates = create(collections, "Crates", props);
     const SceneCollectionId lights = create(collections, "Lights");
-    expect(props.value == 1 && crates.value == 2 && lights.value == 3, "collection ids should be sequential");
-    expect(collections.subtree(props) == std::vector<SceneCollectionId>{props, crates},
-           "a subtree should list a collection and its nested collections");
-    expect(collections.setFlag(props, CollectionFlag::Visible, false).success &&
-               !collections.effectiveFlag(crates, CollectionFlag::Visible) &&
-               collections.effectiveFlag(crates, CollectionFlag::Renderable),
-           "hiding a collection should hide the collections nested in it");
-    expect(!collections.setParent(props, crates).success, "a collection must not be nested inside itself");
-    expect(!collections.add({.id = crates, .name = "Duplicate"}).success, "duplicate ids should be rejected");
-    expect(!collections.add({.id = {9}, .name = "Orphan", .parent = {42}}).success,
-           "a collection with a missing parent should be rejected");
-    expect(collections.remove(props).success && collections.find(crates)->parent == SceneCollectionId{},
-           "removing a collection should move its nested collections to its parent");
+    CHECK_MESSAGE((props.value == 1 && crates.value == 2 && lights.value == 3), "collection ids should be sequential");
+    CHECK_MESSAGE((collections.subtree(props) == std::vector<SceneCollectionId>{props, crates}),
+                  "a subtree should list a collection and its nested collections");
+    CHECK_MESSAGE((collections.setFlag(props, CollectionFlag::Visible, false).success &&
+                   !collections.effectiveFlag(crates, CollectionFlag::Visible) &&
+                   collections.effectiveFlag(crates, CollectionFlag::Renderable)),
+                  "hiding a collection should hide the collections nested in it");
+    CHECK_MESSAGE(!collections.setParent(props, crates).success, "a collection must not be nested inside itself");
+    CHECK_MESSAGE(!collections.add({.id = crates, .name = "Duplicate"}).success, "duplicate ids should be rejected");
+    CHECK_MESSAGE(!collections.add({.id = {9}, .name = "Orphan", .parent = {42}}).success,
+                  "a collection with a missing parent should be rejected");
+    CHECK_MESSAGE((collections.remove(props).success && collections.find(crates)->parent == SceneCollectionId{}),
+                  "removing a collection should move its nested collections to its parent");
     SceneCollectionId next;
-    expect(collections.create("Next", {}, next).success && next.value == 4, "ids should not be reused after a removal");
+    CHECK_MESSAGE((collections.create("Next", {}, next).success && next.value == 4),
+                  "ids should not be reused after a removal");
 }
 
-void testVisibilityRules() {
+TEST_CASE("Collection: visibility rules") {
     Scene scene;
     SceneCollections collections;
     const SceneCollectionId shown = create(collections, "Shown");
@@ -87,53 +84,57 @@ void testVisibilityRules() {
     const Entity excluded = scene.createEntity("Excluded");
     const Entity hiddenEntity = scene.createEntity("Hidden entity");
     const Entity unrenderable = scene.createEntity("Unrenderable");
-    expect(linkToCollection(scene, inHidden, hiddenChild).success, "linking should succeed");
+    CHECK_MESSAGE(linkToCollection(scene, inHidden, hiddenChild).success, "linking should succeed");
     linkToCollection(scene, inBoth, hiddenChild);
     linkToCollection(scene, inBoth, shown);
     linkToCollection(scene, locked, unselectable);
     linkToCollection(scene, excluded, notRendered);
     scene.registry().emplace<VisibilityComponent>(hiddenEntity, VisibilityComponent{.hidden = true});
     scene.registry().emplace<VisibilityComponent>(unrenderable, VisibilityComponent{.renderable = false});
-    expect(!linkToCollection(scene, loose, {77}).success, "linking to a missing collection should fail");
+    CHECK_MESSAGE(!linkToCollection(scene, loose, {77}).success, "linking to a missing collection should fail");
 
     const SceneVisibility editor(scene, SceneVisibilityMode::Editor);
     const SceneVisibility runtime(scene, SceneVisibilityMode::Runtime);
-    expect(editor.drawn(loose) && editor.selectable(loose), "entities outside collections should show");
-    expect(!editor.drawn(inHidden) && runtime.drawn(inHidden),
-           "a hidden enclosing collection should hide members in the editor only");
-    expect(editor.drawn(inBoth), "an entity in any visible collection should stay visible");
-    expect(editor.drawn(locked) && !editor.selectable(locked), "unselectable collections should block picking only");
-    expect(!editor.drawn(excluded) && !runtime.drawn(excluded), "non-renderable collections should never draw");
-    expect(!editor.drawn(hiddenEntity) && !editor.selectable(hiddenEntity) && runtime.drawn(hiddenEntity),
-           "the entity viewport hide should apply to editor views only");
-    expect(!editor.drawn(unrenderable) && !runtime.drawn(unrenderable), "non-renderable entities should never draw");
-    expect(editor.drawnInInstance(inHidden) && !editor.drawnInInstance(excluded),
-           "instances should ignore the viewport hide but honour renderable");
+    CHECK_MESSAGE((editor.drawn(loose) && editor.selectable(loose)), "entities outside collections should show");
+    CHECK_MESSAGE((!editor.drawn(inHidden) && runtime.drawn(inHidden)),
+                  "a hidden enclosing collection should hide members in the editor only");
+    CHECK_MESSAGE(editor.drawn(inBoth), "an entity in any visible collection should stay visible");
+    CHECK_MESSAGE((editor.drawn(locked) && !editor.selectable(locked)),
+                  "unselectable collections should block picking only");
+    CHECK_MESSAGE((!editor.drawn(excluded) && !runtime.drawn(excluded)),
+                  "non-renderable collections should never draw");
+    CHECK_MESSAGE((!editor.drawn(hiddenEntity) && !editor.selectable(hiddenEntity) && runtime.drawn(hiddenEntity)),
+                  "the entity viewport hide should apply to editor views only");
+    CHECK_MESSAGE((!editor.drawn(unrenderable) && !runtime.drawn(unrenderable)),
+                  "non-renderable entities should never draw");
+    CHECK_MESSAGE((editor.drawnInInstance(inHidden) && !editor.drawnInInstance(excluded)),
+                  "instances should ignore the viewport hide but honour renderable");
 
-    expect(unlinkFromCollection(scene, locked, unselectable).success &&
-               !scene.registry().any_of<CollectionMembershipComponent>(locked),
-           "unlinking the last collection should drop the membership component");
+    CHECK_MESSAGE((unlinkFromCollection(scene, locked, unselectable).success &&
+                   !scene.registry().any_of<CollectionMembershipComponent>(locked)),
+                  "unlinking the last collection should drop the membership component");
     const uint64_t renderableRevision = scene.revisions().renderable;
-    expect(deleteCollection(scene, hiddenChild).success, "deleting a collection should succeed");
-    expect(scene.revisions().renderable != renderableRevision, "deleting a collection should invalidate renders");
+    CHECK_MESSAGE(deleteCollection(scene, hiddenChild).success, "deleting a collection should succeed");
+    CHECK_MESSAGE(scene.revisions().renderable != renderableRevision,
+                  "deleting a collection should invalidate renders");
     const auto& moved = scene.registry().get<CollectionMembershipComponent>(inHidden);
-    expect(moved.collections == std::vector<SceneCollectionId>{hiddenParent},
-           "members of a deleted collection should move to its parent");
+    CHECK_MESSAGE(moved.collections == std::vector<SceneCollectionId>{hiddenParent},
+                  "members of a deleted collection should move to its parent");
 }
 
 // Scene-wide lighting follows the same visibility as meshes: the frame's sun,
 // sky, and fog come from drawn primary components only.
-void testLightingVisibility() {
+TEST_CASE("Collection: lighting visibility") {
     Scene scene;
     SceneCollections collections;
     const SceneCollectionId hiddenCollection = create(collections, "Hidden lights");
     collections.setFlag(hiddenCollection, CollectionFlag::Visible, false);
     scene.setCollections(collections);
 
-    expect(frameDirectionalLight(scene).intensity == DirectionalLightComponent{}.intensity &&
-               frameEnvironmentLight(scene).diffuseIntensity == EnvironmentLightComponent{}.diffuseIntensity &&
-               !frameVolumetricFog(scene),
-           "a scene without lights uses the default sun and sky and no fog");
+    CHECK_MESSAGE((frameDirectionalLight(scene).intensity == DirectionalLightComponent{}.intensity &&
+                   frameEnvironmentLight(scene).diffuseIntensity == EnvironmentLightComponent{}.diffuseIntensity &&
+                   !frameVolumetricFog(scene)),
+                  "a scene without lights uses the default sun and sky and no fog");
 
     const Entity sun = scene.createEntity("Sun");
     scene.registry().emplace<DirectionalLightComponent>(sun, DirectionalLightComponent{.intensity = 3.0f});
@@ -141,43 +142,43 @@ void testLightingVisibility() {
     scene.registry().emplace<EnvironmentLightComponent>(sky, EnvironmentLightComponent{.diffuseIntensity = 0.25f});
     const Entity fog = scene.createEntity("Fog");
     scene.registry().emplace<VolumetricFogComponent>(fog, VolumetricFogComponent{.density = 0.5f});
-    expect(primaryDirectionalLight(scene) == sun && frameDirectionalLight(scene).intensity == 3.0f &&
-               frameEnvironmentLight(scene).diffuseIntensity == 0.25f && frameVolumetricFog(scene) &&
-               frameVolumetricFog(scene)->density == 0.5f,
-           "drawn primary components light the frame");
+    CHECK_MESSAGE((primaryDirectionalLight(scene) == sun && frameDirectionalLight(scene).intensity == 3.0f &&
+                   frameEnvironmentLight(scene).diffuseIntensity == 0.25f && frameVolumetricFog(scene) &&
+                   frameVolumetricFog(scene)->density == 0.5f),
+                  "drawn primary components light the frame");
 
     // The editor hide removes them from editor views only.
     scene.registry().emplace<VisibilityComponent>(sun, VisibilityComponent{.hidden = true});
     linkToCollection(scene, sky, hiddenCollection);
     scene.registry().emplace<VisibilityComponent>(fog, VisibilityComponent{.hidden = true});
     const DirectionalLightComponent hiddenSun = frameDirectionalLight(scene, SceneVisibilityMode::Editor);
-    expect(primaryDirectionalLight(scene, SceneVisibilityMode::Editor) == entt::null && hiddenSun.intensity == 0.0f &&
-               !hiddenSun.shadows.enabled,
-           "a hidden sun neither lights nor casts shadows in editor views");
-    expect(frameEnvironmentLight(scene, SceneVisibilityMode::Editor).diffuseIntensity == 0.0f &&
-               frameEnvironmentLight(scene, SceneVisibilityMode::Editor).skyColor == glm::vec3(0.0f),
-           "an environment in a hidden collection is off in editor views");
-    expect(!frameVolumetricFog(scene, SceneVisibilityMode::Editor), "hidden fog is not drawn in editor views");
-    expect(frameDirectionalLight(scene).intensity == 3.0f && frameEnvironmentLight(scene).diffuseIntensity == 0.25f &&
-               frameVolumetricFog(scene),
-           "the editor hide does not change runtime lighting");
+    CHECK_MESSAGE((primaryDirectionalLight(scene, SceneVisibilityMode::Editor) == entt::null &&
+                   hiddenSun.intensity == 0.0f && !hiddenSun.shadows.enabled),
+                  "a hidden sun neither lights nor casts shadows in editor views");
+    CHECK_MESSAGE((frameEnvironmentLight(scene, SceneVisibilityMode::Editor).diffuseIntensity == 0.0f &&
+                   frameEnvironmentLight(scene, SceneVisibilityMode::Editor).skyColor == glm::vec3(0.0f)),
+                  "an environment in a hidden collection is off in editor views");
+    CHECK_MESSAGE(!frameVolumetricFog(scene, SceneVisibilityMode::Editor), "hidden fog is not drawn in editor views");
+    CHECK_MESSAGE((frameDirectionalLight(scene).intensity == 3.0f &&
+                   frameEnvironmentLight(scene).diffuseIntensity == 0.25f && frameVolumetricFog(scene)),
+                  "the editor hide does not change runtime lighting");
 
     // Not renderable removes them everywhere.
     scene.registry().replace<VisibilityComponent>(sun, VisibilityComponent{.renderable = false});
     scene.registry().replace<VisibilityComponent>(fog, VisibilityComponent{.renderable = false});
-    expect(frameDirectionalLight(scene).intensity == 0.0f && !frameVolumetricFog(scene),
-           "lights and fog that are not renderable are off at runtime too");
+    CHECK_MESSAGE((frameDirectionalLight(scene).intensity == 0.0f && !frameVolumetricFog(scene)),
+                  "lights and fog that are not renderable are off at runtime too");
 
     // A second, drawn primary light takes over.
     const Entity backup = scene.createEntity("Backup sun");
     scene.registry().emplace<DirectionalLightComponent>(backup, DirectionalLightComponent{.intensity = 2.0f});
-    expect(primaryDirectionalLight(scene) == backup && frameDirectionalLight(scene).intensity == 2.0f,
-           "the next drawn primary light is used");
+    CHECK_MESSAGE((primaryDirectionalLight(scene) == backup && frameDirectionalLight(scene).intensity == 2.0f),
+                  "the next drawn primary light is used");
 }
 
 // The filter and expansion MeshPass::buildRenderItems applies, checked on the
 // CPU: which entities draw and where collection instances place their members.
-void testInstanceExpansion() {
+TEST_CASE("Collection: instance expansion") {
     Scene scene;
     SceneCollections collections;
     const SceneCollectionId source = create(collections, "Source");
@@ -211,7 +212,8 @@ void testInstanceExpansion() {
     scene.updateWorldTransforms();
 
     const SceneVisibility editor(scene, SceneVisibilityMode::Editor);
-    expect(!editor.drawn(first) && !editor.drawn(second), "the hidden source collection should not draw itself");
+    CHECK_MESSAGE((!editor.drawn(first) && !editor.drawn(second)),
+                  "the hidden source collection should not draw itself");
     std::vector<CollectionInstanceDraw> draws;
     expandCollectionInstances(scene, editor, draws);
     const auto drawsOf = [&draws](Entity member, Entity instancerEntity) {
@@ -223,36 +225,38 @@ void testInstanceExpansion() {
         }
         return positions;
     };
-    expect(drawsOf(first, instancer) == std::vector<glm::vec3>{{0.0f, 0.0f, 10.0f}},
-           "an instance should place members at its origin minus the instance offset");
-    expect(drawsOf(second, instancer) == std::vector<glm::vec3>{{0.0f, 2.0f, 10.0f}},
-           "a member of the collection and a nested one should draw once");
-    expect(drawsOf(unrendered, instancer).empty(), "non-renderable members should not be instanced");
-    expect(drawsOf(first, outerInstancer) == std::vector<glm::vec3>{{5.0f, 100.0f, 0.0f}},
-           "nested instances should compose transforms and keep the outermost instancer");
-    expect(drawsOf(first, innerInstancer) == std::vector<glm::vec3>{{5.0f, 0.0f, 0.0f}},
-           "the inner instancer should also draw at its own transform");
-    expect(draws.size() < 64, "instance cycles should stop expanding");
+    CHECK_MESSAGE((drawsOf(first, instancer) == std::vector<glm::vec3>{{0.0f, 0.0f, 10.0f}}),
+                  "an instance should place members at its origin minus the instance offset");
+    CHECK_MESSAGE((drawsOf(second, instancer) == std::vector<glm::vec3>{{0.0f, 2.0f, 10.0f}}),
+                  "a member of the collection and a nested one should draw once");
+    CHECK_MESSAGE(drawsOf(unrendered, instancer).empty(), "non-renderable members should not be instanced");
+    CHECK_MESSAGE((drawsOf(first, outerInstancer) == std::vector<glm::vec3>{{5.0f, 100.0f, 0.0f}}),
+                  "nested instances should compose transforms and keep the outermost instancer");
+    CHECK_MESSAGE((drawsOf(first, innerInstancer) == std::vector<glm::vec3>{{5.0f, 0.0f, 0.0f}}),
+                  "the inner instancer should also draw at its own transform");
+    CHECK_MESSAGE(draws.size() < 64, "instance cycles should stop expanding");
 
     scene.registry().emplace<VisibilityComponent>(instancer, VisibilityComponent{.hidden = true});
     std::vector<CollectionInstanceDraw> afterHide;
     expandCollectionInstances(scene, SceneVisibility(scene, SceneVisibilityMode::Editor), afterHide);
     std::vector<CollectionInstanceDraw> inGame;
     expandCollectionInstances(scene, SceneVisibility(scene, SceneVisibilityMode::Runtime), inGame);
-    expect(afterHide.size() < draws.size() && inGame.size() == draws.size(),
-           "hiding an instancer should remove its draws in the editor but not in the game");
+    CHECK_MESSAGE((afterHide.size() < draws.size() && inGame.size() == draws.size()),
+                  "hiding an instancer should remove its draws in the editor but not in the game");
 }
 
-void testDocument(AssetManager& assets, const SceneDocumentOptions& options) {
+TEST_CASE("Collection: document") {
+    AssetManager assets;
+    const SceneDocumentOptions options{.assetRoot = ZENITH_ASSET_DIR};
     // Version 2 documents load with no collections and save as version 3.
     const std::string version2 =
         R"({"version":2,"entities":[{"id":1,"name":"a","local_transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"parent":null,"components":{}}]})";
     Scene migrated;
     const SceneDocumentResult loaded = SceneDocument::deserialize(version2, assets, options, migrated);
-    expect(loaded.success, loaded.error);
+    CHECK_MESSAGE(loaded.success, (loaded.error));
     const nlohmann::json upgraded = nlohmann::json::parse(serialize(migrated, assets, options));
-    expect(upgraded.at("version") == 3 && upgraded.at("collections") == nlohmann::json::array(),
-           "a version 2 document should migrate to version 3 without collections");
+    CHECK_MESSAGE((upgraded.at("version") == 3 && upgraded.at("collections") == nlohmann::json::array()),
+                  "a version 2 document should migrate to version 3 without collections");
 
     Scene scene;
     SceneCollections collections;
@@ -274,25 +278,26 @@ void testDocument(AssetManager& assets, const SceneDocumentOptions& options) {
     const std::string saved = serialize(scene, assets, options);
     Scene restored;
     const SceneDocumentResult restoredResult = SceneDocument::deserialize(saved, assets, options, restored);
-    expect(restoredResult.success, restoredResult.error);
-    expect(restored.collections() == scene.collections(), "collections should round trip");
-    expect(serialize(restored, assets, options) == saved, "a version 3 document should round trip exactly");
+    CHECK_MESSAGE(restoredResult.success, (restoredResult.error));
+    CHECK_MESSAGE(restored.collections() == scene.collections(), "collections should round trip");
+    CHECK_MESSAGE(serialize(restored, assets, options) == saved, "a version 3 document should round trip exactly");
     const Entity restoredCrate = restored.findEntity(scene.id(crate));
-    expect(restored.registry().get<CollectionMembershipComponent>(restoredCrate).collections ==
-                   std::vector<SceneCollectionId>{props, lights} &&
-               restored.registry().get<VisibilityComponent>(restoredCrate) ==
-                   VisibilityComponent{.hidden = true, .selectable = false},
-           "membership and visibility should round trip");
-    expect(restored.registry().get<CollectionInstanceComponent>(restored.findEntity(scene.id(instance))).collection ==
-               props,
-           "collection instances should round trip");
+    CHECK_MESSAGE((restored.registry().get<CollectionMembershipComponent>(restoredCrate).collections ==
+                       std::vector<SceneCollectionId>{props, lights} &&
+                   restored.registry().get<VisibilityComponent>(restoredCrate) ==
+                       VisibilityComponent{.hidden = true, .selectable = false}),
+                  "membership and visibility should round trip");
+    CHECK_MESSAGE(
+        restored.registry().get<CollectionInstanceComponent>(restored.findEntity(scene.id(instance))).collection ==
+            props,
+        "collection instances should round trip");
 
     const auto rejected = [&](std::string document, std::string_view expectedError) {
         Scene target;
         const SceneDocumentResult result = SceneDocument::deserialize(document, assets, options, target);
-        expect(!result.success && result.error.find(expectedError) != std::string::npos,
-               std::string("document should be rejected with: ") + std::string(expectedError) + " (got " +
-                   result.error + ")");
+        CHECK_MESSAGE((!result.success && result.error.find(expectedError) != std::string::npos),
+                      (std::string("document should be rejected with: ") + std::string(expectedError) + " (got " +
+                       result.error + ")"));
     };
     const std::string entity =
         R"({"id":1,"name":"a","local_transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"parent":null,"components":)";
@@ -316,7 +321,9 @@ void testDocument(AssetManager& assets, const SceneDocumentOptions& options) {
 }
 
 // Undo and redo patch collection definitions together with entities.
-void testCollectionChanges(AssetManager& assets, const SceneDocumentOptions& options) {
+TEST_CASE("Collection: collection changes") {
+    AssetManager assets;
+    const SceneDocumentOptions options{.assetRoot = ZENITH_ASSET_DIR};
     Scene scene;
     const Entity crate = scene.createEntity("Crate");
     const std::string before = serialize(scene, assets, options);
@@ -327,36 +334,28 @@ void testCollectionChanges(AssetManager& assets, const SceneDocumentOptions& opt
     const std::string after = serialize(scene, assets, options);
 
     SceneChanges changes;
-    expect(SceneDocument::diff(before, after, changes).success, "the diff should succeed");
-    expect(changes.collections && changes.entities.size() == 1, "a diff should record collections with entities");
+    CHECK_MESSAGE(SceneDocument::diff(before, after, changes).success, "the diff should succeed");
+    CHECK_MESSAGE((changes.collections && changes.entities.size() == 1),
+                  "a diff should record collections with entities");
     const uint64_t revision = scene.revisions().renderable;
-    expect(SceneDocument::applyChanges(changes, SceneChangeDirection::Backward, assets, options, scene).success &&
-               serialize(scene, assets, options) == before && scene.collections().empty(),
-           "patching backward should remove the collection and the membership");
-    expect(scene.revisions().renderable != revision, "patching collections should invalidate renders");
-    expect(SceneDocument::applyChanges(changes, SceneChangeDirection::Forward, assets, options, scene).success &&
-               serialize(scene, assets, options) == after,
-           "patching forward should restore them");
-    expect(scene.findEntity({1}) == crate, "patching should keep entity handles");
+    CHECK_MESSAGE(
+        (SceneDocument::applyChanges(changes, SceneChangeDirection::Backward, assets, options, scene).success &&
+         serialize(scene, assets, options) == before && scene.collections().empty()),
+        "patching backward should remove the collection and the membership");
+    CHECK_MESSAGE(scene.revisions().renderable != revision, "patching collections should invalidate renders");
+    CHECK_MESSAGE(
+        (SceneDocument::applyChanges(changes, SceneChangeDirection::Forward, assets, options, scene).success &&
+         serialize(scene, assets, options) == after),
+        "patching forward should restore them");
+    CHECK_MESSAGE(scene.findEntity({1}) == crate, "patching should keep entity handles");
 
     // Dropping only the collection would strand the unchanged member.
     SceneChanges collectionsOnly{.collections = changes.collections};
     const SceneDocumentResult stranded =
         SceneDocument::applyChanges(collectionsOnly, SceneChangeDirection::Backward, assets, options, scene);
-    expect(!stranded.success && stranded.error.find("missing collection") != std::string::npos &&
-               serialize(scene, assets, options) == after,
-           "a patch leaving a dangling membership should be rejected without changes");
+    CHECK_MESSAGE((!stranded.success && stranded.error.find("missing collection") != std::string::npos &&
+                   serialize(scene, assets, options) == after),
+                  "a patch leaving a dangling membership should be rejected without changes");
 }
-} // namespace
 
-int main() {
-    AssetManager assets;
-    const SceneDocumentOptions options{.assetRoot = ZENITH_ASSET_DIR};
-    testCollectionDefinitions();
-    testVisibilityRules();
-    testLightingVisibility();
-    testInstanceExpansion();
-    testDocument(assets, options);
-    testCollectionChanges(assets, options);
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

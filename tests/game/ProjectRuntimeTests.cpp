@@ -13,65 +13,59 @@
 #include "game/application/ProjectApplication.hpp"
 #include "game/application/RuntimeGameplay.hpp"
 #include "game/gameplay/DemoGameplay.hpp"
+#include "support/Files.hpp"
+#include "support/TempDirectory.hpp"
+
+#include "support/Doctest.hpp"
 
 #include <algorithm>
 #include <array>
 #include <filesystem>
-#include <fstream>
-#include <iostream>
 #include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
 
+TEST_SUITE_BEGIN("ProjectRuntime");
+
 namespace fs = std::filesystem;
+using testsupport::writeText;
 
 namespace {
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
-
-void writeText(const fs::path& path, std::string_view text) {
-    fs::create_directories(path.parent_path());
-    std::ofstream output(path, std::ios::trunc);
-    output << text;
-}
 
 GameLaunchResult parse(std::initializer_list<std::string_view> arguments, GameLaunchOptions& options) {
     const std::vector<std::string_view> list(arguments);
     return parseGameLaunchArguments(list, options);
 }
 
-void testArguments() {
+TEST_CASE("ProjectRuntime: launch arguments parse and refuse mistakes") {
     GameLaunchOptions options;
-    expect(parse({}, options).success && !options.verifyPackage && options.projectFile.empty() &&
-               options.sceneFile.empty(),
-           "no arguments play the built-in demo or the packaged project");
+    CHECK_MESSAGE((parse({}, options).success && !options.verifyPackage && options.projectFile.empty() &&
+                   options.sceneFile.empty()),
+                  "no arguments play the built-in demo or the packaged project");
 
     const fs::path scene = fs::absolute("level one.zenith-scene");
-    expect(parse({"--scene", scene.string(), "--verify-package", "--project", "game.zenith-project"}, options).success,
-           "options parse in any order");
-    expect(options.verifyPackage && options.projectFile == "game.zenith-project" && options.sceneFile == scene,
-           "every option keeps its value");
+    CHECK_MESSAGE(
+        parse({"--scene", scene.string(), "--verify-package", "--project", "game.zenith-project"}, options).success,
+        "options parse in any order");
+    CHECK_MESSAGE((options.verifyPackage && options.projectFile == "game.zenith-project" && options.sceneFile == scene),
+                  "every option keeps its value");
 
-    expect(parse({"--scene", "relative.zenith-scene"}, options).success && options.sceneFile.is_absolute() &&
-               options.sceneFile.filename() == "relative.zenith-scene",
-           "a relative --scene is resolved against the working directory");
+    CHECK_MESSAGE((parse({"--scene", "relative.zenith-scene"}, options).success && options.sceneFile.is_absolute() &&
+                   options.sceneFile.filename() == "relative.zenith-scene"),
+                  "a relative --scene is resolved against the working directory");
 
     GameLaunchOptions unchanged;
     const GameLaunchResult unknown = parse({"--level", "x"}, unchanged);
-    expect(!unknown && unknown.error.find("--level") != std::string::npos, "unknown arguments are named");
+    CHECK_MESSAGE((!unknown && unknown.error.find("--level") != std::string::npos), "unknown arguments are named");
     const GameLaunchResult missing = parse({"--project"}, unchanged);
-    expect(!missing && missing.error.find("--project needs a file") != std::string::npos,
-           "an option without its file is refused");
+    CHECK_MESSAGE((!missing && missing.error.find("--project needs a file") != std::string::npos),
+                  "an option without its file is refused");
     const GameLaunchResult repeated = parse({"--scene", "a", "--scene", "b"}, unchanged);
-    expect(!repeated && repeated.error.find("more than once") != std::string::npos, "an option given twice is refused");
-    expect(unchanged.projectFile.empty() && unchanged.sceneFile.empty(), "a failed parse leaves the options alone");
+    CHECK_MESSAGE((!repeated && repeated.error.find("more than once") != std::string::npos),
+                  "an option given twice is refused");
+    CHECK_MESSAGE((unchanged.projectFile.empty() && unchanged.sceneFile.empty()),
+                  "a failed parse leaves the options alone");
 }
 
 std::string projectJson() {
@@ -85,52 +79,54 @@ void testPackagedProjectDiscovery(const fs::path& root) {
     const fs::path tree = root / "build tree";
     writeText(tree / "editor-smoke.zenith-project", projectJson());
     fs::path found = "stale";
-    expect(findPackagedProject(tree, found).success && found.empty(),
-           "a directory that is not a package never supplies a project");
+    CHECK_MESSAGE((findPackagedProject(tree, found).success && found.empty()),
+                  "a directory that is not a package never supplies a project");
 
     const fs::path package = root / "package";
     writeText(package / "content-manifest.json", "{}");
     writeText(package / "game.zenith-project", projectJson());
-    expect(findPackagedProject(package, found).success && found == package / "game.zenith-project",
-           "a package's root project is found");
+    CHECK_MESSAGE((findPackagedProject(package, found).success && found == package / "game.zenith-project"),
+                  "a package's root project is found");
 
     GameLaunchOptions launch;
     std::optional<ProjectConfig> project;
-    expect(loadLaunchProject(launch, package, project).success && project &&
-               project->startupScene == package / "scenes" / "start.zenith-scene",
-           "without --project the packaged project plays its startup scene");
+    CHECK_MESSAGE((loadLaunchProject(launch, package, project).success && project &&
+                   project->startupScene == package / "scenes" / "start.zenith-scene"),
+                  "without --project the packaged project plays its startup scene");
 
     const fs::path other = root / "elsewhere" / "test run.zenith-scene";
     launch.sceneFile = other;
     const GameLaunchResult missingScene = loadLaunchProject(launch, package, project);
-    expect(!missingScene && missingScene.error.find("does not exist") != std::string::npos,
-           "a --scene file that does not exist is refused");
+    CHECK_MESSAGE((!missingScene && missingScene.error.find("does not exist") != std::string::npos),
+                  "a --scene file that does not exist is refused");
     writeText(other, "{}");
-    expect(loadLaunchProject(launch, package, project).success && project && project->startupScene == other &&
-               project->assetRoot == package / "assets" && project->sceneRoot == other.parent_path(),
-           "--scene outside the scene root replaces the startup scene, keeps the asset root, and brings its folder "
-           "as the scene root");
+    CHECK_MESSAGE(
+        (loadLaunchProject(launch, package, project).success && project && project->startupScene == other &&
+         project->assetRoot == package / "assets" && project->sceneRoot == other.parent_path()),
+        "--scene outside the scene root replaces the startup scene, keeps the asset root, and brings its folder "
+        "as the scene root");
     const fs::path inside = package / "scenes" / "levels" / "two.zenith-scene";
     writeText(inside, "{}");
     launch.sceneFile = inside;
-    expect(loadLaunchProject(launch, package, project).success && project && project->startupScene == inside &&
-               project->sceneRoot == package / "scenes",
-           "--scene inside the scene root keeps the project's scene root");
+    CHECK_MESSAGE((loadLaunchProject(launch, package, project).success && project && project->startupScene == inside &&
+                   project->sceneRoot == package / "scenes"),
+                  "--scene inside the scene root keeps the project's scene root");
 
     launch.sceneFile = other;
     std::optional<ProjectConfig> sceneOnly;
-    expect(loadLaunchProject(launch, tree, sceneOnly).success && sceneOnly && sceneOnly->startupScene == other &&
-               sceneOnly->assetRoot == tree / "assets" && sceneOnly->gameModule.empty(),
-           "--scene without a project plays with the runtime's own assets");
+    CHECK_MESSAGE((loadLaunchProject(launch, tree, sceneOnly).success && sceneOnly &&
+                   sceneOnly->startupScene == other && sceneOnly->assetRoot == tree / "assets" &&
+                   sceneOnly->gameModule.empty()),
+                  "--scene without a project plays with the runtime's own assets");
     std::optional<ProjectConfig> none;
     launch.sceneFile.clear();
-    expect(loadLaunchProject(launch, tree, none).success && !none,
-           "without a project or a package the built-in demo plays");
+    CHECK_MESSAGE((loadLaunchProject(launch, tree, none).success && !none),
+                  "without a project or a package the built-in demo plays");
 
     writeText(package / "second.zenith-project", projectJson());
     const GameLaunchResult ambiguous = findPackagedProject(package, found);
-    expect(!ambiguous && ambiguous.error.find("--project") != std::string::npos,
-           "a package with two projects asks for --project");
+    CHECK_MESSAGE((!ambiguous && ambiguous.error.find("--project") != std::string::npos),
+                  "a package with two projects asks for --project");
 }
 
 // The editor passes UTF-8 arguments; a path outside the ANSI code page must
@@ -147,29 +143,30 @@ void testNonAsciiPaths(const fs::path& root) {
     const std::string sceneArgument = reinterpret_cast<const char*>(scene.u8string().c_str());
 
     GameLaunchOptions launch;
-    expect(parse({"--project", projectArgument, "--scene", sceneArgument}, launch).success &&
-               launch.projectFile == directory / "game.zenith-project" && launch.sceneFile == scene,
-           "UTF-8 arguments become the paths they spell");
+    CHECK_MESSAGE((parse({"--project", projectArgument, "--scene", sceneArgument}, launch).success &&
+                   launch.projectFile == directory / "game.zenith-project" && launch.sceneFile == scene),
+                  "UTF-8 arguments become the paths they spell");
     std::optional<ProjectConfig> project;
     const GameLaunchResult loaded = loadLaunchProject(launch, root / "build tree", project);
-    expect(loaded.success && project && project->startupScene == scene && project->assetRoot == directory / "assets",
-           "a project and scene under a non-ASCII folder load");
+    CHECK_MESSAGE(
+        (loaded.success && project && project->startupScene == scene && project->assetRoot == directory / "assets"),
+        "a project and scene under a non-ASCII folder load");
     if (!loaded) {
-        std::cerr << loaded.error << '\n';
+        MESSAGE(loaded.error);
     }
 }
 
-// Runs after testPackagedProjectDiscovery, which makes root/package a package.
+// root/package must be a package (it holds a content manifest).
 void testModuleLoadingPolicy(const fs::path& root) {
-    expect(runtimeModuleLoading(root / "package" / "modules" / "game.zmodule", root / "package") ==
-               GameModuleLoading::InPlace,
-           "a module shipped in the package loads in place");
-    expect(runtimeModuleLoading(root / "project" / "modules" / "game.zmodule", root / "package") ==
-               GameModuleLoading::ShadowCopy,
-           "a development project's module loads from a shadow copy so it can be rebuilt");
-    expect(runtimeModuleLoading(root / "build tree" / "Debug" / "game.zmodule", root / "build tree") ==
-               GameModuleLoading::ShadowCopy,
-           "a module built inside a build tree (not a package) loads from a shadow copy");
+    CHECK_MESSAGE(runtimeModuleLoading(root / "package" / "modules" / "game.zmodule", root / "package") ==
+                      GameModuleLoading::InPlace,
+                  "a module shipped in the package loads in place");
+    CHECK_MESSAGE(runtimeModuleLoading(root / "project" / "modules" / "game.zmodule", root / "package") ==
+                      GameModuleLoading::ShadowCopy,
+                  "a development project's module loads from a shadow copy so it can be rebuilt");
+    CHECK_MESSAGE(runtimeModuleLoading(root / "build tree" / "Debug" / "game.zmodule", root / "build tree") ==
+                      GameModuleLoading::ShadowCopy,
+                  "a module built inside a build tree (not a package) loads from a shadow copy");
 }
 
 const ComponentType* counterType(const Gameplay& gameplay) {
@@ -191,7 +188,7 @@ ProjectConfig writeModuleProject(const fs::path& directory, const Gameplay& game
     writeText(directory / "runtime.zenith-project", projectJson());
     ProjectConfig project;
     const ProjectConfigResult loaded = loadProjectConfig(directory / "runtime.zenith-project", project);
-    expect(loaded.success, "the module project loads");
+    CHECK_MESSAGE(loaded.success, "the module project loads");
     fs::create_directories(project.assetRoot);
     const ComponentType* counter = counterType(gameplay);
     if (counter == nullptr) {
@@ -204,10 +201,10 @@ ProjectConfig writeModuleProject(const fs::path& directory, const Gameplay& game
         const Entity entity = scene.createEntity("Counter");
         counter->addDefault(scene, entity);
         fs::create_directories(scenePath.parent_path());
-        expect(SceneDocument::save(scenePath, scene, assets,
-                                   {.assetRoot = project.assetRoot, .componentTypes = gameplay.componentTypes})
-                   .success,
-               "a scene holding a module component saves");
+        CHECK_MESSAGE(SceneDocument::save(scenePath, scene, assets,
+                                          {.assetRoot = project.assetRoot, .componentTypes = gameplay.componentTypes})
+                          .success,
+                      "a scene holding a module component saves");
     }
     return project;
 }
@@ -229,27 +226,28 @@ void testModuleProjectPlays(const fs::path& directory) {
         probe.displayName = "Probe";
         probe.gameModule = ZENITH_TEST_GAME_MODULE;
         const GameplayResult loaded = loadRuntimeGameplay(&probe, GameModuleLoading::InPlace, runtime);
-        expect(loaded.success && runtime.module != nullptr, "a project's game module loads");
+        CHECK_MESSAGE((loaded.success && runtime.module != nullptr), "a project's game module loads");
         if (!loaded) {
-            std::cerr << loaded.error << '\n';
+            MESSAGE(loaded.error);
             return;
         }
     }
-    expect(runtime.presentation == GamePresentation::Project,
-           "a module other than the demo's plays in the project-agnostic application");
-    expect(runtime.module->loadedPath() == runtime.module->sourcePath(), "an in-place module loads the library itself");
+    CHECK_MESSAGE(runtime.presentation == GamePresentation::Project,
+                  "a module other than the demo's plays in the project-agnostic application");
+    CHECK_MESSAGE(runtime.module->loadedPath() == runtime.module->sourcePath(),
+                  "an in-place module loads the library itself");
     const ComponentType* counter = counterType(runtime.gameplay);
-    expect(counter != nullptr, "the module's component types reach the gameplay");
+    CHECK_MESSAGE(counter != nullptr, "the module's component types reach the gameplay");
     if (counter == nullptr) {
         return;
     }
 
     ProjectConfig project = writeModuleProject(directory, runtime.gameplay);
     PackageVerificationResult verified = verifyProjectScenes(project, runtime.gameplay);
-    expect(verified.success && verified.scenes.size() == 2 &&
-               verified.scenes[0] == project.sceneRoot / "levels" / "second.zenith-scene" &&
-               verified.scenes[1] == project.sceneRoot / "start.zenith-scene",
-           "verification loads every scene under the scene root, nested ones included");
+    CHECK_MESSAGE((verified.success && verified.scenes.size() == 2 &&
+                   verified.scenes[0] == project.sceneRoot / "levels" / "second.zenith-scene" &&
+                   verified.scenes[1] == project.sceneRoot / "start.zenith-scene"),
+                  "verification loads every scene under the scene root, nested ones included");
 
     {
         ProjectApplication application(project, runtime.gameplay);
@@ -263,54 +261,57 @@ void testModuleProjectPlays(const fs::path& directory) {
         Logger logger;
         ApplicationSession session(application, scene, assets, physics, audio, rendering, gameUi, logger);
         const SceneResult started = session.start();
-        expect(started.success, "the project application plays the module's startup scene");
+        CHECK_MESSAGE(started.success, "the project application plays the module's startup scene");
         if (!started) {
-            std::cerr << started.error << '\n';
+            MESSAGE(started.error);
             return;
         }
         const Entity entity = onlyCounter(scene, *counter);
-        expect(entity != entt::null, "the scene's module component loaded");
+        CHECK_MESSAGE((entity != entt::null), "the scene's module component loaded");
         if (entity == entt::null) {
             session.shutdown();
             return;
         }
         session.update(InputState{}, 1.0f / 60.0f);
-        expect(counterField(*counter, scene, entity, "value") == 2,
-               "Play Update systems run in their order: add one, then double");
-        expect(counterField(*counter, scene, entity, "edit_ticks") == 0, "Edit-only systems do not run in the game");
+        CHECK_MESSAGE(counterField(*counter, scene, entity, "value") == 2,
+                      "Play Update systems run in their order: add one, then double");
+        CHECK_MESSAGE(counterField(*counter, scene, entity, "edit_ticks") == 0,
+                      "Edit-only systems do not run in the game");
         session.fixedUpdate(InputState{}, 1.0f / 60.0f);
-        expect(counterField(*counter, scene, entity, "fixed_ticks") == 1, "FixedUpdate systems run each fixed step");
-        expect(counterField(*counter, scene, entity, "logger_seen") == 1 &&
-                   counterField(*counter, scene, entity, "services_seen") == 1,
-               "game systems get a logger and gameplay services");
+        CHECK_MESSAGE(counterField(*counter, scene, entity, "fixed_ticks") == 1,
+                      "FixedUpdate systems run each fixed step");
+        CHECK_MESSAGE((counterField(*counter, scene, entity, "logger_seen") == 1 &&
+                       counterField(*counter, scene, entity, "services_seen") == 1),
+                      "game systems get a logger and gameplay services");
         const auto spawned = [&scene] {
             return std::ranges::count_if(scene.registry().view<const NameComponent>(), [&scene](Entity candidate) {
                 return scene.registry().get<const NameComponent>(candidate).name == "Spawned on load";
             });
         };
-        expect(spawned() == 1, "a module system read SceneLoaded and its deferred spawn applied after Update");
+        CHECK_MESSAGE(spawned() == 1, "a module system read SceneLoaded and its deferred spawn applied after Update");
         session.update(InputState{}, 1.0f / 60.0f);
-        expect(spawned() == 1, "SceneLoaded is read in the first frame only");
+        CHECK_MESSAGE(spawned() == 1, "SceneLoaded is read in the first frame only");
         InputState fire;
         fire.setKeyDown(Key::F);
         fire.setKeyPressed(Key::F);
         session.update(fire, 1.0f / 60.0f);
         session.fixedUpdate(fire, 1.0f / 60.0f);
-        expect(counterField(*counter, scene, entity, "fire_presses") == 1 &&
-                   counterField(*counter, scene, entity, "fixed_fire_presses") == 1,
-               "systems read the module's input actions, evaluated by the host each frame and fixed step");
+        CHECK_MESSAGE((counterField(*counter, scene, entity, "fire_presses") == 1 &&
+                       counterField(*counter, scene, entity, "fixed_fire_presses") == 1),
+                      "systems read the module's input actions, evaluated by the host each frame and fixed step");
         session.lateUpdate(InputState{}, 1.0f / 60.0f);
-        expect(counterField(*counter, scene, entity, "late_ticks") == 1, "LateUpdate systems run once per frame");
+        CHECK_MESSAGE(counterField(*counter, scene, entity, "late_ticks") == 1,
+                      "LateUpdate systems run once per frame");
         // The exit criterion of GAMEPLAY_ROADMAP A2 for zenith --project.
         gameUi.beginFrame({640, 360}, InputState{});
         session.drawUi();
         const std::string hud = "HUD " + std::to_string(counterField(*counter, scene, entity, "value"));
-        expect(std::ranges::any_of(gameUi.commands(),
-                                   [&hud](const UiCommand& command) {
-                                       const auto* text = std::get_if<UiTextCommand>(&command.payload);
-                                       return text != nullptr && text->text == hud;
-                                   }),
-               "the module's Ui system draws its HUD in the game's UI frame");
+        CHECK_MESSAGE(std::ranges::any_of(gameUi.commands(),
+                                          [&hud](const UiCommand& command) {
+                                              const auto* text = std::get_if<UiTextCommand>(&command.payload);
+                                              return text != nullptr && text->text == hud;
+                                          }),
+                      "the module's Ui system draws its HUD in the game's UI frame");
         session.shutdown();
     }
 
@@ -328,64 +329,71 @@ void testModuleProjectPlays(const fs::path& directory) {
         AudioSystem audio;
         audio.init(AudioConfig{.outputEnabled = false});
         ApplicationSession session(application, scene, assets, physics, audio);
-        expect(session.start().success && onlyCounter(scene, *counter) != entt::null,
-               "a scene outside the scene root plays with the project's module");
+        CHECK_MESSAGE((session.start().success && onlyCounter(scene, *counter) != entt::null),
+                      "a scene outside the scene root plays with the project's module");
         session.shutdown();
     }
 
     writeText(project.sceneRoot / "broken.zenith-scene", "not a scene");
     verified = verifyProjectScenes(project, runtime.gameplay);
-    expect(!verified && verified.error.find("broken.zenith-scene") != std::string::npos,
-           "verification names a scene that does not load");
+    CHECK_MESSAGE((!verified && verified.error.find("broken.zenith-scene") != std::string::npos),
+                  "verification names a scene that does not load");
     fs::remove(project.sceneRoot / "broken.zenith-scene");
 }
 
-void testDemoAndLinkedGameplay() {
+TEST_CASE("ProjectRuntime: the demo and linked gameplay load without a module") {
     RuntimeGameplay runtime;
-    expect(loadRuntimeGameplay(nullptr, GameModuleLoading::InPlace, runtime).success && runtime.module == nullptr &&
-               runtime.presentation == GamePresentation::Demo &&
-               runtime.gameplay.componentTypes->find(DemoGameplay::CollectibleItemKey) != nullptr,
-           "without a project the demo gameplay linked into the game plays");
+    CHECK_MESSAGE((loadRuntimeGameplay(nullptr, GameModuleLoading::InPlace, runtime).success &&
+                   runtime.module == nullptr && runtime.presentation == GamePresentation::Demo &&
+                   runtime.gameplay.componentTypes->find(DemoGameplay::CollectibleItemKey) != nullptr),
+                  "without a project the demo gameplay linked into the game plays");
 
     ProjectConfig moduleless;
     moduleless.displayName = "Showcase";
-    expect(loadRuntimeGameplay(&moduleless, GameModuleLoading::InPlace, runtime).success && runtime.module == nullptr &&
-               runtime.presentation == GamePresentation::Demo,
-           "a project without a game module is walked with the linked demo gameplay");
+    CHECK_MESSAGE((loadRuntimeGameplay(&moduleless, GameModuleLoading::InPlace, runtime).success &&
+                   runtime.module == nullptr && runtime.presentation == GamePresentation::Demo),
+                  "a project without a game module is walked with the linked demo gameplay");
 
     ProjectConfig demo;
     demo.displayName = "Demo";
     demo.gameModule = ZENITH_DEMO_GAME_MODULE;
     const GameplayResult loaded = loadRuntimeGameplay(&demo, GameModuleLoading::InPlace, runtime);
-    expect(loaded.success && runtime.module != nullptr && runtime.module->name() == demoGameModuleName &&
-               runtime.presentation == GamePresentation::Demo,
-           "the demo's module plays with the demo's presentation");
+    CHECK_MESSAGE((loaded.success && runtime.module != nullptr && runtime.module->name() == demoGameModuleName &&
+                   runtime.presentation == GamePresentation::Demo),
+                  "the demo's module plays with the demo's presentation");
     if (!loaded) {
-        std::cerr << loaded.error << '\n';
+        MESSAGE(loaded.error);
     }
 
     ProjectConfig missing;
     missing.displayName = "Missing";
-    missing.gameModule = fs::temp_directory_path() / "zenith_no_such_module.zmodule";
+    const testsupport::TempDirectory nowhere("project-runtime-missing-module");
+    missing.gameModule = nowhere / "zenith_no_such_module.zmodule";
     const GameplayResult failed = loadRuntimeGameplay(&missing, GameModuleLoading::InPlace, runtime);
-    expect(!failed && failed.error.find("Missing") != std::string::npos && runtime.module != nullptr,
-           "a module that does not load fails naming the project and keeps the loaded gameplay");
+    CHECK_MESSAGE((!failed && failed.error.find("Missing") != std::string::npos && runtime.module != nullptr),
+                  "a module that does not load fails naming the project and keeps the loaded gameplay");
+}
+
+TEST_CASE("ProjectRuntime: a packaged project and a --scene override are found") {
+    const testsupport::TempDirectory root("project-runtime-packaged");
+    testPackagedProjectDiscovery(root.path());
+}
+
+TEST_CASE("ProjectRuntime: projects under non-ASCII paths load") {
+    const testsupport::TempDirectory root("project-runtime-non-ascii");
+    testNonAsciiPaths(root.path());
+}
+
+TEST_CASE("ProjectRuntime: packaged modules load in place and others from a shadow copy") {
+    const testsupport::TempDirectory root("project-runtime-module-loading");
+    writeText(root / "package" / "content-manifest.json", "{}");
+    testModuleLoadingPolicy(root.path());
+}
+
+TEST_CASE("ProjectRuntime: a module project plays its systems and verifies its scenes") {
+    const testsupport::TempDirectory root("project-runtime-module-project");
+    testModuleProjectPlays(root / "module project");
 }
 } // namespace
 
-int main() {
-    const fs::path root = fs::temp_directory_path() / "zenith_project_runtime_tests";
-    std::error_code error;
-    fs::remove_all(root, error);
-    fs::create_directories(root, error);
-
-    testArguments();
-    testPackagedProjectDiscovery(root);
-    testNonAsciiPaths(root);
-    testModuleLoadingPolicy(root);
-    testModuleProjectPlays(root / "module project");
-    testDemoAndLinkedGameplay();
-
-    fs::remove_all(root, error);
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

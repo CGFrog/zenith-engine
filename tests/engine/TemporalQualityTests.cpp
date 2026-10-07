@@ -1,20 +1,16 @@
 #include "engine/graphics/TemporalQuality.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <array>
 #include <cmath>
 #include <iostream>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("TemporalQuality");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 bool approximately(float first, float second, float tolerance = 0.0001f) {
     return std::abs(first - second) <= tolerance;
@@ -40,36 +36,38 @@ DynamicResolutionSettings fixedScale(float scale) {
             .quantization = 8};
 }
 
-void testHistoryLifecycle() {
+TEST_CASE("TemporalQuality: history lifecycle") {
     TemporalQualityController controller;
     DynamicResolutionSettings native;
     const TemporalFrameState first = controller.beginFrame(1920, 1080, 12.0, native, true, false);
     const TemporalFrameState second = controller.beginFrame(1920, 1080, 12.0, native, true, false);
-    expect(first.historyInvalidated && !first.historyValid, "the first temporal frame rejects undefined history");
-    expect(second.historyValid && !second.historyInvalidated, "stable subsequent frames consume history");
-    expect(first.jitterPixels != second.jitterPixels, "temporal jitter advances through a deterministic sequence");
-    expect(std::abs(first.jitterNdc.x) <= 1.0f / 1920.0f && std::abs(first.jitterNdc.y) <= 1.0f / 1080.0f,
-           "native-resolution jitter remains inside one output pixel");
+    CHECK_MESSAGE((first.historyInvalidated && !first.historyValid),
+                  "the first temporal frame rejects undefined history");
+    CHECK_MESSAGE((second.historyValid && !second.historyInvalidated), "stable subsequent frames consume history");
+    CHECK_MESSAGE(first.jitterPixels != second.jitterPixels,
+                  "temporal jitter advances through a deterministic sequence");
+    CHECK_MESSAGE((std::abs(first.jitterNdc.x) <= 1.0f / 1920.0f && std::abs(first.jitterNdc.y) <= 1.0f / 1080.0f),
+                  "native-resolution jitter remains inside one output pixel");
 
     const TemporalFrameState cut = controller.beginFrame(1920, 1080, 12.0, native, true, true);
-    expect(cut.cameraCut && cut.historyInvalidated && !cut.historyValid,
-           "camera cuts invalidate temporal history for one frame");
-    expect(controller.beginFrame(1920, 1080, 12.0, native, true, false).historyValid,
-           "history becomes valid after the post-cut frame is recorded");
+    CHECK_MESSAGE((cut.cameraCut && cut.historyInvalidated && !cut.historyValid),
+                  "camera cuts invalidate temporal history for one frame");
+    CHECK_MESSAGE(controller.beginFrame(1920, 1080, 12.0, native, true, false).historyValid,
+                  "history becomes valid after the post-cut frame is recorded");
 
     const TemporalFrameState resized = controller.beginFrame(1280, 720, 12.0, native, true, false);
-    expect(resized.historyInvalidated && !resized.historyValid, "an output resize invalidates history");
+    CHECK_MESSAGE((resized.historyInvalidated && !resized.historyValid), "an output resize invalidates history");
 
     controller.beginFrame(1280, 720, 12.0, native, false, false);
     const TemporalFrameState reenabled = controller.beginFrame(1280, 720, 12.0, native, true, false);
-    expect(!reenabled.historyValid, "re-enabling temporal anti-aliasing starts from fresh history");
+    CHECK_MESSAGE(!reenabled.historyValid, "re-enabling temporal anti-aliasing starts from fresh history");
 
     controller.invalidateHistory();
-    expect(controller.beginFrame(1280, 720, 8.0, native, true, false).historyInvalidated,
-           "explicit resize or device-loss invalidation is observable");
+    CHECK_MESSAGE(controller.beginFrame(1280, 720, 8.0, native, true, false).historyInvalidated,
+                  "explicit resize or device-loss invalidation is observable");
 }
 
-void testDynamicResolutionKeepsHistory() {
+TEST_CASE("TemporalQuality: dynamic resolution keeps history") {
     TemporalQualityController controller;
     const DynamicResolutionSettings dynamic{.enabled = true,
                                             .minimumScale = 0.5f,
@@ -88,14 +86,14 @@ void testDynamicResolutionKeepsHistory() {
         }
         previous = state;
     }
-    expect(scaleChanged && previous.resolutionScale < 1.0f,
-           "sustained over-budget GPU time lowers internal resolution slowly");
-    expect(previous.internalWidth % 16 == 0 && previous.internalHeight % 16 == 0,
-           "dynamic extents are quantized for stable resource reuse");
-    expect(historyKeptAcrossChange, "output-resolution history survives internal resolution changes");
+    CHECK_MESSAGE((scaleChanged && previous.resolutionScale < 1.0f),
+                  "sustained over-budget GPU time lowers internal resolution slowly");
+    CHECK_MESSAGE((previous.internalWidth % 16 == 0 && previous.internalHeight % 16 == 0),
+                  "dynamic extents are quantized for stable resource reuse");
+    CHECK_MESSAGE(historyKeptAcrossChange, "output-resolution history survives internal resolution changes");
 }
 
-void testJitterSpansOneInternalPixel() {
+TEST_CASE("TemporalQuality: jitter spans one internal pixel") {
     for (const float scale : {1.0f, 0.75f, 0.5f}) {
         TemporalQualityController controller;
         glm::vec2 minimum(1.0f);
@@ -122,16 +120,16 @@ void testJitterSpansOneInternalPixel() {
                                 approximately(jittered.x, unjittered.x - state.jitterPixels.x, 0.001f) &&
                                 approximately(jittered.y, unjittered.y - state.jitterPixels.y, 0.001f);
         }
-        expect(minimum.x >= -0.5f && minimum.y >= -0.5f && maximum.x <= 0.5f && maximum.y <= 0.5f,
-               "jitter stays within one internal pixel");
-        expect(maximum.x - minimum.x > 0.75f && maximum.y - minimum.y > 0.75f,
-               "the jitter sequence covers the internal pixel footprint");
-        expect(consistent, "NDC jitter is measured in internal-resolution pixels");
-        expect(projectionMatches, "projection jitter shifts content by the reported internal-pixel offset");
+        CHECK_MESSAGE((minimum.x >= -0.5f && minimum.y >= -0.5f && maximum.x <= 0.5f && maximum.y <= 0.5f),
+                      "jitter stays within one internal pixel");
+        CHECK_MESSAGE((maximum.x - minimum.x > 0.75f && maximum.y - minimum.y > 0.75f),
+                      "the jitter sequence covers the internal pixel footprint");
+        CHECK_MESSAGE(consistent, "NDC jitter is measured in internal-resolution pixels");
+        CHECK_MESSAGE(projectionMatches, "projection jitter shifts content by the reported internal-pixel offset");
     }
 }
 
-void testUnjitteredMotion() {
+TEST_CASE("TemporalQuality: unjittered motion") {
     const float aspect = 16.0f / 9.0f;
     const glm::mat4 projection = sceneProjection(aspect);
     const glm::mat4 view = glm::lookAtRH(glm::vec3(0.0f, 1.5f, 5.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
@@ -144,8 +142,8 @@ void testUnjitteredMotion() {
     const glm::vec4 staticPoint(0.3f, 0.2f, -1.0f, 1.0f);
     const glm::vec2 staticMotion =
         unjitteredMotionUv(currentViewProjection * staticPoint, previousViewProjection * staticPoint, jitter);
-    expect(approximately(staticMotion.x, 0.0f, 0.000001f) && approximately(staticMotion.y, 0.0f, 0.000001f),
-           "a static scene has zero motion despite per-frame jitter");
+    CHECK_MESSAGE((approximately(staticMotion.x, 0.0f, 0.000001f) && approximately(staticMotion.y, 0.0f, 0.000001f)),
+                  "a static scene has zero motion despite per-frame jitter");
 
     const glm::vec4 movedPoint = staticPoint + glm::vec4(0.25f, 0.0f, 0.0f, 0.0f);
     const glm::vec2 motion =
@@ -154,43 +152,45 @@ void testUnjitteredMotion() {
     const glm::vec4 previousClip = projection * view * staticPoint;
     const glm::vec2 expected =
         (glm::vec2(currentClip) / currentClip.w - glm::vec2(previousClip) / previousClip.w) * 0.5f;
-    expect(approximately(motion.x, expected.x, 0.00001f) && approximately(motion.y, expected.y, 0.00001f),
-           "object motion equals the unjittered screen displacement");
+    CHECK_MESSAGE((approximately(motion.x, expected.x, 0.00001f) && approximately(motion.y, expected.y, 0.00001f)),
+                  "object motion equals the unjittered screen displacement");
 }
 
-void testNeighborhoodClip() {
+TEST_CASE("TemporalQuality: neighborhood clip") {
     const std::array<glm::vec3, 9> samples{glm::vec3(0.40f), glm::vec3(0.45f), glm::vec3(0.50f),
                                            glm::vec3(0.55f), glm::vec3(0.60f), glm::vec3(0.50f),
                                            glm::vec3(0.48f), glm::vec3(0.52f), glm::vec3(0.50f)};
     const TemporalNeighborhood neighborhood = measureTemporalNeighborhood(samples);
-    expect(approximately(neighborhood.mean.x, 0.5f, 0.001f) && approximately(neighborhood.mean.y, 0.0f) &&
-               approximately(neighborhood.mean.z, 0.0f),
-           "neighborhood statistics are measured in YCoCg");
+    CHECK_MESSAGE((approximately(neighborhood.mean.x, 0.5f, 0.001f) && approximately(neighborhood.mean.y, 0.0f) &&
+                   approximately(neighborhood.mean.z, 0.0f)),
+                  "neighborhood statistics are measured in YCoCg");
 
     const glm::vec3 inRange(0.52f);
-    expect(clipTemporalHistory(inRange, neighborhood, 1.0f) == inRange, "history inside the variance box is kept");
+    CHECK_MESSAGE(clipTemporalHistory(inRange, neighborhood, 1.0f) == inRange,
+                  "history inside the variance box is kept");
 
     const glm::vec3 outlier(2.0f, 0.1f, 0.5f);
     const glm::vec3 clipped = clipTemporalHistory(outlier, neighborhood, 1.0f);
     const glm::vec3 clippedOffset = glm::abs(rgbToYCoCg(clipped) - neighborhood.mean);
     const glm::vec3 limit = glm::max(neighborhood.standardDeviation, glm::vec3(0.0001f)) + 0.0001f;
-    expect(clippedOffset.x <= limit.x && clippedOffset.y <= limit.y && clippedOffset.z <= limit.z,
-           "outlying history is clipped onto the variance box");
-    expect(glm::length(rgbToYCoCg(clipped) - neighborhood.mean) < glm::length(rgbToYCoCg(outlier) - neighborhood.mean),
-           "clipping moves history toward the neighborhood mean");
+    CHECK_MESSAGE((clippedOffset.x <= limit.x && clippedOffset.y <= limit.y && clippedOffset.z <= limit.z),
+                  "outlying history is clipped onto the variance box");
+    CHECK_MESSAGE(glm::length(rgbToYCoCg(clipped) - neighborhood.mean) <
+                      glm::length(rgbToYCoCg(outlier) - neighborhood.mean),
+                  "clipping moves history toward the neighborhood mean");
 
     const glm::vec3 color(0.8f, 0.3f, 0.1f);
     const glm::vec3 roundTrip = yCoCgToRgb(rgbToYCoCg(color));
-    expect(approximately(roundTrip.x, color.x) && approximately(roundTrip.y, color.y) &&
-               approximately(roundTrip.z, color.z),
-           "YCoCg conversion round-trips");
-    expect(temporalClipGamma(0.0f) > temporalClipGamma(16.0f), "the clip box tightens under motion");
+    CHECK_MESSAGE((approximately(roundTrip.x, color.x) && approximately(roundTrip.y, color.y) &&
+                   approximately(roundTrip.z, color.z)),
+                  "YCoCg conversion round-trips");
+    CHECK_MESSAGE(temporalClipGamma(0.0f) > temporalClipGamma(16.0f), "the clip box tightens under motion");
 }
 
-void testResolveBlend() {
-    expect(approximately(temporalReconstructionWeight(glm::vec2(0.0f)), 1.0f) &&
-               temporalReconstructionWeight(glm::vec2(0.5f)) < temporalReconstructionWeight(glm::vec2(0.25f)),
-           "reconstruction favors samples near the output pixel center");
+TEST_CASE("TemporalQuality: resolve blend") {
+    CHECK_MESSAGE((approximately(temporalReconstructionWeight(glm::vec2(0.0f)), 1.0f) &&
+                   temporalReconstructionWeight(glm::vec2(0.5f)) < temporalReconstructionWeight(glm::vec2(0.25f))),
+                  "reconstruction favors samples near the output pixel center");
 
     const std::array<glm::vec3, 9> flat{glm::vec3(0.4f), glm::vec3(0.6f), glm::vec3(0.5f),
                                         glm::vec3(0.5f), glm::vec3(0.5f), glm::vec3(0.5f),
@@ -198,25 +198,25 @@ void testResolveBlend() {
     const TemporalNeighborhood neighborhood = measureTemporalNeighborhood(flat);
     const TemporalResolveSample stable =
         resolveTemporalSample({.current = glm::vec3(0.5f), .history = glm::vec3(0.55f), .neighborhood = neighborhood});
-    expect(stable.historyWeight > 0.85f && stable.color.x > 0.5f && stable.color.x < 0.55f,
-           "stable history dominates accumulation");
+    CHECK_MESSAGE((stable.historyWeight > 0.85f && stable.color.x > 0.5f && stable.color.x < 0.55f),
+                  "stable history dominates accumulation");
 
     const TemporalResolveSample reactive = resolveTemporalSample(
         {.current = {1.0f, 0.2f, 0.1f}, .history = glm::vec3(0.1f), .neighborhood = neighborhood, .reactive = 1.0f});
-    expect(reactive.historyWeight == 0.0f && reactive.color == glm::vec3(1.0f, 0.2f, 0.1f),
-           "reactive emissive or transparent pixels favor the current frame");
+    CHECK_MESSAGE((reactive.historyWeight == 0.0f && reactive.color == glm::vec3(1.0f, 0.2f, 0.1f)),
+                  "reactive emissive or transparent pixels favor the current frame");
 
     const TemporalResolveSample rejected = resolveTemporalSample({.current = glm::vec3(0.2f),
                                                                   .history = glm::vec3(0.8f),
                                                                   .neighborhood = neighborhood,
                                                                   .historyAvailable = false});
-    expect(rejected.historyWeight == 0.0f && rejected.color == glm::vec3(0.2f),
-           "disoccluded or off-screen pixels reject stale history completely");
+    CHECK_MESSAGE((rejected.historyWeight == 0.0f && rejected.color == glm::vec3(0.2f)),
+                  "disoccluded or off-screen pixels reject stale history completely");
 
-    expect(temporalHistoryWeight(1.0f, 0.0f, 0.0f) < temporalHistoryWeight(0.3f, 0.0f, 0.0f),
-           "well-placed internal samples contribute more to the output pixel");
-    expect(temporalHistoryWeight(1.0f, 40.0f, 0.0f) < temporalHistoryWeight(1.0f, 0.0f, 0.0f),
-           "fast motion shortens the accumulation window");
+    CHECK_MESSAGE(temporalHistoryWeight(1.0f, 0.0f, 0.0f) < temporalHistoryWeight(0.3f, 0.0f, 0.0f),
+                  "well-placed internal samples contribute more to the output pixel");
+    CHECK_MESSAGE(temporalHistoryWeight(1.0f, 40.0f, 0.0f) < temporalHistoryWeight(1.0f, 0.0f, 0.0f),
+                  "fast motion shortens the accumulation window");
 
     const TemporalResolveSample bright = resolveTemporalSample(
         {.current = glm::vec3(20.0f),
@@ -224,16 +224,8 @@ void testResolveBlend() {
          .neighborhood = measureTemporalNeighborhood(std::array{glm::vec3(0.5f), glm::vec3(20.0f)}),
          .sampleConfidence = 1.0f});
     const float linearBlend = 0.5f + (20.0f - 0.5f) * (1.0f - temporalHistoryWeight(1.0f, 0.0f, 0.0f));
-    expect(bright.color.x < linearBlend, "luma weighting suppresses single bright samples");
+    CHECK_MESSAGE(bright.color.x < linearBlend, "luma weighting suppresses single bright samples");
 }
 } // namespace
 
-int main() {
-    testHistoryLifecycle();
-    testDynamicResolutionKeepsHistory();
-    testJitterSpansOneInternalPixel();
-    testUnjitteredMotion();
-    testNeighborhoodClip();
-    testResolveBlend();
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

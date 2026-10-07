@@ -23,45 +23,24 @@
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
+using testsupport::readText;
+
+TEST_SUITE_BEGIN("PrefabWindow");
 
 namespace {
-int failures = 0;
-
-void expect(bool condition, std::string_view message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
-
-fs::path freshDirectory(const fs::path& root, const std::string& name) {
-    const fs::path directory = root / name;
-    std::error_code error;
-    fs::remove_all(directory, error);
-    fs::create_directories(directory);
-    return directory;
-}
-
-std::string readText(const fs::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    std::ostringstream contents;
-    contents << input.rdbuf();
-    return contents.str();
-}
-
 Entity findNamed(const Scene& scene, std::string_view name) {
     const auto view = scene.registry().view<const NameComponent>();
     for (const Entity entity : view) {
@@ -103,13 +82,13 @@ void authorPrefabs(const fs::path& root) {
     Scene staging;
     const Entity lamp = staging.createEntity("Lamp");
     staging.setParent(staging.createEntity("Shade"), lamp);
-    expect(authoring.create(staging, lamp, "lamp.prefab").success, "fixture: the lamp prefab should be created");
+    CHECK_MESSAGE(authoring.create(staging, lamp, "lamp.prefab").success, "fixture: the lamp prefab should be created");
     Scene shelfStaging;
     const Entity shelf = shelfStaging.createEntity("Shelf");
     Entity nested = entt::null;
-    expect(authoring.instantiate(shelfStaging, "lamp.prefab", shelf, nested).success &&
-               authoring.create(shelfStaging, shelf, "shelf.prefab").success,
-           "fixture: the shelf prefab should be created");
+    CHECK_MESSAGE((authoring.instantiate(shelfStaging, "lamp.prefab", shelf, nested).success &&
+                   authoring.create(shelfStaging, shelf, "shelf.prefab").success),
+                  "fixture: the shelf prefab should be created");
 }
 
 struct Fixture {
@@ -152,81 +131,90 @@ struct Fixture {
     }
 };
 
-void testWindowsHoldTheirOwnDocuments(const fs::path& base) {
-    Fixture fixture(freshDirectory(base, "documents"));
+} // namespace
+
+TEST_CASE("PrefabWindow: windows hold their own documents") {
+    const testsupport::TempDirectory directory("prefab-window-documents");
+    Fixture fixture(directory.path());
     PrefabWindowDocument* lamp = fixture.open("lamp.prefab");
     if (lamp == nullptr) {
-        expect(false, "documents: the lamp should open in a window");
+        CHECK_MESSAGE(false, "documents: the lamp should open in a window");
         return;
     }
-    expect(lamp->target.displayName == "Lamp" && lamp->target.reference == "lamp.prefab" &&
-               findNamed(lamp->scene, "Shade") != entt::null,
-           "documents: the window holds the prefab");
-    expect(lamp->selection.active() == lamp->target.root && !lamp->document.dirty() && !lamp->history.canUndo(),
-           "documents: the window starts clean with its root selected");
-    expect(!lamp->document.path(), "documents: the window's document is not the level's file");
-    expect(fixture.open("./lamp.prefab") == lamp && fixture.windows.size() == 1,
-           "documents: opening an open prefab returns its window");
-    expect(fixture.open("missing.prefab") == nullptr && fixture.windows.size() == 1,
-           "documents: a prefab that cannot open adds no window");
+    CHECK_MESSAGE((lamp->target.displayName == "Lamp" && lamp->target.reference == "lamp.prefab" &&
+                   findNamed(lamp->scene, "Shade") != entt::null),
+                  "documents: the window holds the prefab");
+    CHECK_MESSAGE(
+        (lamp->selection.active() == lamp->target.root && !lamp->document.dirty() && !lamp->history.canUndo()),
+        "documents: the window starts clean with its root selected");
+    CHECK_MESSAGE(!lamp->document.path(), "documents: the window's document is not the level's file");
+    CHECK_MESSAGE((fixture.open("./lamp.prefab") == lamp && fixture.windows.size() == 1),
+                  "documents: opening an open prefab returns its window");
+    CHECK_MESSAGE((fixture.open("missing.prefab") == nullptr && fixture.windows.size() == 1),
+                  "documents: a prefab that cannot open adds no window");
 
     PrefabWindowDocument* shelf = fixture.open("shelf.prefab");
-    expect(shelf != nullptr && shelf != lamp && shelf->id != lamp->id && fixture.windows.size() == 2,
-           "documents: a second prefab opens a second window");
+    CHECK_MESSAGE((shelf != nullptr && shelf != lamp && shelf->id != lamp->id && fixture.windows.size() == 2),
+                  "documents: a second prefab opens a second window");
     fixture.light(*lamp);
-    expect(lamp->document.dirty() && lamp->history.size() == 1 && shelf != nullptr && shelf->history.size() == 0,
-           "documents: an edit is the edited window's step only");
-    expect(fixture.windows.owner(lamp->document) == lamp && fixture.windows.owner(fixture.level) == nullptr,
-           "documents: a document's window is found by its document");
+    CHECK_MESSAGE(
+        (lamp->document.dirty() && lamp->history.size() == 1 && shelf != nullptr && shelf->history.size() == 0),
+        "documents: an edit is the edited window's step only");
+    CHECK_MESSAGE((fixture.windows.owner(lamp->document) == lamp && fixture.windows.owner(fixture.level) == nullptr),
+                  "documents: a document's window is found by its document");
 
     const uint64_t lampId = lamp->id;
-    expect(fixture.windows.close(lampId) && fixture.windows.find(lampId) == nullptr && fixture.windows.size() == 1,
-           "documents: closing drops the window");
-    expect(!fixture.windows.close(lampId), "documents: a closed window cannot close again");
+    CHECK_MESSAGE(
+        (fixture.windows.close(lampId) && fixture.windows.find(lampId) == nullptr && fixture.windows.size() == 1),
+        "documents: closing drops the window");
+    CHECK_MESSAGE(!fixture.windows.close(lampId), "documents: a closed window cannot close again");
     PrefabWindowDocument* reopened = fixture.open("lamp.prefab");
-    expect(reopened != nullptr && reopened->id != lampId && !reopened->document.dirty(),
-           "documents: reopening starts a new, clean window with a new id");
+    CHECK_MESSAGE((reopened != nullptr && reopened->id != lampId && !reopened->document.dirty()),
+                  "documents: reopening starts a new, clean window with a new id");
     fixture.windows.closeAll();
-    expect(fixture.windows.empty(), "documents: closeAll drops every window");
+    CHECK_MESSAGE(fixture.windows.empty(), "documents: closeAll drops every window");
 }
 
-void testSaveRefreshesOtherWindows(const fs::path& base) {
-    Fixture fixture(freshDirectory(base, "save"));
+TEST_CASE("PrefabWindow: save refreshes other windows") {
+    const testsupport::TempDirectory directory("prefab-window-save");
+    Fixture fixture(directory.path());
     PrefabWindowDocument* shelf = fixture.open("shelf.prefab");
     PrefabWindowDocument* lamp = fixture.open("lamp.prefab");
     if (shelf == nullptr || lamp == nullptr) {
-        expect(false, "save: both prefabs should open");
+        CHECK_MESSAGE(false, "save: both prefabs should open");
         return;
     }
     const fs::path file = fixture.root / "lamp.prefab";
     const std::string original = readText(file);
     fixture.light(*lamp);
     SavedPrefabDocument saved;
-    expect(fixture.windows.save(*lamp, fixture.assets, fixture.diagnostics, fixture.hooks(), saved).success,
-           "save: the lamp saves");
-    expect(readText(file) != original && saved.before == original && saved.after == readText(file),
-           "save: the file is written and the save reports before and after");
-    expect(!lamp->document.dirty() && fixture.ledger.recorded(lamp->target.file) != nullptr,
-           "save: the window becomes clean and the write is in the ledger");
+    CHECK_MESSAGE(fixture.windows.save(*lamp, fixture.assets, fixture.diagnostics, fixture.hooks(), saved).success,
+                  "save: the lamp saves");
+    CHECK_MESSAGE((readText(file) != original && saved.before == original && saved.after == readText(file)),
+                  "save: the file is written and the save reports before and after");
+    CHECK_MESSAGE((!lamp->document.dirty() && fixture.ledger.recorded(lamp->target.file) != nullptr),
+                  "save: the window becomes clean and the write is in the ledger");
 
     PrefabDocument previous;
-    expect(deserializePrefab(original, previous).success, "save: the previous content parses");
+    CHECK_MESSAGE(deserializePrefab(original, previous).success, "save: the previous content parses");
     size_t refreshed = 0;
     const PrefabResult result = fixture.windows.refreshInstances(
         fixture.assets, fixture.diagnostics, "lamp.prefab", &previous, "Refresh Lamp instances", nullptr, refreshed);
-    expect(result.success && refreshed == 1 && litLamps(shelf->scene) == 1,
-           "save: the shelf's nested lamp is refreshed");
-    expect(shelf->history.size() == 1 && shelf->history.canUndo(), "save: the refresh is one step of the shelf's");
-    expect(lamp->history.size() == 1, "save: the window editing the lamp itself is not refreshed");
+    CHECK_MESSAGE((result.success && refreshed == 1 && litLamps(shelf->scene) == 1),
+                  "save: the shelf's nested lamp is refreshed");
+    CHECK_MESSAGE((shelf->history.size() == 1 && shelf->history.canUndo()),
+                  "save: the refresh is one step of the shelf's");
+    CHECK_MESSAGE(lamp->history.size() == 1, "save: the window editing the lamp itself is not refreshed");
     fixture.editing(*shelf).undo();
-    expect(litLamps(shelf->scene) == 0, "save: undo in the shelf puts its lamp back");
+    CHECK_MESSAGE(litLamps(shelf->scene) == 0, "save: undo in the shelf puts its lamp back");
 }
 
-void testWindowsFollowMovedFiles(const fs::path& base) {
-    Fixture fixture(freshDirectory(base, "moved"));
+TEST_CASE("PrefabWindow: windows follow moved files") {
+    const testsupport::TempDirectory directory("prefab-window-moved");
+    Fixture fixture(directory.path());
     PrefabWindowDocument* lamp = fixture.open("lamp.prefab");
     if (lamp == nullptr) {
-        expect(false, "moved: the lamp should open");
+        CHECK_MESSAGE(false, "moved: the lamp should open");
         return;
     }
     fs::create_directories(fixture.root / "props");
@@ -235,19 +223,21 @@ void testWindowsFollowMovedFiles(const fs::path& base) {
     fs::rename(from, to);
     const ProjectFileMove move{.from = from, .to = to};
     fixture.windows.filesMoved(std::span(&move, 1), fixture.root, fixture.assets, fixture.diagnostics);
-    expect(lamp->target.reference == "props/lamp.prefab" && fixture.windows.find("props/lamp.prefab") == lamp,
-           "moved: the window follows its prefab's file");
+    CHECK_MESSAGE((lamp->target.reference == "props/lamp.prefab" && fixture.windows.find("props/lamp.prefab") == lamp),
+                  "moved: the window follows its prefab's file");
     fixture.light(*lamp);
     SavedPrefabDocument saved;
-    expect(fixture.windows.save(*lamp, fixture.assets, fixture.diagnostics, fixture.hooks(), saved).success &&
-               !fs::exists(from) && readText(to).find("point_light") != std::string::npos,
-           "moved: saving writes the file where it now lives");
+    CHECK_MESSAGE((fixture.windows.save(*lamp, fixture.assets, fixture.diagnostics, fixture.hooks(), saved).success &&
+                   !fs::exists(from) && readText(to).find("point_light") != std::string::npos),
+                  "moved: saving writes the file where it now lives");
 
     fixture.windows.filesRemoved(std::span(&to, 1), fixture.diagnostics);
-    expect(fixture.windows.find(lamp->id) == lamp && !fixture.diagnostics.entries().empty() &&
-               fixture.diagnostics.entries().back().message.find("was removed") != std::string::npos,
-           "moved: a window whose prefab file was removed stays open with a warning");
+    CHECK_MESSAGE((fixture.windows.find(lamp->id) == lamp && !fixture.diagnostics.entries().empty() &&
+                   fixture.diagnostics.entries().back().message.find("was removed") != std::string::npos),
+                  "moved: a window whose prefab file was removed stays open with a warning");
 }
+
+namespace {
 
 // ---------------------------------------------------------------------------
 // The whole session, headless.
@@ -435,27 +425,27 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
     Scene staging;
     const Entity lamp = staging.createEntity("Lamp");
     staging.setParent(staging.createEntity("Shade"), lamp);
-    expect(authoring.create(staging, lamp, "lamp.prefab").success, "session: the lamp prefab should be created");
+    CHECK_MESSAGE(authoring.create(staging, lamp, "lamp.prefab").success, "session: the lamp prefab should be created");
     Scene shelfStaging;
     const Entity shelf = shelfStaging.createEntity("Shelf");
     Entity nested = entt::null;
-    expect(authoring.instantiate(shelfStaging, "lamp.prefab", shelf, nested).success &&
-               authoring.create(shelfStaging, shelf, "shelf.prefab").success,
-           "session: the shelf prefab should be created");
+    CHECK_MESSAGE((authoring.instantiate(shelfStaging, "lamp.prefab", shelf, nested).success &&
+                   authoring.create(shelfStaging, shelf, "shelf.prefab").success),
+                  "session: the shelf prefab should be created");
     for (int extra = 0; extra < extraPrefabs; ++extra) {
         Scene extraStaging;
         const Entity crate = extraStaging.createEntity("Crate");
-        expect(authoring.create(extraStaging, crate, "crate" + std::to_string(extra) + ".prefab").success,
-               "session: the crate prefabs should be created");
+        CHECK_MESSAGE(authoring.create(extraStaging, crate, "crate" + std::to_string(extra) + ".prefab").success,
+                      "session: the crate prefabs should be created");
     }
     Scene level;
     level.createEntity("Level marker");
     Entity instance = entt::null;
-    expect(authoring.instantiate(level, "lamp.prefab", entt::null, instance).success &&
-               authoring.instantiate(level, "lamp.prefab", entt::null, instance).success,
-           "session: the level's lamps should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(level, "lamp.prefab", entt::null, instance).success &&
+                   authoring.instantiate(level, "lamp.prefab", entt::null, instance).success),
+                  "session: the level's lamps should instantiate");
     const fs::path levelPath = root / "scenes" / "level.zenith-scene";
-    expect(SceneDocument::save(levelPath, level, assets, options).success, "session: the level should save");
+    CHECK_MESSAGE(SceneDocument::save(levelPath, level, assets, options).success, "session: the level should save");
 
     const auto binding = [](ImGuiKeyChord chord, const char* operatorId, nlohmann::json properties) {
         return nlohmann::json{{"operator", operatorId},
@@ -531,10 +521,14 @@ bool inLevel(const Scene& scene) {
     return findNamed(scene, "Level marker") != entt::null;
 }
 
-void testWindowEditsThePrefabBesideTheLevel(const fs::path& root) {
+} // namespace
+
+TEST_CASE("PrefabWindow: window edits the prefab beside the level") {
+    const testsupport::TempDirectory directory("prefab-window-window");
+    const fs::path& root = directory.path();
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
-        expect(false, "window: the editor session starts");
+        CHECK_MESSAGE(false, "window: the editor session starts");
         return;
     }
     editor.frame();
@@ -543,50 +537,53 @@ void testWindowEditsThePrefabBesideTheLevel(const fs::path& root) {
 
     editor.press(editLampKey);
     editor.frame();
-    expect(inLevel(editor.scene) && editor.windowOpen(lampWindow),
-           "window: the prefab opens in a window and the level stays open");
-    expect(editor.windowOpen("Hierarchy##prefab.1.hierarchy") && editor.windowOpen("Inspector##prefab.1.inspector") &&
-               editor.windowOpen("Viewport##prefab.1.viewport"),
-           "window: the window shows its own Hierarchy, Inspector, and viewport");
+    CHECK_MESSAGE((inLevel(editor.scene) && editor.windowOpen(lampWindow)),
+                  "window: the prefab opens in a window and the level stays open");
+    CHECK_MESSAGE((editor.windowOpen("Hierarchy##prefab.1.hierarchy") &&
+                   editor.windowOpen("Inspector##prefab.1.inspector") &&
+                   editor.windowOpen("Viewport##prefab.1.viewport")),
+                  "window: the window shows its own Hierarchy, Inspector, and viewport");
     editor.frame();
     const RenderSceneId prefabScene = boundScene(editor.rendering());
-    expect(prefabScene && editor.rendering().sceneAlive(prefabScene),
-           "window: the window's viewport draws a render scene of its own");
+    CHECK_MESSAGE((prefabScene && editor.rendering().sceneAlive(prefabScene)),
+                  "window: the window's viewport draws a render scene of its own");
     editor.press(addLightKey);
-    expect(litLamps(editor.scene) == 0 && readText(file) == original,
-           "window: an edit in the focused window changes neither the level nor the file");
+    CHECK_MESSAGE((litLamps(editor.scene) == 0 && readText(file) == original),
+                  "window: an edit in the focused window changes neither the level nor the file");
     editor.press(ImGuiMod_Ctrl | ImGuiKey_S);
-    expect(readText(file) != original && litLamps(editor.scene) == 2,
-           "window: Ctrl S saves the prefab and refreshes the level's lamps");
+    CHECK_MESSAGE((readText(file) != original && litLamps(editor.scene) == 2),
+                  "window: Ctrl S saves the prefab and refreshes the level's lamps");
     editor.press(ImGuiMod_Ctrl | ImGuiKey_Z);
-    expect(litLamps(editor.scene) == 2 && readText(file) != original,
-           "window: Ctrl Z undoes in the window, not the level");
+    CHECK_MESSAGE((litLamps(editor.scene) == 2 && readText(file) != original),
+                  "window: Ctrl Z undoes in the window, not the level");
     editor.press(editLampKey);
     editor.frame();
-    expect(editor.windowOpen(lampWindow) && !editor.windowOpen("###prefab.2"),
-           "window: editing an open prefab brings its window forward instead of opening another");
+    CHECK_MESSAGE((editor.windowOpen(lampWindow) && !editor.windowOpen("###prefab.2")),
+                  "window: editing an open prefab brings its window forward instead of opening another");
 
     // Closing a window with changes asks first.
     editor.press(closeKey);
-    expect(editor.windowOpen("Unsaved Prefab"), "close: a window with changes asks before closing");
-    expect(editor.clickButton("Unsaved Prefab", "Cancel") && editor.windowOpen(lampWindow),
-           "close: Cancel keeps the window");
+    CHECK_MESSAGE(editor.windowOpen("Unsaved Prefab"), "close: a window with changes asks before closing");
+    CHECK_MESSAGE((editor.clickButton("Unsaved Prefab", "Cancel") && editor.windowOpen(lampWindow)),
+                  "close: Cancel keeps the window");
     editor.press(closeKey);
-    expect(editor.clickButton("Unsaved Prefab", "Discard"), "close: Discard answers the prompt");
+    CHECK_MESSAGE(editor.clickButton("Unsaved Prefab", "Discard"), "close: Discard answers the prompt");
     editor.frame();
-    expect(!editor.windowOpen(lampWindow) && inLevel(editor.scene) && litLamps(editor.scene) == 2,
-           "close: Discard closes the window and leaves the saved prefab in the level");
-    expect(!editor.rendering().sceneAlive(prefabScene) && !boundScene(editor.rendering()),
-           "close: the window's render scene and its view go with it");
+    CHECK_MESSAGE((!editor.windowOpen(lampWindow) && inLevel(editor.scene) && litLamps(editor.scene) == 2),
+                  "close: Discard closes the window and leaves the saved prefab in the level");
+    CHECK_MESSAGE((!editor.rendering().sceneAlive(prefabScene) && !boundScene(editor.rendering())),
+                  "close: the window's render scene and its view go with it");
 }
 
 // prefab.apply writes the prefab from one document; the other open documents
 // catch up, each with a refresh step of its own, and the writer is never
 // refreshed by its own write.
-void testApplyReachesOtherDocuments(const fs::path& root) {
+TEST_CASE("PrefabWindow: apply reaches other documents") {
+    const testsupport::TempDirectory directory("prefab-window-apply");
+    const fs::path& root = directory.path();
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
-        expect(false, "apply: the editor session starts");
+        CHECK_MESSAGE(false, "apply: the editor session starts");
         return;
     }
     editor.frame();
@@ -595,7 +592,7 @@ void testApplyReachesOtherDocuments(const fs::path& root) {
     constexpr const char* shelfWindow = "###prefab.1";
     editor.press(editShelfKey);
     editor.frame();
-    expect(editor.windowOpen(shelfWindow), "apply: the shelf opens in a window");
+    CHECK_MESSAGE(editor.windowOpen(shelfWindow), "apply: the shelf opens in a window");
 
     // From the level: the shelf's nested lamp catches up.
     editor.focusLevel();
@@ -603,68 +600,74 @@ void testApplyReachesOtherDocuments(const fs::path& root) {
     editor.press(addLightKey);
     editor.press(applyKey);
     editor.frame();
-    expect(readText(file) != original && litLamps(editor.scene) == 2,
-           "apply: the level applies its lamp to the prefab");
+    CHECK_MESSAGE((readText(file) != original && litLamps(editor.scene) == 2),
+                  "apply: the level applies its lamp to the prefab");
     editor.press(ImGuiMod_Ctrl | ImGuiKey_Z);
     editor.frame();
-    expect(readText(file) == original,
-           "apply: the level's first undo undoes the apply, so the level was not refreshed by its own write");
+    CHECK_MESSAGE(readText(file) == original,
+                  "apply: the level's first undo undoes the apply, so the level was not refreshed by its own write");
     editor.press(ImGuiMod_Ctrl | ImGuiKey_Z);
-    expect(litLamps(editor.scene) == 0, "apply: the level's light is undone");
+    CHECK_MESSAGE(litLamps(editor.scene) == 0, "apply: the level's light is undone");
     // The shelf was refreshed (and refreshed back): steps of its own, which
     // leave it with changes to ask about.
     editor.press(editShelfKey);
     editor.press(closeKey);
-    expect(editor.windowOpen("Unsaved Prefab") && editor.clickButton("Unsaved Prefab", "Cancel"),
-           "apply: the shelf window refreshed its lamp as steps of its own");
+    CHECK_MESSAGE((editor.windowOpen("Unsaved Prefab") && editor.clickButton("Unsaved Prefab", "Cancel")),
+                  "apply: the shelf window refreshed its lamp as steps of its own");
 
     // From the window: the level catches up, as a step it can undo.
     editor.press(selectLampsKey);
     editor.press(addLightKey);
     editor.press(applyKey);
-    expect(readText(file) != original && litLamps(editor.scene) == 0,
-           "apply: the window applies its lamp, and the level waits for the frame's catch-up");
+    CHECK_MESSAGE((readText(file) != original && litLamps(editor.scene) == 0),
+                  "apply: the window applies its lamp, and the level waits for the frame's catch-up");
     editor.frame();
-    expect(litLamps(editor.scene) == 2, "apply: the level's lamps catch up with the window's apply");
+    CHECK_MESSAGE(litLamps(editor.scene) == 2, "apply: the level's lamps catch up with the window's apply");
     editor.focusLevel();
     editor.press(ImGuiMod_Ctrl | ImGuiKey_Z);
-    expect(litLamps(editor.scene) == 0 && readText(file) != original,
-           "apply: undo in the level undoes its refresh, not the window's apply");
+    CHECK_MESSAGE((litLamps(editor.scene) == 0 && readText(file) != original),
+                  "apply: undo in the level undoes its refresh, not the window's apply");
 }
 
 // A gesture's later phases (here a Click, run on release) run on the document
 // its press started in, and a gesture whose window closed runs nothing.
-void testGesturesStayInTheirWindow(const fs::path& root) {
+TEST_CASE("PrefabWindow: gestures stay in their window") {
+    const testsupport::TempDirectory directory("prefab-window-gesture");
+    const fs::path& root = directory.path();
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
-        expect(false, "gesture: the editor session starts");
+        CHECK_MESSAGE(false, "gesture: the editor session starts");
         return;
     }
     editor.frame();
     editor.press(editLampKey);
     editor.frame();
     editor.hold(clickLightKey);
-    expect(editor.clickButton(lampWindow, "Close##prefab_window_close"), "gesture: the window's Close is pressed");
+    CHECK_MESSAGE(editor.clickButton(lampWindow, "Close##prefab_window_close"),
+                  "gesture: the window's Close is pressed");
     editor.frame();
-    expect(!editor.windowOpen(lampWindow), "gesture: the clean window closes mid-gesture");
+    CHECK_MESSAGE(!editor.windowOpen(lampWindow), "gesture: the clean window closes mid-gesture");
     editor.release(clickLightKey);
     editor.frame();
-    expect(litLamps(editor.scene) == 0, "gesture: a gesture whose window closed runs nothing on the level");
+    CHECK_MESSAGE(litLamps(editor.scene) == 0, "gesture: a gesture whose window closed runs nothing on the level");
 
     editor.press(editLampKey);
     editor.frame();
     editor.press(clickLightKey);
-    expect(litLamps(editor.scene) == 0, "gesture: the click edits the window, not the level");
+    CHECK_MESSAGE(litLamps(editor.scene) == 0, "gesture: the click edits the window, not the level");
     editor.press(ImGuiMod_Ctrl | ImGuiKey_S);
-    expect(litLamps(editor.scene) == 2, "gesture: the window's click added the light that its save then applies");
+    CHECK_MESSAGE(litLamps(editor.scene) == 2,
+                  "gesture: the window's click added the light that its save then applies");
 }
 
 // A file dropped on a prefab window's viewport floating over the level's
 // viewport goes into the prefab, not the level under it.
-void testDropOnAWindowOverTheLevel(const fs::path& root) {
+TEST_CASE("PrefabWindow: drop on a window over the level") {
+    const testsupport::TempDirectory directory("prefab-window-drop");
+    const fs::path& root = directory.path();
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
-        expect(false, "drop: the editor session starts");
+        CHECK_MESSAGE(false, "drop: the editor session starts");
         return;
     }
     editor.frame();
@@ -676,7 +679,7 @@ void testDropOnAWindowOverTheLevel(const fs::path& root) {
     editor.placeOver("Viewport##prefab.1.viewport", "Viewport##viewport.");
     editor.frame();
     const std::optional<glm::vec2> point = editor.pointOnTop("Viewport##prefab.1.viewport", "Viewport##viewport.");
-    expect(point.has_value(), "drop: the window's viewport lies over the level's");
+    CHECK_MESSAGE(point.has_value(), "drop: the window's viewport lies over the level's");
     if (!point) {
         return;
     }
@@ -684,18 +687,21 @@ void testDropOnAWindowOverTheLevel(const fs::path& root) {
     input.droppedFiles.push_back({.path = root / "assets" / "lamp.prefab", .position = *point});
     editor.frame(input);
     editor.frame();
-    expect(instancesOf(editor.scene, "lamp.prefab").size() == 2, "drop: the level under the window gains nothing");
+    CHECK_MESSAGE(instancesOf(editor.scene, "lamp.prefab").size() == 2,
+                  "drop: the level under the window gains nothing");
     editor.press(closeKey);
-    expect(editor.windowOpen("Unsaved Prefab") && editor.clickButton("Unsaved Prefab", "Cancel"),
-           "drop: the shelf gained the dropped lamp, so closing it asks about the change");
+    CHECK_MESSAGE((editor.windowOpen("Unsaved Prefab") && editor.clickButton("Unsaved Prefab", "Cancel")),
+                  "drop: the shelf gained the dropped lamp, so closing it asks about the change");
 }
 
 // A window opened while every render scene is taken shows a placeholder, never
 // the level, and gets a scene once another window closes.
-void testMoreWindowsThanRenderScenes(const fs::path& root) {
+TEST_CASE("PrefabWindow: more windows than render scenes") {
+    const testsupport::TempDirectory directory("prefab-window-scenes");
+    const fs::path& root = directory.path();
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
-        expect(false, "scenes: the editor session starts");
+        CHECK_MESSAGE(false, "scenes: the editor session starts");
         return;
     }
     editor.frame();
@@ -707,25 +713,27 @@ void testMoreWindowsThanRenderScenes(const fs::path& root) {
     editor.frame();
     editor.frame();
     static_assert(2 + extraPrefabs > RenderRuntime::maximumScenes);
-    expect(editor.windowOpen("###prefab.9"), "scenes: nine prefab windows are open");
+    CHECK_MESSAGE(editor.windowOpen("###prefab.9"), "scenes: nine prefab windows are open");
     const auto [own, application] = createdViews(editor.rendering());
-    expect(own == RenderRuntime::maximumScenes && application == 0,
-           "scenes: the window without a render scene draws no view, not the level");
+    CHECK_MESSAGE((own == RenderRuntime::maximumScenes && application == 0),
+                  "scenes: the window without a render scene draws no view, not the level");
 
     editor.press(editLampKey);
     editor.press(closeKey);
     editor.frame();
     editor.frame();
-    expect(!editor.windowOpen(lampWindow), "scenes: the lamp's window closes");
+    CHECK_MESSAGE(!editor.windowOpen(lampWindow), "scenes: the lamp's window closes");
     const auto [ownAfter, applicationAfter] = createdViews(editor.rendering());
-    expect(ownAfter == RenderRuntime::maximumScenes && applicationAfter == 0,
-           "scenes: the waiting window takes the freed render scene");
+    CHECK_MESSAGE((ownAfter == RenderRuntime::maximumScenes && applicationAfter == 0),
+                  "scenes: the waiting window takes the freed render scene");
 }
 
-void testPlayWithAWindowOpen(const fs::path& root) {
+TEST_CASE("PrefabWindow: play with a window open") {
+    const testsupport::TempDirectory directory("prefab-window-play");
+    const fs::path& root = directory.path();
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
-        expect(false, "play: the editor session starts");
+        CHECK_MESSAGE(false, "play: the editor session starts");
         return;
     }
     editor.frame();
@@ -733,22 +741,25 @@ void testPlayWithAWindowOpen(const fs::path& root) {
     editor.press(editLampKey);
     editor.frame();
     editor.press(ImGuiKey_F5);
-    expect(session.fixedUpdatesEnabled() && editor.windowOpen(lampWindow), "play: F5 plays with a prefab window open");
+    CHECK_MESSAGE((session.fixedUpdatesEnabled() && editor.windowOpen(lampWindow)),
+                  "play: F5 plays with a prefab window open");
     editor.press(ImGuiKey_F5);
-    expect(session.fixedUpdatesEnabled(), "play: F5 while playing does not start Play again");
+    CHECK_MESSAGE(session.fixedUpdatesEnabled(), "play: F5 while playing does not start Play again");
     editor.press(addLightKey);
     editor.press(ImGuiMod_Ctrl | ImGuiKey_S);
-    expect(litLamps(editor.scene) == 0, "play: saving the prefab during Play leaves the running scene's copies");
+    CHECK_MESSAGE(litLamps(editor.scene) == 0, "play: saving the prefab during Play leaves the running scene's copies");
     editor.press(ImGuiMod_Shift | ImGuiKey_F5);
     editor.frame();
-    expect(!session.fixedUpdatesEnabled() && inLevel(editor.scene) && litLamps(editor.scene) == 2,
-           "play: Stop restores the level with its instances refreshed by the save");
+    CHECK_MESSAGE((!session.fixedUpdatesEnabled() && inLevel(editor.scene) && litLamps(editor.scene) == 2),
+                  "play: Stop restores the level with its instances refreshed by the save");
 }
 
-void testModuleReloadWaitsForWindows(const fs::path& root) {
+TEST_CASE("PrefabWindow: module reload waits for windows") {
+    const testsupport::TempDirectory directory("prefab-window-reload");
+    const fs::path& root = directory.path();
     EditorHarness editor(root, prefabProject(root, true));
     if (!editor.start()) {
-        expect(false, "reload: the editor session starts with the test module");
+        CHECK_MESSAGE(false, "reload: the editor session starts with the test module");
         return;
     }
     editor.frame();
@@ -758,19 +769,22 @@ void testModuleReloadWaitsForWindows(const fs::path& root) {
     const uint64_t generation = editor.scene.contentGeneration();
     editor.frame();
     editor.frame();
-    expect(editor.scene.contentGeneration() == generation, "reload: a requested reload waits while a window is open");
+    CHECK_MESSAGE(editor.scene.contentGeneration() == generation,
+                  "reload: a requested reload waits while a window is open");
     editor.press(closeKey);
     editor.frame();
-    expect(!editor.windowOpen(lampWindow), "reload: the clean window closes");
+    CHECK_MESSAGE(!editor.windowOpen(lampWindow), "reload: the clean window closes");
     editor.frame();
-    expect(editor.scene.contentGeneration() != generation && inLevel(editor.scene),
-           "reload: the reload runs once the windows are closed");
+    CHECK_MESSAGE((editor.scene.contentGeneration() != generation && inLevel(editor.scene)),
+                  "reload: the reload runs once the windows are closed");
 }
 
-void testQuitAsksAboutWindows(const fs::path& root) {
+TEST_CASE("PrefabWindow: quit asks about windows") {
+    const testsupport::TempDirectory directory("prefab-window-quit");
+    const fs::path& root = directory.path();
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
-        expect(false, "quit: the editor session starts");
+        CHECK_MESSAGE(false, "quit: the editor session starts");
         return;
     }
     editor.frame();
@@ -778,23 +792,25 @@ void testQuitAsksAboutWindows(const fs::path& root) {
     editor.frame();
     editor.press(addLightKey);
     editor.press(ImGuiMod_Ctrl | ImGuiKey_Q);
-    expect(editor.windowOpen("Unsaved Prefab"), "quit: quitting asks about a prefab window with changes");
-    expect(editor.clickButton("Unsaved Prefab", "Cancel") && editor.windowOpen(lampWindow),
-           "quit: Cancel keeps the editor and the window");
+    CHECK_MESSAGE(editor.windowOpen("Unsaved Prefab"), "quit: quitting asks about a prefab window with changes");
+    CHECK_MESSAGE((editor.clickButton("Unsaved Prefab", "Cancel") && editor.windowOpen(lampWindow)),
+                  "quit: Cancel keeps the editor and the window");
     editor.press(ImGuiMod_Ctrl | ImGuiKey_Q);
     const fs::path file = root / "assets" / "lamp.prefab";
     const std::string original = readText(file);
-    expect(editor.clickButton("Unsaved Prefab", "Save") && readText(file) != original,
-           "quit: Save writes the prefab before quitting");
+    CHECK_MESSAGE((editor.clickButton("Unsaved Prefab", "Save") && readText(file) != original),
+                  "quit: Save writes the prefab before quitting");
 }
 
-void testRecoverAWindow(const fs::path& root) {
+TEST_CASE("PrefabWindow: recover a window") {
+    const testsupport::TempDirectory directory("prefab-window-recovery");
+    const fs::path& root = directory.path();
     ProjectConfig project = prefabProject(root, false, "autosave.interval=0.01\n");
     const fs::path recovery = root / "settings" / "recovery-prefab-windows";
     {
         EditorHarness editor(root, project);
         if (!editor.start()) {
-            expect(false, "recovery: the editor session starts");
+            CHECK_MESSAGE(false, "recovery: the editor session starts");
             return;
         }
         editor.frame();
@@ -803,54 +819,29 @@ void testRecoverAWindow(const fs::path& root) {
         editor.press(addLightKey);
         editor.frame();
         editor.frame();
-        expect(fs::is_regular_file(recovery / "1.prefab-edit") && fs::is_regular_file(recovery / "1.prefab-edit.json"),
-               "recovery: autosave writes the window's prefab and its note");
-        expect(!fs::exists(root / "settings" / "recovery.zenith-scene"), "recovery: the clean level is not autosaved");
+        CHECK_MESSAGE(
+            (fs::is_regular_file(recovery / "1.prefab-edit") && fs::is_regular_file(recovery / "1.prefab-edit.json")),
+            "recovery: autosave writes the window's prefab and its note");
+        CHECK_MESSAGE(!fs::exists(root / "settings" / "recovery.zenith-scene"),
+                      "recovery: the clean level is not autosaved");
         editor.shutdown();
     }
     EditorHarness editor(root, project);
     if (!editor.start()) {
-        expect(false, "recovery: the editor session starts again");
+        CHECK_MESSAGE(false, "recovery: the editor session starts again");
         return;
     }
     editor.frame();
-    expect(editor.windowOpen("Recover Autosave"), "recovery: the next session offers the autosave");
-    expect(editor.clickButton("Recover Autosave", "Recover") && inLevel(editor.scene),
-           "recovery: Recover keeps the level");
+    CHECK_MESSAGE(editor.windowOpen("Recover Autosave"), "recovery: the next session offers the autosave");
+    CHECK_MESSAGE((editor.clickButton("Recover Autosave", "Recover") && inLevel(editor.scene)),
+                  "recovery: Recover keeps the level");
     editor.frame();
-    expect(editor.windowOpen(lampWindow), "recovery: the prefab window opens again");
+    CHECK_MESSAGE(editor.windowOpen(lampWindow), "recovery: the prefab window opens again");
     editor.press(ImGuiMod_Ctrl | ImGuiKey_S);
-    expect(litLamps(editor.scene) == 2, "recovery: the recovered window saves and refreshes the level");
+    CHECK_MESSAGE(litLamps(editor.scene) == 2, "recovery: the recovered window saves and refreshes the level");
     editor.frame();
     editor.frame();
-    expect(!fs::exists(recovery / "1.prefab-edit"), "recovery: a saved window leaves no autosave behind");
+    CHECK_MESSAGE(!fs::exists(recovery / "1.prefab-edit"), "recovery: a saved window leaves no autosave behind");
 }
-} // namespace
 
-int main() {
-    const fs::path root = fs::temp_directory_path() / "zenith_prefab_window_tests";
-    std::error_code error;
-    fs::remove_all(root, error);
-    fs::create_directories(root);
-
-    testWindowsHoldTheirOwnDocuments(root);
-    testSaveRefreshesOtherWindows(root);
-    testWindowsFollowMovedFiles(root);
-    testWindowEditsThePrefabBesideTheLevel(root / "window");
-    testApplyReachesOtherDocuments(root / "apply");
-    testGesturesStayInTheirWindow(root / "gesture");
-    testDropOnAWindowOverTheLevel(root / "drop");
-    testMoreWindowsThanRenderScenes(root / "scenes");
-    testPlayWithAWindowOpen(root / "play");
-    testModuleReloadWaitsForWindows(root / "reload");
-    testQuitAsksAboutWindows(root / "quit");
-    testRecoverAWindow(root / "recovery");
-
-    fs::remove_all(root, error);
-    if (failures != 0) {
-        std::cerr << failures << " prefab window test(s) failed\n";
-        return 1;
-    }
-    std::cout << "Prefab window tests passed\n";
-    return 0;
-}
+TEST_SUITE_END();

@@ -13,6 +13,8 @@
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Prefab.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -20,23 +22,16 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <iostream>
 #include <memory>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <vector>
 
+using testsupport::readText;
+
+TEST_SUITE_BEGIN("Prefab");
+
 namespace {
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
-
 // A game module's component, registered beside the built-in types.
 struct HealthComponent {
     float health{100.0f};
@@ -56,42 +51,27 @@ struct FollowComponent {
 
 std::shared_ptr<const ComponentTypeRegistry> moduleComponentTypes() {
     auto registry = std::make_shared<ComponentTypeRegistry>();
-    expect(registerBuiltInComponentTypes(*registry).success, "built-in component types should register");
-    expect(registry
-               ->add(ComponentTypeBuilder<FollowComponent>("test_follow", "Follow")
-                         .fields(Fields<FollowComponent>()
-                                     .add("target", &FollowComponent::target)
-                                     .structure("settings", &FollowComponent::settings,
-                                                Fields<FollowSettings>()
-                                                    .add("target", &FollowSettings::target)
-                                                    .add("distance", &FollowSettings::distance)))
-                         .build())
-               .success,
-           "a component with entity references should register");
-    expect(registry
-               ->add(ComponentTypeBuilder<HealthComponent>("test_health", "Health")
-                         .fields(Fields<HealthComponent>()
-                                     .add("health", &HealthComponent::health)
-                                     .add("team", &HealthComponent::team))
-                         .build())
-               .success,
-           "a module component type should register");
+    CHECK_MESSAGE(registerBuiltInComponentTypes(*registry).success, "built-in component types should register");
+    CHECK_MESSAGE(registry
+                      ->add(ComponentTypeBuilder<FollowComponent>("test_follow", "Follow")
+                                .fields(Fields<FollowComponent>()
+                                            .add("target", &FollowComponent::target)
+                                            .structure("settings", &FollowComponent::settings,
+                                                       Fields<FollowSettings>()
+                                                           .add("target", &FollowSettings::target)
+                                                           .add("distance", &FollowSettings::distance)))
+                                .build())
+                      .success,
+                  "a component with entity references should register");
+    CHECK_MESSAGE(registry
+                      ->add(ComponentTypeBuilder<HealthComponent>("test_health", "Health")
+                                .fields(Fields<HealthComponent>()
+                                            .add("health", &HealthComponent::health)
+                                            .add("team", &HealthComponent::team))
+                                .build())
+                      .success,
+                  "a module component type should register");
     return registry;
-}
-
-std::filesystem::path freshDirectory(const std::string& name) {
-    const std::filesystem::path directory = std::filesystem::temp_directory_path() / ("zenith-prefab-tests-" + name);
-    std::error_code error;
-    std::filesystem::remove_all(directory, error);
-    std::filesystem::create_directories(directory);
-    return directory;
-}
-
-std::string readText(const std::filesystem::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    std::ostringstream contents;
-    contents << input.rdbuf();
-    return contents.str();
 }
 
 Entity childNamed(const Scene& scene, Entity parent, const std::string& name) {
@@ -119,34 +99,39 @@ Entity authorLamp(Scene& scene) {
     return lamp;
 }
 
-void testRegistryRoundTrip() {
-    const std::filesystem::path root = freshDirectory("registry");
+} // namespace
+
+TEST_CASE("Prefab: registry round trip") {
+    const testsupport::TempDirectory directory("prefab-registry");
+    const std::filesystem::path& root = directory.path();
     AssetManager assets;
     const SceneDocumentOptions options{.assetRoot = root, .componentTypes = moduleComponentTypes()};
     Scene scene;
     const Entity lamp = authorLamp(scene);
     PrefabAuthoring authoring(assets, options);
     const PrefabResult created = authoring.create(scene, lamp, "props/lamp.prefab");
-    expect(created.success, "a prefab should be created from any registered components");
-    expect(!authoring.create(scene, lamp, "props/lamp.prefab"), "create should not overwrite an existing prefab");
-    expect(!authoring.create(scene, lamp, "props/lamp.txt"), "prefab files should need the .prefab extension");
-    expect(!authoring.create(scene, lamp, "../outside.prefab"), "prefabs should stay inside the asset root");
+    CHECK_MESSAGE(created.success, "a prefab should be created from any registered components");
+    CHECK_MESSAGE(!authoring.create(scene, lamp, "props/lamp.prefab"),
+                  "create should not overwrite an existing prefab");
+    CHECK_MESSAGE(!authoring.create(scene, lamp, "props/lamp.txt"), "prefab files should need the .prefab extension");
+    CHECK_MESSAGE(!authoring.create(scene, lamp, "../outside.prefab"), "prefabs should stay inside the asset root");
 
     PrefabDocument document;
-    expect(loadPrefab(root / "props/lamp.prefab", document).success && document.entities.size() == 2,
-           "the prefab file should load with both entities");
+    CHECK_MESSAGE((loadPrefab(root / "props/lamp.prefab", document).success && document.entities.size() == 2),
+                  "the prefab file should load with both entities");
     const auto hasComponent = [&document](size_t index, const std::string& key) {
         return std::ranges::find(document.entities[index].components, key,
                                  &std::pair<std::string, std::string>::first) !=
                document.entities[index].components.end();
     };
-    expect(hasComponent(0, "point_light") && hasComponent(0, "test_health") && hasComponent(0, "future_component"),
-           "built-in, module, and preserved unknown components should be written");
-    expect(!hasComponent(0, "prefab_entity") && !hasComponent(0, "prefab_instance"),
-           "link components should not be part of the prefab content");
-    expect(scene.registry().all_of<PrefabInstanceComponent>(lamp) &&
-               scene.registry().get<PrefabInstanceComponent>(lamp).prefab == "props/lamp.prefab",
-           "create should link the authored entity to the new prefab");
+    CHECK_MESSAGE(
+        (hasComponent(0, "point_light") && hasComponent(0, "test_health") && hasComponent(0, "future_component")),
+        "built-in, module, and preserved unknown components should be written");
+    CHECK_MESSAGE((!hasComponent(0, "prefab_entity") && !hasComponent(0, "prefab_instance")),
+                  "link components should not be part of the prefab content");
+    CHECK_MESSAGE((scene.registry().all_of<PrefabInstanceComponent>(lamp) &&
+                   scene.registry().get<PrefabInstanceComponent>(lamp).prefab == "props/lamp.prefab"),
+                  "create should link the authored entity to the new prefab");
 
     // Without the module, its component survives as preserved data.
     Scene builtInScene;
@@ -154,25 +139,26 @@ void testRegistryRoundTrip() {
     const PrefabInstanceResult withoutModule = builtInPrefabs.instantiate("props/lamp.prefab", builtInScene);
     const auto* preserved =
         withoutModule ? builtInScene.registry().try_get<PreservedComponentsComponent>(withoutModule.root) : nullptr;
-    expect(preserved != nullptr && preserved->components.size() == 2,
-           "module and unknown components should be preserved when their types are not registered");
+    CHECK_MESSAGE((preserved != nullptr && preserved->components.size() == 2),
+                  "module and unknown components should be preserved when their types are not registered");
 
     Scene moduleScene;
     PrefabSystem modulePrefabs(assets, options);
     const PrefabInstanceResult withModule = modulePrefabs.instantiate("props/lamp.prefab", moduleScene);
     const auto* health = withModule ? moduleScene.registry().try_get<HealthComponent>(withModule.root) : nullptr;
-    expect(health != nullptr && health->health == 50.0f && health->team == "red",
-           "module components should load through the registry");
-    expect(withModule.entities.size() == 2 &&
-               moduleScene.registry().all_of<CameraComponent>(childNamed(moduleScene, withModule.root, "Bulb")),
-           "child entities and their components should be instantiated");
+    CHECK_MESSAGE((health != nullptr && health->health == 50.0f && health->team == "red"),
+                  "module components should load through the registry");
+    CHECK_MESSAGE((withModule.entities.size() == 2 &&
+                   moduleScene.registry().all_of<CameraComponent>(childNamed(moduleScene, withModule.root, "Bulb"))),
+                  "child entities and their components should be instantiated");
     std::vector<PrefabOverride> overrides;
-    expect(modulePrefabs.overrides(moduleScene, withModule.root, overrides).success && overrides.empty(),
-           "a fresh instance should have no overrides");
+    CHECK_MESSAGE((modulePrefabs.overrides(moduleScene, withModule.root, overrides).success && overrides.empty()),
+                  "a fresh instance should have no overrides");
 }
 
-void testVersion1Migration() {
-    const std::filesystem::path root = freshDirectory("v1");
+TEST_CASE("Prefab: version 1 migration") {
+    const testsupport::TempDirectory directory("prefab-v1");
+    const std::filesystem::path& root = directory.path();
     {
         std::ofstream child(root / "child.prefab");
         child << R"({"version": 1, "entities": [
@@ -197,88 +183,93 @@ void testVersion1Migration() {
     }
     PrefabDocument child;
     const PrefabResult loaded = loadPrefab(root / "child.prefab", child);
-    expect(loaded.success && child.entities.size() == 2, "version 1 prefabs should load");
-    expect(loaded.diagnostics.size() == 1, "a second version 1 root should be reported");
-    expect(child.entities[1].parent == PrefabEntityId{1}, "a second version 1 root should become a child");
+    CHECK_MESSAGE((loaded.success && child.entities.size() == 2), "version 1 prefabs should load");
+    CHECK_MESSAGE(loaded.diagnostics.size() == 1, "a second version 1 root should be reported");
+    CHECK_MESSAGE(child.entities[1].parent == PrefabEntityId{1}, "a second version 1 root should become a child");
     const auto& components = child.entities[0].components;
     const auto pointLight = std::ranges::find(components, "point_light", &std::pair<std::string, std::string>::first);
-    expect(pointLight != components.end() && nlohmann::json::parse(pointLight->second).value("casts_shadows", false),
-           "version 1 point lights should migrate to registry keys");
+    CHECK_MESSAGE(
+        (pointLight != components.end() && nlohmann::json::parse(pointLight->second).value("casts_shadows", false)),
+        "version 1 point lights should migrate to registry keys");
 
     PrefabDocument parent;
     const PrefabResult parentLoaded = loadPrefab(root / "parent.prefab", parent);
-    expect(parentLoaded.success && parent.nested.size() == 1 && parent.nested.front().overrides.size() == 2 &&
-               parentLoaded.diagnostics.size() == 1,
-           "version 1 overrides should migrate and unsupported ones should be reported");
-    expect(parent.nested.front().overrides[0].field == "/name" &&
-               parent.nested.front().overrides[1].component == "point_light",
-           "version 1 override properties should become field and component overrides");
+    CHECK_MESSAGE((parentLoaded.success && parent.nested.size() == 1 && parent.nested.front().overrides.size() == 2 &&
+                   parentLoaded.diagnostics.size() == 1),
+                  "version 1 overrides should migrate and unsupported ones should be reported");
+    CHECK_MESSAGE((parent.nested.front().overrides[0].field == "/name" &&
+                   parent.nested.front().overrides[1].component == "point_light"),
+                  "version 1 override properties should become field and component overrides");
 
     AssetManager assets;
     PrefabSystem prefabs(assets, SceneDocumentOptions{.assetRoot = root});
     Scene scene;
     const PrefabInstanceResult instance = prefabs.instantiate("parent.prefab", scene);
-    expect(instance.success && instance.entities.size() == 3, "a migrated nested prefab should instantiate");
+    CHECK_MESSAGE((instance.success && instance.entities.size() == 3), "a migrated nested prefab should instantiate");
     const Entity light = instance ? childNamed(scene, instance.root, "Renamed") : entt::null;
-    expect(light != entt::null && scene.registry().get<PointLightComponent>(light).intensity == 99.0f &&
-               scene.registry().get<CameraComponent>(light).nearPlane == 0.5f,
-           "migrated components and overrides should apply");
+    CHECK_MESSAGE((light != entt::null && scene.registry().get<PointLightComponent>(light).intensity == 99.0f &&
+                   scene.registry().get<CameraComponent>(light).nearPlane == 0.5f),
+                  "migrated components and overrides should apply");
 
     std::string encoded;
     PrefabDocument reloaded;
-    expect(serializePrefab(child, encoded).success && encoded.find("\"version\": 2") != std::string::npos &&
-               deserializePrefab(encoded, reloaded).success && reloaded.entities.size() == 2,
-           "migrated prefabs should save as version 2");
+    CHECK_MESSAGE((serializePrefab(child, encoded).success && encoded.find("\"version\": 2") != std::string::npos &&
+                   deserializePrefab(encoded, reloaded).success && reloaded.entities.size() == 2),
+                  "migrated prefabs should save as version 2");
 }
 
-void testLinkPersistence() {
-    const std::filesystem::path root = freshDirectory("persistence");
+TEST_CASE("Prefab: link persistence") {
+    const testsupport::TempDirectory directory("prefab-persistence");
+    const std::filesystem::path& root = directory.path();
     AssetManager assets;
     auto database = std::make_shared<AssetDatabase>(root);
     SceneDocumentOptions options{.assetRoot = root, .assetDatabase = database};
     Scene authored;
     PrefabAuthoring authoring(assets, options);
-    expect(authoring.create(authored, authorLamp(authored), "lamp.prefab").success,
-           "the persistence fixture prefab should be created");
-    expect(database->rescan().success, "the asset database should scan the new prefab");
+    CHECK_MESSAGE(authoring.create(authored, authorLamp(authored), "lamp.prefab").success,
+                  "the persistence fixture prefab should be created");
+    CHECK_MESSAGE(database->rescan().success, "the asset database should scan the new prefab");
 
     Scene scene;
     Entity instance = entt::null;
-    expect(authoring.instantiate(scene, "lamp.prefab", entt::null, instance).success, "the prefab should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(scene, "lamp.prefab", entt::null, instance).success),
+                  "the prefab should instantiate");
     const Entity bulb = childNamed(scene, instance, "Bulb");
     scene.registry().get<CameraComponent>(bulb).farPlane = 123.0f;
     const auto scenePath = root / "level.zenith-scene";
-    expect(SceneDocument::save(scenePath, scene, assets, options).success, "the scene should save");
+    CHECK_MESSAGE(SceneDocument::save(scenePath, scene, assets, options).success, "the scene should save");
     const std::string saved = readText(scenePath);
-    expect(saved.find("\"prefab_instance\"") != std::string::npos &&
-               saved.find("\"prefab_entity\"") != std::string::npos && saved.find("\"guid\"") != std::string::npos,
-           "the prefab link should be saved with the prefab's GUID");
+    CHECK_MESSAGE((saved.find("\"prefab_instance\"") != std::string::npos &&
+                   saved.find("\"prefab_entity\"") != std::string::npos && saved.find("\"guid\"") != std::string::npos),
+                  "the prefab link should be saved with the prefab's GUID");
 
-    expect(database->move("lamp.prefab", "moved/lamp.prefab").success, "the prefab should move with its GUID");
+    CHECK_MESSAGE(database->move("lamp.prefab", "moved/lamp.prefab").success, "the prefab should move with its GUID");
     Scene reloaded;
-    expect(SceneDocument::load(scenePath, assets, options, reloaded).success, "the scene should load");
+    CHECK_MESSAGE(SceneDocument::load(scenePath, assets, options, reloaded).success, "the scene should load");
     const Entity loadedRoot = reloaded.findEntity(scene.id(instance));
-    expect(loadedRoot != entt::null &&
-               reloaded.registry().get<PrefabInstanceComponent>(loadedRoot).prefab == "moved/lamp.prefab",
-           "the loaded link should follow the moved prefab by GUID");
+    CHECK_MESSAGE((loadedRoot != entt::null &&
+                   reloaded.registry().get<PrefabInstanceComponent>(loadedRoot).prefab == "moved/lamp.prefab"),
+                  "the loaded link should follow the moved prefab by GUID");
     PrefabEntityOverrides overrides;
     const Entity loadedBulb = reloaded.findEntity(scene.id(bulb));
-    expect(authoring.overrides(reloaded, loadedBulb, overrides).success && overrides.linked &&
-               overrides.overridden("camera", "/far_plane") && !overrides.overridden("camera", "/near_plane"),
-           "overrides should be found after the link is reloaded");
-    expect(authoring.revert(reloaded, loadedBulb).success &&
-               reloaded.registry().get<CameraComponent>(reloaded.findEntity(scene.id(bulb))).farPlane == 1000.0f,
-           "a reloaded instance should revert to its prefab");
+    CHECK_MESSAGE((authoring.overrides(reloaded, loadedBulb, overrides).success && overrides.linked &&
+                   overrides.overridden("camera", "/far_plane") && !overrides.overridden("camera", "/near_plane")),
+                  "overrides should be found after the link is reloaded");
+    CHECK_MESSAGE((authoring.revert(reloaded, loadedBulb).success &&
+                   reloaded.registry().get<CameraComponent>(reloaded.findEntity(scene.id(bulb))).farPlane == 1000.0f),
+                  "a reloaded instance should revert to its prefab");
 }
 
-void testOverrideQuery() {
-    const std::filesystem::path root = freshDirectory("overrides");
+TEST_CASE("Prefab: override query") {
+    const testsupport::TempDirectory directory("prefab-overrides");
+    const std::filesystem::path& root = directory.path();
     AssetManager assets;
     const SceneDocumentOptions options{.assetRoot = root, .componentTypes = moduleComponentTypes()};
     Scene scene;
     PrefabAuthoring authoring(assets, options);
     const Entity lamp = authorLamp(scene);
-    expect(authoring.create(scene, lamp, "lamp.prefab").success, "the override fixture prefab should be created");
+    CHECK_MESSAGE(authoring.create(scene, lamp, "lamp.prefab").success,
+                  "the override fixture prefab should be created");
     const Entity bulb = childNamed(scene, lamp, "Bulb");
 
     scene.registry().get<PointLightComponent>(lamp).intensity = 42.0f;
@@ -289,55 +280,62 @@ void testOverrideQuery() {
     scene.registry().get<TransformComponent>(bulb).local[3] = glm::vec4(0.0f, 3.0f, 0.0f, 1.0f);
 
     PrefabEntityOverrides lampOverrides;
-    expect(authoring.overrides(scene, lamp, lampOverrides).success && lampOverrides.linked &&
-               lampOverrides.instanceRoot == scene.id(lamp) && !lampOverrides.added,
-           "the instance root should report its link");
-    expect(!lampOverrides.localTransform && !lampOverrides.name,
-           "moving the instance root should not count as an override");
+    CHECK_MESSAGE((authoring.overrides(scene, lamp, lampOverrides).success && lampOverrides.linked &&
+                   lampOverrides.instanceRoot == scene.id(lamp) && !lampOverrides.added),
+                  "the instance root should report its link");
+    CHECK_MESSAGE((!lampOverrides.localTransform && !lampOverrides.name),
+                  "moving the instance root should not count as an override");
     const auto pointLight =
         std::ranges::find(lampOverrides.components, "point_light", &PrefabComponentOverrides::component);
-    expect(pointLight != lampOverrides.components.end() && pointLight->fields == std::vector<std::string>{"/intensity"},
-           "a changed field should be reported by its JSON pointer");
-    expect(lampOverrides.overridden("point_light", "/intensity") &&
-               !lampOverrides.overridden("point_light", "/range") && lampOverrides.overridden("point_light", ""),
-           "overridden should match the field, its component, but not other fields");
+    CHECK_MESSAGE(
+        (pointLight != lampOverrides.components.end() && pointLight->fields == std::vector<std::string>{"/intensity"}),
+        "a changed field should be reported by its JSON pointer");
+    CHECK_MESSAGE((lampOverrides.overridden("point_light", "/intensity") &&
+                   !lampOverrides.overridden("point_light", "/range") && lampOverrides.overridden("point_light", "")),
+                  "overridden should match the field, its component, but not other fields");
     const auto spot = std::ranges::find(lampOverrides.components, "spot_light", &PrefabComponentOverrides::component);
-    expect(spot != lampOverrides.components.end() && spot->added && !spot->removed,
-           "an added component should be reported");
+    CHECK_MESSAGE((spot != lampOverrides.components.end() && spot->added && !spot->removed),
+                  "an added component should be reported");
 
     PrefabEntityOverrides bulbOverrides;
-    expect(authoring.overrides(scene, bulb, bulbOverrides).success && bulbOverrides.name &&
-               bulbOverrides.localTransform,
-           "child name and transform changes should be reported");
+    CHECK_MESSAGE(
+        (authoring.overrides(scene, bulb, bulbOverrides).success && bulbOverrides.name && bulbOverrides.localTransform),
+        "child name and transform changes should be reported");
     const auto camera = std::ranges::find(bulbOverrides.components, "camera", &PrefabComponentOverrides::component);
-    expect(camera != bulbOverrides.components.end() && camera->removed, "a removed component should be reported");
+    CHECK_MESSAGE((camera != bulbOverrides.components.end() && camera->removed),
+                  "a removed component should be reported");
 
     const Entity added = scene.createEntity("Added");
     scene.setParent(added, lamp);
     PrefabEntityOverrides addedOverrides;
-    expect(authoring.overrides(scene, added, addedOverrides).success && addedOverrides.linked && addedOverrides.added,
-           "entities added to an instance should be reported as added");
+    CHECK_MESSAGE(
+        (authoring.overrides(scene, added, addedOverrides).success && addedOverrides.linked && addedOverrides.added),
+        "entities added to an instance should be reported as added");
     PrefabEntityOverrides unlinked;
     const Entity loose = scene.createEntity("Loose");
-    expect(authoring.overrides(scene, loose, unlinked).success && !unlinked.linked,
-           "entities outside instances should not be linked");
+    CHECK_MESSAGE((authoring.overrides(scene, loose, unlinked).success && !unlinked.linked),
+                  "entities outside instances should not be linked");
 
-    expect(authoring.revertField(scene, lamp, "point_light", "/intensity").success &&
-               scene.registry().get<PointLightComponent>(lamp).intensity == 10.0f &&
-               scene.registry().all_of<SpotLightComponent>(lamp),
-           "revertField should reset one value and keep other overrides");
-    expect(scene.findEntity(scene.id(added)) != entt::null, "revertField should keep added entities");
-    expect(scene.registry().get<TransformComponent>(lamp).local[3].x == 5.0f,
-           "refreshing should keep the instance root's placement");
-    expect(authoring.revertField(scene, bulb, "", "/name").success &&
-               scene.registry().get<NameComponent>(bulb).name == "Bulb",
-           "revertField should reset an entity name");
-    expect(!authoring.revertField(scene, bulb, "", "/name"), "reverting a value that is not overridden should fail");
+    CHECK_MESSAGE((authoring.revertField(scene, lamp, "point_light", "/intensity").success &&
+                   scene.registry().get<PointLightComponent>(lamp).intensity == 10.0f &&
+                   scene.registry().all_of<SpotLightComponent>(lamp)),
+                  "revertField should reset one value and keep other overrides");
+    CHECK_MESSAGE((scene.findEntity(scene.id(added)) != entt::null), "revertField should keep added entities");
+    CHECK_MESSAGE(scene.registry().get<TransformComponent>(lamp).local[3].x == 5.0f,
+                  "refreshing should keep the instance root's placement");
+    CHECK_MESSAGE((authoring.revertField(scene, bulb, "", "/name").success &&
+                   scene.registry().get<NameComponent>(bulb).name == "Bulb"),
+                  "revertField should reset an entity name");
+    CHECK_MESSAGE(!authoring.revertField(scene, bulb, "", "/name"),
+                  "reverting a value that is not overridden should fail");
 }
+
+namespace {
 
 // A document, history, and selection editing a scene headlessly, as the
 // editor session owns them.
 struct OperatorFixture {
+    testsupport::TempDirectory directory;
     std::filesystem::path root;
     AssetManager assets;
     Scene scene;
@@ -348,12 +346,13 @@ struct OperatorFixture {
     OperatorRegistry registry;
     OperatorRunner runner{registry, history};
 
-    explicit OperatorFixture(std::filesystem::path assetRoot)
-        : root(std::move(assetRoot))
+    explicit OperatorFixture(std::string_view name)
+        : directory(name)
+        , root(directory.path())
         , document(root) {
         // The object operators include the outliner's (outliner.parent_drop).
-        expect(registerObjectOperators(registry).success && registerPrefabOperators(registry).success,
-               "the object and prefab operators should register");
+        CHECK_MESSAGE((registerObjectOperators(registry).success && registerPrefabOperators(registry).success),
+                      "the object and prefab operators should register");
         document.setComponentTypes(moduleComponentTypes());
     }
 
@@ -382,49 +381,53 @@ struct OperatorFixture {
     }
 };
 
-void testOperators() {
-    OperatorFixture fixture(freshDirectory("operators"));
+} // namespace
+
+TEST_CASE("Prefab: operators") {
+    OperatorFixture fixture("prefab-operators");
     Scene& scene = fixture.scene;
     const Entity lamp = authorLamp(scene);
     const SceneEntityId lampId = scene.id(lamp);
 
-    expect(fixture.invoke("prefab.create_from_selection", R"({"path":"lamp.prefab"})").status ==
-               OperatorStatus::Cancelled,
-           "create should need an active entity");
+    CHECK_MESSAGE(fixture.invoke("prefab.create_from_selection", R"({"path":"lamp.prefab"})").status ==
+                      OperatorStatus::Cancelled,
+                  "create should need an active entity");
     fixture.select(lamp);
-    expect(fixture.invoke("prefab.create_from_selection", R"({"path":"lamp.prefab"})").status ==
-               OperatorStatus::Finished,
-           "prefab.create_from_selection should create and link a prefab");
+    CHECK_MESSAGE(fixture.invoke("prefab.create_from_selection", R"({"path":"lamp.prefab"})").status ==
+                      OperatorStatus::Finished,
+                  "prefab.create_from_selection should create and link a prefab");
     const std::filesystem::path prefabPath = fixture.root / "lamp.prefab";
-    expect(std::filesystem::is_regular_file(prefabPath) &&
-               scene.registry().all_of<PrefabInstanceComponent>(fixture.find(lampId)),
-           "the prefab file and link should exist");
+    CHECK_MESSAGE((std::filesystem::is_regular_file(prefabPath) &&
+                   scene.registry().all_of<PrefabInstanceComponent>(fixture.find(lampId))),
+                  "the prefab file and link should exist");
     const std::string created = readText(prefabPath);
     fixture.editing().undo();
-    expect(!scene.registry().all_of<PrefabInstanceComponent>(fixture.find(lampId)) &&
-               !std::filesystem::exists(prefabPath),
-           "undoing create should unlink the entity and remove the written file");
+    CHECK_MESSAGE((!scene.registry().all_of<PrefabInstanceComponent>(fixture.find(lampId)) &&
+                   !std::filesystem::exists(prefabPath)),
+                  "undoing create should unlink the entity and remove the written file");
     fixture.editing().redo();
-    expect(scene.registry().all_of<PrefabInstanceComponent>(fixture.find(lampId)) && readText(prefabPath) == created,
-           "redo should restore the link and the file");
+    CHECK_MESSAGE(
+        (scene.registry().all_of<PrefabInstanceComponent>(fixture.find(lampId)) && readText(prefabPath) == created),
+        "redo should restore the link and the file");
 
     fixture.selection.clear();
-    expect(fixture.invoke("prefab.instantiate", R"({"asset":"lamp.prefab"})").status == OperatorStatus::Finished,
-           "prefab.instantiate should add an instance");
+    CHECK_MESSAGE(fixture.invoke("prefab.instantiate", R"({"asset":"lamp.prefab"})").status == OperatorStatus::Finished,
+                  "prefab.instantiate should add an instance");
     const SceneEntityId firstId = *fixture.selection.active();
-    expect(fixture.invoke("prefab.instantiate", R"({"asset":"lamp.prefab"})").status == OperatorStatus::Finished,
-           "a prefab should instantiate more than once");
+    CHECK_MESSAGE(fixture.invoke("prefab.instantiate", R"({"asset":"lamp.prefab"})").status == OperatorStatus::Finished,
+                  "a prefab should instantiate more than once");
     const SceneEntityId secondId = *fixture.selection.active();
     const size_t entityCount = scene.registry().view<const SceneEntityIdComponent>().size();
     fixture.editing().undo();
-    expect(fixture.find(secondId) == entt::null, "undo should remove the latest instance");
+    CHECK_MESSAGE((fixture.find(secondId) == entt::null), "undo should remove the latest instance");
     fixture.editing().redo();
-    expect(fixture.find(secondId) != entt::null &&
-               scene.registry().view<const SceneEntityIdComponent>().size() == entityCount,
-           "redo should restore the instance");
-    expect(fixture.invoke("prefab.instantiate", R"({"asset":"missing.prefab"})").status == OperatorStatus::Failed &&
-               scene.registry().view<const SceneEntityIdComponent>().size() == entityCount,
-           "instantiating a missing prefab should fail without changing the scene");
+    CHECK_MESSAGE((fixture.find(secondId) != entt::null &&
+                   scene.registry().view<const SceneEntityIdComponent>().size() == entityCount),
+                  "redo should restore the instance");
+    CHECK_MESSAGE(
+        (fixture.invoke("prefab.instantiate", R"({"asset":"missing.prefab"})").status == OperatorStatus::Failed &&
+         scene.registry().view<const SceneEntityIdComponent>().size() == entityCount),
+        "instantiating a missing prefab should fail without changing the scene");
     fixture.diagnostics.acknowledgeErrors();
 
     // The second instance keeps its own override through an apply.
@@ -437,31 +440,31 @@ void testOperators() {
     fixture.select(fixture.find(firstId));
     const std::string beforeApply = readText(prefabPath);
     const size_t stepsBeforeApply = fixture.history.size();
-    expect(fixture.invoke("prefab.apply").status == OperatorStatus::Finished,
-           "prefab.apply should write the instance into its prefab");
-    expect(fixture.history.size() == stepsBeforeApply + 1, "apply should record exactly one undo step");
+    CHECK_MESSAGE(fixture.invoke("prefab.apply").status == OperatorStatus::Finished,
+                  "prefab.apply should write the instance into its prefab");
+    CHECK_MESSAGE(fixture.history.size() == stepsBeforeApply + 1, "apply should record exactly one undo step");
     const std::string afterApply = readText(prefabPath);
-    expect(readText(prefabPath).find("\"blue\"") != std::string::npos, "apply should update the prefab file");
-    expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 77.0f &&
-               scene.registry().get<HealthComponent>(fixture.find(secondId)).team == "blue" &&
-               scene.registry().get<PointLightComponent>(fixture.find(lampId)).intensity == 77.0f,
-           "apply should update the other instances");
-    expect(scene.registry().get<NameComponent>(fixture.find(secondBulbId)).name == "Second bulb",
-           "apply should keep the other instances' own overrides");
+    CHECK_MESSAGE(readText(prefabPath).find("\"blue\"") != std::string::npos, "apply should update the prefab file");
+    CHECK_MESSAGE((scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 77.0f &&
+                   scene.registry().get<HealthComponent>(fixture.find(secondId)).team == "blue" &&
+                   scene.registry().get<PointLightComponent>(fixture.find(lampId)).intensity == 77.0f),
+                  "apply should update the other instances");
+    CHECK_MESSAGE(scene.registry().get<NameComponent>(fixture.find(secondBulbId)).name == "Second bulb",
+                  "apply should keep the other instances' own overrides");
     PrefabAuthoring authoring(fixture.assets, fixture.document.options());
     PrefabEntityOverrides firstOverrides;
-    expect(authoring.overrides(scene, fixture.find(firstId), firstOverrides).success &&
-               firstOverrides.components.empty(),
-           "the applied instance should have no overrides left");
+    CHECK_MESSAGE((authoring.overrides(scene, fixture.find(firstId), firstOverrides).success &&
+                   firstOverrides.components.empty()),
+                  "the applied instance should have no overrides left");
     fixture.editing().undo();
-    expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 10.0f &&
-               scene.registry().get<PointLightComponent>(fixture.find(firstId)).intensity == 77.0f,
-           "undoing apply should restore the other instances and keep the applied instance's edit");
-    expect(readText(prefabPath) == beforeApply, "undoing apply should restore the prefab file");
+    CHECK_MESSAGE((scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 10.0f &&
+                   scene.registry().get<PointLightComponent>(fixture.find(firstId)).intensity == 77.0f),
+                  "undoing apply should restore the other instances and keep the applied instance's edit");
+    CHECK_MESSAGE(readText(prefabPath) == beforeApply, "undoing apply should restore the prefab file");
     fixture.editing().redo();
-    expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 77.0f &&
-               readText(prefabPath) == afterApply,
-           "redoing apply should write the file and update the instances again");
+    CHECK_MESSAGE((scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 77.0f &&
+                   readText(prefabPath) == afterApply),
+                  "redoing apply should write the file and update the instances again");
 
     // Revert drops overrides and added objects.
     // Recording an edit recreates the entities it created, so keep the stable id.
@@ -473,230 +476,244 @@ void testOperators() {
         addedId = scene.id(addedChild);
     });
     fixture.select(fixture.find(secondBulbId));
-    expect(fixture.invoke("prefab.revert").status == OperatorStatus::Finished,
-           "prefab.revert should reset the instance");
-    expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).range == 4.0f &&
-               scene.registry().get<NameComponent>(fixture.find(secondBulbId)).name == "Bulb" &&
-               fixture.find(addedId) == entt::null,
-           "revert should drop overrides and added entities and keep stable ids");
+    CHECK_MESSAGE(fixture.invoke("prefab.revert").status == OperatorStatus::Finished,
+                  "prefab.revert should reset the instance");
+    CHECK_MESSAGE((scene.registry().get<PointLightComponent>(fixture.find(secondId)).range == 4.0f &&
+                   scene.registry().get<NameComponent>(fixture.find(secondBulbId)).name == "Bulb" &&
+                   fixture.find(addedId) == entt::null),
+                  "revert should drop overrides and added entities and keep stable ids");
     fixture.editing().undo();
-    expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).range == 99.0f &&
-               fixture.find(addedId) != entt::null,
-           "undoing revert should restore the overrides and added entities");
+    CHECK_MESSAGE((scene.registry().get<PointLightComponent>(fixture.find(secondId)).range == 99.0f &&
+                   fixture.find(addedId) != entt::null),
+                  "undoing revert should restore the overrides and added entities");
 
     // revert_field resets one value, addressed by entity id.
     const std::string revertRange =
         R"({"entity":")" + std::to_string(secondId.value) + R"(","component":"point_light","field":"/range"})";
-    expect(fixture.invoke("prefab.revert_field", revertRange).status == OperatorStatus::Finished &&
-               scene.registry().get<PointLightComponent>(fixture.find(secondId)).range == 4.0f &&
-               fixture.find(addedId) != entt::null &&
-               scene.registry().get<NameComponent>(fixture.find(secondBulbId)).name == "Second bulb",
-           "prefab.revert_field should reset only the named value");
+    CHECK_MESSAGE((fixture.invoke("prefab.revert_field", revertRange).status == OperatorStatus::Finished &&
+                   scene.registry().get<PointLightComponent>(fixture.find(secondId)).range == 4.0f &&
+                   fixture.find(addedId) != entt::null &&
+                   scene.registry().get<NameComponent>(fixture.find(secondBulbId)).name == "Second bulb"),
+                  "prefab.revert_field should reset only the named value");
     fixture.editing().undo();
-    expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).range == 99.0f,
-           "undoing revert_field should restore the value");
-    expect(fixture.invoke("prefab.revert_field", R"({"entity":"x1","field":"/name"})").status == OperatorStatus::Failed,
-           "revert_field should reject an invalid entity id");
+    CHECK_MESSAGE(scene.registry().get<PointLightComponent>(fixture.find(secondId)).range == 99.0f,
+                  "undoing revert_field should restore the value");
+    CHECK_MESSAGE(fixture.invoke("prefab.revert_field", R"({"entity":"x1","field":"/name"})").status ==
+                      OperatorStatus::Failed,
+                  "revert_field should reject an invalid entity id");
     fixture.diagnostics.acknowledgeErrors();
 
     // Unpack keeps the entities without the link.
     fixture.select(fixture.find(secondId));
-    expect(fixture.invoke("prefab.unpack").status == OperatorStatus::Finished &&
-               !scene.registry().all_of<PrefabInstanceComponent>(fixture.find(secondId)) &&
-               !scene.registry().all_of<PrefabEntityComponent>(fixture.find(secondBulbId)) &&
-               fixture.find(secondBulbId) != entt::null,
-           "prefab.unpack should keep the entities and remove their link");
-    expect(fixture.invoke("prefab.apply").status == OperatorStatus::Cancelled,
-           "instance operators should not run on unlinked entities");
+    CHECK_MESSAGE((fixture.invoke("prefab.unpack").status == OperatorStatus::Finished &&
+                   !scene.registry().all_of<PrefabInstanceComponent>(fixture.find(secondId)) &&
+                   !scene.registry().all_of<PrefabEntityComponent>(fixture.find(secondBulbId)) &&
+                   fixture.find(secondBulbId) != entt::null),
+                  "prefab.unpack should keep the entities and remove their link");
+    CHECK_MESSAGE(fixture.invoke("prefab.apply").status == OperatorStatus::Cancelled,
+                  "instance operators should not run on unlinked entities");
     fixture.editing().undo();
-    expect(scene.registry().all_of<PrefabInstanceComponent>(fixture.find(secondId)), "undo unpack should relink");
+    CHECK_MESSAGE(scene.registry().all_of<PrefabInstanceComponent>(fixture.find(secondId)),
+                  "undo unpack should relink");
 }
 
 // Add > Character is a prefab: the first use writes it, linking the new
 // character to it; later uses instantiate it. Undo takes back the scene change
 // and, for the first, the file.
-void testAddCharacter() {
-    OperatorFixture fixture(freshDirectory("character"));
+TEST_CASE("Prefab: add character") {
+    OperatorFixture fixture("prefab-character");
     Scene& scene = fixture.scene;
     const std::filesystem::path prefabPath = fixture.root / "prefabs" / "Character.prefab";
-    expect(fixture.invoke("prefab.add_character", R"({"location":[2,0,3]})").status == OperatorStatus::Finished,
-           "prefab.add_character should add a character");
-    expect(std::filesystem::is_regular_file(prefabPath), "the first character should write the Character prefab");
+    CHECK_MESSAGE(fixture.invoke("prefab.add_character", R"({"location":[2,0,3]})").status == OperatorStatus::Finished,
+                  "prefab.add_character should add a character");
+    CHECK_MESSAGE(std::filesystem::is_regular_file(prefabPath),
+                  "the first character should write the Character prefab");
     const std::optional<SceneEntityId> firstId = fixture.selection.active();
     const Entity first = firstId ? fixture.find(*firstId) : entt::null;
-    expect(first != entt::null && scene.registry().all_of<CharacterControllerComponent>(first) &&
-               scene.registry().all_of<PrefabInstanceComponent>(first) &&
-               scene.registry().get<PrefabInstanceComponent>(first).prefab == "prefabs/Character.prefab",
-           "the character is an instance of the Character prefab");
+    CHECK_MESSAGE((first != entt::null && scene.registry().all_of<CharacterControllerComponent>(first) &&
+                   scene.registry().all_of<PrefabInstanceComponent>(first) &&
+                   scene.registry().get<PrefabInstanceComponent>(first).prefab == "prefabs/Character.prefab"),
+                  "the character is an instance of the Character prefab");
     scene.updateWorldTransforms();
     const glm::vec4 firstPosition =
         first != entt::null ? scene.registry().get<TransformComponent>(first).world[3] : glm::vec4(0.0f);
-    expect(std::abs(firstPosition.x - 2.0f) < 1e-4f && std::abs(firstPosition.z - 3.0f) < 1e-4f &&
-               firstPosition.y > 0.5f,
-           "the character stands on the location");
+    CHECK_MESSAGE((std::abs(firstPosition.x - 2.0f) < 1e-4f && std::abs(firstPosition.z - 3.0f) < 1e-4f &&
+                   firstPosition.y > 0.5f),
+                  "the character stands on the location");
     const Entity eye = first != entt::null ? childNamed(scene, first, "Player Camera") : entt::null;
-    expect(eye != entt::null && scene.registry().all_of<FirstPersonCameraComponent>(eye),
-           "the prefab holds the first-person camera");
+    CHECK_MESSAGE((eye != entt::null && scene.registry().all_of<FirstPersonCameraComponent>(eye)),
+                  "the prefab holds the first-person camera");
     const std::string written = readText(prefabPath);
 
-    expect(fixture.invoke("prefab.add_character", R"({"location":[-2,0,0]})").status == OperatorStatus::Finished &&
-               readText(prefabPath) == written,
-           "a second character instantiates the existing prefab without rewriting it");
+    CHECK_MESSAGE(
+        (fixture.invoke("prefab.add_character", R"({"location":[-2,0,0]})").status == OperatorStatus::Finished &&
+         readText(prefabPath) == written),
+        "a second character instantiates the existing prefab without rewriting it");
     const std::optional<SceneEntityId> secondId = fixture.selection.active();
-    expect(secondId && *secondId != *firstId &&
-               scene.registry().all_of<PrefabInstanceComponent>(fixture.find(*secondId)),
-           "the second character is another instance");
+    CHECK_MESSAGE((secondId && *secondId != *firstId &&
+                   scene.registry().all_of<PrefabInstanceComponent>(fixture.find(*secondId))),
+                  "the second character is another instance");
     fixture.editing().undo();
-    expect(fixture.find(*secondId) == entt::null && std::filesystem::exists(prefabPath),
-           "undoing the second character keeps the prefab");
+    CHECK_MESSAGE((fixture.find(*secondId) == entt::null && std::filesystem::exists(prefabPath)),
+                  "undoing the second character keeps the prefab");
     fixture.editing().undo();
-    expect(fixture.find(*firstId) == entt::null && !std::filesystem::exists(prefabPath),
-           "undoing the first character removes it and the prefab file");
+    CHECK_MESSAGE((fixture.find(*firstId) == entt::null && !std::filesystem::exists(prefabPath)),
+                  "undoing the first character removes it and the prefab file");
 }
 
-void testNestedPrefabs() {
-    const std::filesystem::path root = freshDirectory("nested");
+TEST_CASE("Prefab: nested prefabs") {
+    const testsupport::TempDirectory directory("prefab-nested");
+    const std::filesystem::path& root = directory.path();
     AssetManager assets;
     const SceneDocumentOptions options{.assetRoot = root};
     PrefabAuthoring authoring(assets, options);
     Scene scene;
     const Entity wheel = scene.createEntity("Wheel");
     scene.registry().emplace<PointLightComponent>(wheel);
-    expect(authoring.create(scene, wheel, "parts/wheel.prefab").success, "the inner prefab should be created");
+    CHECK_MESSAGE(authoring.create(scene, wheel, "parts/wheel.prefab").success, "the inner prefab should be created");
 
     const Entity cart = scene.createEntity("Cart");
     scene.setParent(wheel, cart);
     scene.registry().get<TransformComponent>(wheel).local[3] = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
     scene.registry().get<PointLightComponent>(wheel).intensity = 3.0f;
-    expect(authoring.create(scene, cart, "cart.prefab").success, "a prefab containing an instance should be created");
+    CHECK_MESSAGE(authoring.create(scene, cart, "cart.prefab").success,
+                  "a prefab containing an instance should be created");
     PrefabDocument cartDocument;
-    expect(loadPrefab(root / "cart.prefab", cartDocument).success && cartDocument.entities.size() == 1 &&
-               cartDocument.nested.size() == 1 && cartDocument.nested.front().source == "parts/wheel.prefab",
-           "an instance inside the captured subtree should become a nested prefab record");
-    expect(scene.registry().get<PrefabInstanceComponent>(wheel).nestedId == cartDocument.nested.front().id,
-           "the nested instance should remember its record");
+    CHECK_MESSAGE((loadPrefab(root / "cart.prefab", cartDocument).success && cartDocument.entities.size() == 1 &&
+                   cartDocument.nested.size() == 1 && cartDocument.nested.front().source == "parts/wheel.prefab"),
+                  "an instance inside the captured subtree should become a nested prefab record");
+    CHECK_MESSAGE(scene.registry().get<PrefabInstanceComponent>(wheel).nestedId == cartDocument.nested.front().id,
+                  "the nested instance should remember its record");
 
     Scene other;
     Entity cartInstance = entt::null;
-    expect(authoring.instantiate(other, "cart.prefab", entt::null, cartInstance).success,
-           "a prefab with a nested prefab should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(other, "cart.prefab", entt::null, cartInstance).success),
+                  "a prefab with a nested prefab should instantiate");
     const Entity nestedWheel = childNamed(other, cartInstance, "Wheel");
-    expect(nestedWheel != entt::null && other.registry().all_of<PrefabInstanceComponent>(nestedWheel) &&
-               other.registry().get<PointLightComponent>(nestedWheel).intensity == 3.0f &&
-               other.registry().get<TransformComponent>(nestedWheel).local[3].x == 1.0f,
-           "the nested instance should carry the record's overrides and placement");
-    expect(prefabInstanceRoot(other, nestedWheel) == nestedWheel &&
-               prefabInstanceMembers(other, cartInstance).size() == 1,
-           "nested instances should be separate instances");
+    CHECK_MESSAGE((nestedWheel != entt::null && other.registry().all_of<PrefabInstanceComponent>(nestedWheel) &&
+                   other.registry().get<PointLightComponent>(nestedWheel).intensity == 3.0f &&
+                   other.registry().get<TransformComponent>(nestedWheel).local[3].x == 1.0f),
+                  "the nested instance should carry the record's overrides and placement");
+    CHECK_MESSAGE((prefabInstanceRoot(other, nestedWheel) == nestedWheel &&
+                   prefabInstanceMembers(other, cartInstance).size() == 1),
+                  "nested instances should be separate instances");
 
     // A wheel instance holding a cart instance would contain itself.
     Entity looseWheel = entt::null;
-    expect(authoring.instantiate(other, "parts/wheel.prefab", entt::null, looseWheel).success,
-           "the cycle fixture wheel should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(other, "parts/wheel.prefab", entt::null, looseWheel).success),
+                  "the cycle fixture wheel should instantiate");
     Entity innerCart = entt::null;
-    expect(authoring.instantiate(other, "cart.prefab", looseWheel, innerCart).success,
-           "the cycle fixture cart should instantiate");
+    CHECK_MESSAGE(authoring.instantiate(other, "cart.prefab", looseWheel, innerCart).success,
+                  "the cycle fixture cart should instantiate");
     const std::string wheelBefore = readText(root / "parts/wheel.prefab");
     const PrefabResult cyclic = authoring.apply(other, looseWheel);
-    expect(!cyclic && cyclic.error.find("cycle") != std::string::npos &&
-               readText(root / "parts/wheel.prefab") == wheelBefore,
-           "applying a nested prefab cycle should fail without writing the prefab");
+    CHECK_MESSAGE((!cyclic && cyclic.error.find("cycle") != std::string::npos &&
+                   readText(root / "parts/wheel.prefab") == wheelBefore),
+                  "applying a nested prefab cycle should fail without writing the prefab");
 
     PrefabDocument selfNested;
     selfNested.entities.push_back({{1}, "Self", std::nullopt, glm::mat4(1.0f)});
     selfNested.nested.push_back({1, "self.prefab", std::nullopt, {}});
-    expect(savePrefab(root / "self.prefab", selfNested).success, "the self-nesting fixture should save");
+    CHECK_MESSAGE(savePrefab(root / "self.prefab", selfNested).success, "the self-nesting fixture should save");
     Scene cycleScene;
-    expect(!PrefabSystem(assets, options).instantiate("self.prefab", cycleScene) &&
-               cycleScene.registry().view<const SceneEntityIdComponent>().empty(),
-           "instantiating a nested cycle should fail without changing the scene");
+    CHECK_MESSAGE((!PrefabSystem(assets, options).instantiate("self.prefab", cycleScene) &&
+                   cycleScene.registry().view<const SceneEntityIdComponent>().empty()),
+                  "instantiating a nested cycle should fail without changing the scene");
 }
 
 // A refresh that fails after rebuilding the containing instance (here in a
 // nested instance whose root no longer matches its prefab, which the isolated
 // validation build cannot see) leaves the whole scene as it was.
-void testFailedRefreshRestoresScene() {
-    const std::filesystem::path root = freshDirectory("rollback");
+TEST_CASE("Prefab: failed refresh restores scene") {
+    const testsupport::TempDirectory directory("prefab-rollback");
+    const std::filesystem::path& root = directory.path();
     AssetManager assets;
     const SceneDocumentOptions options{.assetRoot = root};
     PrefabAuthoring authoring(assets, options);
     Scene scene;
     const Entity wheel = scene.createEntity("Wheel");
     scene.registry().emplace<PointLightComponent>(wheel);
-    expect(authoring.create(scene, wheel, "parts/wheel.prefab").success, "rollback: the inner prefab is created");
+    CHECK_MESSAGE(authoring.create(scene, wheel, "parts/wheel.prefab").success,
+                  "rollback: the inner prefab is created");
     const Entity cart = scene.createEntity("Cart");
     scene.setParent(wheel, cart);
     scene.setParent(scene.createEntity("Seat"), cart);
-    expect(authoring.create(scene, cart, "cart.prefab").success, "rollback: the cart prefab is created");
+    CHECK_MESSAGE(authoring.create(scene, cart, "cart.prefab").success, "rollback: the cart prefab is created");
 
     Scene level;
     level.createEntity("Unrelated");
     Entity instance = entt::null;
-    expect(authoring.instantiate(level, "cart.prefab", entt::null, instance).success,
-           "rollback: the cart instantiates");
+    CHECK_MESSAGE((authoring.instantiate(level, "cart.prefab", entt::null, instance).success),
+                  "rollback: the cart instantiates");
     // The rebuild resets this name before the nested instance fails.
     level.registry().get<NameComponent>(childNamed(level, instance, "Seat")).name = "Renamed seat";
     level.setParent(level.createEntity("Added"), instance);
     level.registry().get<PrefabEntityComponent>(childNamed(level, instance, "Wheel")).entity.value += 100;
     std::string before;
-    expect(SceneDocument::serialize(level, assets, options, before).success, "rollback: the level serializes");
+    CHECK_MESSAGE(SceneDocument::serialize(level, assets, options, before).success, "rollback: the level serializes");
 
     const PrefabInstanceResult refreshed =
         PrefabSystem(assets, options).refresh(level, instance, PrefabRefreshMode::RemoveAddedObjects);
     std::string after;
-    expect(SceneDocument::serialize(level, assets, options, after).success, "rollback: the level still serializes");
-    expect(!refreshed && refreshed.error.find("no longer matches") != std::string::npos &&
-               refreshed.error.find("could not be restored") == std::string::npos,
-           "rollback: the refresh fails in the nested instance");
-    expect(after == before, "a refresh failing after its container was rebuilt should leave the scene unchanged");
+    CHECK_MESSAGE(SceneDocument::serialize(level, assets, options, after).success,
+                  "rollback: the level still serializes");
+    CHECK_MESSAGE((!refreshed && refreshed.error.find("no longer matches") != std::string::npos &&
+                   refreshed.error.find("could not be restored") == std::string::npos),
+                  "rollback: the refresh fails in the nested instance");
+    CHECK_MESSAGE(after == before,
+                  "a refresh failing after its container was rebuilt should leave the scene unchanged");
 }
 
-void testApplyPropagation() {
-    const std::filesystem::path root = freshDirectory("propagation");
+TEST_CASE("Prefab: apply propagation") {
+    const testsupport::TempDirectory directory("prefab-propagation");
+    const std::filesystem::path& root = directory.path();
     AssetManager assets;
     const SceneDocumentOptions options{.assetRoot = root};
     PrefabAuthoring authoring(assets, options);
     Scene authored;
     const Entity wheel = authored.createEntity("Wheel");
     authored.registry().emplace<PointLightComponent>(wheel);
-    expect(authoring.create(authored, wheel, "wheel.prefab").success, "the propagation wheel should be created");
+    CHECK_MESSAGE(authoring.create(authored, wheel, "wheel.prefab").success, "the propagation wheel should be created");
     const Entity cart = authored.createEntity("Cart");
     const Entity axle = authored.createEntity("Axle");
     authored.setParent(axle, cart);
     authored.setParent(wheel, cart);
-    expect(authoring.create(authored, cart, "cart.prefab").success, "the propagation cart should be created");
+    CHECK_MESSAGE(authoring.create(authored, cart, "cart.prefab").success, "the propagation cart should be created");
 
     Scene scene;
     Entity first = entt::null;
     Entity second = entt::null;
-    expect(authoring.instantiate(scene, "cart.prefab", entt::null, first).success &&
-               authoring.instantiate(scene, "cart.prefab", entt::null, second).success,
-           "two carts should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(scene, "cart.prefab", entt::null, first).success &&
+                   authoring.instantiate(scene, "cart.prefab", entt::null, second).success),
+                  "two carts should instantiate");
     const SceneEntityId secondId = scene.id(second);
     scene.registry().get<PointLightComponent>(childNamed(scene, first, "Wheel")).intensity = 8.0f;
     scene.destroyEntity(childNamed(scene, first, "Axle"));
     scene.setParent(scene.createEntity("Seat"), first);
     const PrefabResult applied = authoring.apply(scene, first);
-    expect(applied.success, "applying the first cart should succeed");
+    CHECK_MESSAGE(applied.success, "applying the first cart should succeed");
 
     second = scene.findEntity(secondId);
     const Entity secondWheel = childNamed(scene, second, "Wheel");
-    expect(secondWheel != entt::null && scene.registry().get<PointLightComponent>(secondWheel).intensity == 8.0f,
-           "apply should push a changed nested override into other instances' nested instances");
-    expect(childNamed(scene, second, "Axle") == entt::null && childNamed(scene, second, "Seat") != entt::null &&
-               scene.registry().get<RelationshipComponent>(second).children.size() == 2,
-           "apply should remove deleted entities from and add new entities to the other instances");
-    expect(!authoring.create(scene, childNamed(scene, second, "Seat"), "seat.prefab"),
-           "an entity inside an instance should not become a prefab of its own");
+    CHECK_MESSAGE(
+        (secondWheel != entt::null && scene.registry().get<PointLightComponent>(secondWheel).intensity == 8.0f),
+        "apply should push a changed nested override into other instances' nested instances");
+    CHECK_MESSAGE((childNamed(scene, second, "Axle") == entt::null && childNamed(scene, second, "Seat") != entt::null &&
+                   scene.registry().get<RelationshipComponent>(second).children.size() == 2),
+                  "apply should remove deleted entities from and add new entities to the other instances");
+    CHECK_MESSAGE(!authoring.create(scene, childNamed(scene, second, "Seat"), "seat.prefab"),
+                  "an entity inside an instance should not become a prefab of its own");
     std::vector<PrefabOverride> remaining;
-    expect(PrefabSystem(assets, options).overrides(scene, second, remaining).success && remaining.empty(),
-           "the refreshed instance should match the applied prefab");
+    CHECK_MESSAGE((PrefabSystem(assets, options).overrides(scene, second, remaining).success && remaining.empty()),
+                  "the refreshed instance should match the applied prefab");
 }
+
+namespace {
 
 SceneCollectionId addCollection(Scene& scene, const std::string& name) {
     SceneCollections collections = scene.collections();
     SceneCollectionId id;
-    expect(collections.create(name, {}, id).success, "the collection should be created");
+    CHECK_MESSAGE(collections.create(name, {}, id).success, "the collection should be created");
     scene.setCollections(std::move(collections));
     return id;
 }
@@ -710,8 +727,11 @@ bool inCollection(const Scene& scene, Entity entity, SceneCollectionId collectio
     return membership != nullptr && membership->contains(collection);
 }
 
-void testCollectionsStayInScene() {
-    const std::filesystem::path root = freshDirectory("collections");
+} // namespace
+
+TEST_CASE("Prefab: collections stay in scene") {
+    const testsupport::TempDirectory directory("prefab-collections");
+    const std::filesystem::path& root = directory.path();
     AssetManager assets;
     const SceneDocumentOptions options{.assetRoot = root, .componentTypes = moduleComponentTypes()};
     PrefabAuthoring authoring(assets, options);
@@ -722,60 +742,66 @@ void testCollectionsStayInScene() {
     joinCollection(scene, lamp, props);
     joinCollection(scene, bulb, props);
     scene.registry().emplace<CollectionInstanceComponent>(bulb, props);
-    expect(authoring.create(scene, lamp, "lamp.prefab").success, "a prefab should be made from collection members");
+    CHECK_MESSAGE(authoring.create(scene, lamp, "lamp.prefab").success,
+                  "a prefab should be made from collection members");
     const std::string text = readText(root / "lamp.prefab");
-    expect(text.find("collection_membership") == std::string::npos &&
-               text.find("collection_instance") == std::string::npos,
-           "a prefab should not store scene collection links");
-    expect(inCollection(scene, lamp, props) && inCollection(scene, bulb, props),
-           "creating a prefab should keep the source entities in their collections");
+    CHECK_MESSAGE((text.find("collection_membership") == std::string::npos &&
+                   text.find("collection_instance") == std::string::npos),
+                  "a prefab should not store scene collection links");
+    CHECK_MESSAGE((inCollection(scene, lamp, props) && inCollection(scene, bulb, props)),
+                  "creating a prefab should keep the source entities in their collections");
 
     Scene empty;
     Entity elsewhere = entt::null;
-    expect(authoring.instantiate(empty, "lamp.prefab", entt::null, elsewhere).success &&
-               !empty.registry().all_of<CollectionMembershipComponent>(elsewhere),
-           "a prefab made from collection members should instantiate into a scene without that collection");
+    CHECK_MESSAGE((authoring.instantiate(empty, "lamp.prefab", entt::null, elsewhere).success &&
+                   !empty.registry().all_of<CollectionMembershipComponent>(elsewhere)),
+                  "a prefab made from collection members should instantiate into a scene without that collection");
 
     // A prefab written before collections were scene-local still loads.
     PrefabDocument legacy;
-    expect(loadPrefab(root / "lamp.prefab", legacy).success, "the prefab should load");
+    CHECK_MESSAGE(loadPrefab(root / "lamp.prefab", legacy).success, "the prefab should load");
     legacy.entities.front().components.emplace_back("collection_membership", R"({"collections":[77]})");
-    expect(savePrefab(root / "legacy.prefab", legacy).success, "the legacy fixture should save");
+    CHECK_MESSAGE(savePrefab(root / "legacy.prefab", legacy).success, "the legacy fixture should save");
     Entity legacyInstance = entt::null;
-    expect(authoring.instantiate(empty, "legacy.prefab", entt::null, legacyInstance).success,
-           "a prefab holding collection ids should instantiate into a scene without them");
+    CHECK_MESSAGE((authoring.instantiate(empty, "legacy.prefab", entt::null, legacyInstance).success),
+                  "a prefab holding collection ids should instantiate into a scene without them");
 
     Entity second = entt::null;
-    expect(authoring.instantiate(scene, "lamp.prefab", entt::null, second).success, "a second lamp should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(scene, "lamp.prefab", entt::null, second).success),
+                  "a second lamp should instantiate");
     const SceneEntityId secondId = scene.id(second);
     const SceneEntityId secondBulbId = scene.id(childNamed(scene, second, "Bulb"));
     const SceneCollectionId lights = addCollection(scene, "Lights");
     joinCollection(scene, second, lights);
     joinCollection(scene, scene.findEntity(secondBulbId), props);
     PrefabEntityOverrides overrides;
-    expect(authoring.overrides(scene, second, overrides).success && overrides.components.empty(),
-           "collection membership should never be an override");
+    CHECK_MESSAGE((authoring.overrides(scene, second, overrides).success && overrides.components.empty()),
+                  "collection membership should never be an override");
 
     scene.registry().get<PointLightComponent>(lamp).intensity = 42.0f;
-    expect(authoring.apply(scene, lamp).success, "the first lamp should apply");
-    expect(scene.registry().get<PointLightComponent>(scene.findEntity(secondId)).intensity == 42.0f &&
-               inCollection(scene, scene.findEntity(secondId), lights) &&
-               inCollection(scene, scene.findEntity(secondBulbId), props),
-           "apply propagation should keep the other instance's collection links");
-    expect(authoring.revert(scene, scene.findEntity(secondId)).success &&
-               inCollection(scene, scene.findEntity(secondId), lights) &&
-               inCollection(scene, scene.findEntity(secondBulbId), props),
-           "revert should keep the instance's collection links");
-    expect(readText(root / "lamp.prefab").find("collection_") == std::string::npos,
-           "apply should not store collection links either");
+    CHECK_MESSAGE(authoring.apply(scene, lamp).success, "the first lamp should apply");
+    CHECK_MESSAGE((scene.registry().get<PointLightComponent>(scene.findEntity(secondId)).intensity == 42.0f &&
+                   inCollection(scene, scene.findEntity(secondId), lights) &&
+                   inCollection(scene, scene.findEntity(secondBulbId), props)),
+                  "apply propagation should keep the other instance's collection links");
+    CHECK_MESSAGE((authoring.revert(scene, scene.findEntity(secondId)).success &&
+                   inCollection(scene, scene.findEntity(secondId), lights) &&
+                   inCollection(scene, scene.findEntity(secondBulbId), props)),
+                  "revert should keep the instance's collection links");
+    CHECK_MESSAGE(readText(root / "lamp.prefab").find("collection_") == std::string::npos,
+                  "apply should not store collection links either");
 }
+
+namespace {
 
 FollowComponent& follow(Scene& scene, Entity entity) {
     return scene.registry().get<FollowComponent>(entity);
 }
 
-void testEntityReferenceRemap() {
-    OperatorFixture fixture(freshDirectory("references"));
+} // namespace
+
+TEST_CASE("Prefab: entity reference remap") {
+    OperatorFixture fixture("prefab-references");
     Scene& scene = fixture.scene;
     const Entity outside = scene.createEntity("Outside");
     const Entity rig = scene.createEntity("Rig");
@@ -789,90 +815,99 @@ void testEntityReferenceRemap() {
 
     // Duplicate: references inside the copied set follow the copies.
     fixture.select(rig);
-    expect(fixture.invoke("object.duplicate").status == OperatorStatus::Finished, "the rig should duplicate");
+    CHECK_MESSAGE(fixture.invoke("object.duplicate").status == OperatorStatus::Finished, "the rig should duplicate");
     const Entity copy = fixture.find(*fixture.selection.active());
     const Entity copyArm = childNamed(scene, copy, "Arm");
-    expect(copy != entt::null && copy != fixture.find(rigId) && follow(scene, copy).target == scene.id(copyArm) &&
-               follow(scene, copy).settings.target == scene.id(copy),
-           "duplicating should remap references (including nested struct fields) to the copies");
-    expect(follow(scene, copyArm).target == outsideId, "duplicating should keep references to outside entities");
+    CHECK_MESSAGE((copy != entt::null && copy != fixture.find(rigId) &&
+                   follow(scene, copy).target == scene.id(copyArm) &&
+                   follow(scene, copy).settings.target == scene.id(copy)),
+                  "duplicating should remap references (including nested struct fields) to the copies");
+    CHECK_MESSAGE(follow(scene, copyArm).target == outsideId, "duplicating should keep references to outside entities");
 
     // Copy and paste take the same path.
     std::string fragment;
     std::vector<SceneEntityId> pasted;
     const SceneEntityId pastedSource[]{rigId};
-    expect(SceneFragment::copy(scene, fixture.assets, fixture.document.options(), pastedSource, fragment).success &&
-               SceneFragment::paste(fragment, scene, fixture.assets, fixture.document.options(), entt::null, pasted)
-                   .success &&
-               pasted.size() == 1,
-           "the rig should copy and paste");
+    CHECK_MESSAGE(
+        (SceneFragment::copy(scene, fixture.assets, fixture.document.options(), pastedSource, fragment).success &&
+         SceneFragment::paste(fragment, scene, fixture.assets, fixture.document.options(), entt::null, pasted)
+             .success &&
+         pasted.size() == 1),
+        "the rig should copy and paste");
     const Entity pastedRig = fixture.find(pasted.front());
-    expect(follow(scene, pastedRig).target == scene.id(childNamed(scene, pastedRig, "Arm")) &&
-               follow(scene, pastedRig).settings.target == pasted.front(),
-           "pasting should remap references to the pasted entities");
+    CHECK_MESSAGE((follow(scene, pastedRig).target == scene.id(childNamed(scene, pastedRig, "Arm")) &&
+                   follow(scene, pastedRig).settings.target == pasted.front()),
+                  "pasting should remap references to the pasted entities");
 
     // Prefabs name only their own entities.
     PrefabAuthoring authoring(fixture.assets, fixture.document.options());
     const PrefabResult created = authoring.create(scene, fixture.find(rigId), "rig.prefab");
-    expect(created.success && created.diagnostics.size() == 1 &&
-               created.diagnostics.front().find("outside the prefab") != std::string::npos,
-           "creating a prefab should report a reference outside it");
+    CHECK_MESSAGE((created.success && created.diagnostics.size() == 1 &&
+                   created.diagnostics.front().find("outside the prefab") != std::string::npos),
+                  "creating a prefab should report a reference outside it");
     Scene other;
     Entity instance = entt::null;
-    expect(authoring.instantiate(other, "rig.prefab", entt::null, instance).success, "the rig should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(other, "rig.prefab", entt::null, instance).success),
+                  "the rig should instantiate");
     const Entity instanceArm = childNamed(other, instance, "Arm");
-    expect(follow(other, instance).target == other.id(instanceArm) &&
-               follow(other, instance).settings.target == other.id(instance),
-           "instantiating should point references at the instance's own entities");
-    expect(!follow(other, instanceArm).target, "a reference outside the prefab should be stored as none");
+    CHECK_MESSAGE((follow(other, instance).target == other.id(instanceArm) &&
+                   follow(other, instance).settings.target == other.id(instance)),
+                  "instantiating should point references at the instance's own entities");
+    CHECK_MESSAGE(!follow(other, instanceArm).target, "a reference outside the prefab should be stored as none");
     std::vector<PrefabOverride> overrides;
     PrefabSystem prefabs(fixture.assets, fixture.document.options());
-    expect(prefabs.overrides(other, instance, overrides).success && overrides.empty(),
-           "remapped references should not count as overrides");
+    CHECK_MESSAGE((prefabs.overrides(other, instance, overrides).success && overrides.empty()),
+                  "remapped references should not count as overrides");
 
     // Refresh keeps them pointing inside the refreshed instance.
     Entity second = entt::null;
-    expect(authoring.instantiate(other, "rig.prefab", entt::null, second).success, "a second rig should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(other, "rig.prefab", entt::null, second).success),
+                  "a second rig should instantiate");
     const SceneEntityId secondId = other.id(second);
     other.registry().get<NameComponent>(instance).name = "Renamed rig";
-    expect(authoring.apply(other, instance).success, "the renamed rig should apply");
+    CHECK_MESSAGE(authoring.apply(other, instance).success, "the renamed rig should apply");
     const Entity refreshed = other.findEntity(secondId);
-    expect(other.registry().get<NameComponent>(refreshed).name == "Renamed rig" &&
-               follow(other, refreshed).target == other.id(childNamed(other, refreshed, "Arm")) &&
-               follow(other, refreshed).settings.target == secondId,
-           "refreshing should keep references inside each instance");
+    CHECK_MESSAGE((other.registry().get<NameComponent>(refreshed).name == "Renamed rig" &&
+                   follow(other, refreshed).target == other.id(childNamed(other, refreshed, "Arm")) &&
+                   follow(other, refreshed).settings.target == secondId),
+                  "refreshing should keep references inside each instance");
 
     // An override pointing outside the instance keeps its target through a
     // refresh, even when its scene id equals a prefab-local id.
     const Entity far = other.createEntity("Far");
     std::vector<PrefabOverride> secondOverrides;
     follow(other, refreshed).target = other.id(far);
-    expect(prefabs.overrides(other, refreshed, secondOverrides).success && secondOverrides.size() == 1 &&
-               prefabs.refresh(other, refreshed, secondOverrides, PrefabRefreshMode::KeepAddedObjects).success,
-           "an outside reference should be an override the instance refreshes with");
-    expect(follow(other, other.findEntity(secondId)).target == other.id(far),
-           "a refreshed override should keep referencing the entity outside the instance");
+    CHECK_MESSAGE((prefabs.overrides(other, refreshed, secondOverrides).success && secondOverrides.size() == 1 &&
+                   prefabs.refresh(other, refreshed, secondOverrides, PrefabRefreshMode::KeepAddedObjects).success),
+                  "an outside reference should be an override the instance refreshes with");
+    CHECK_MESSAGE(follow(other, other.findEntity(secondId)).target == other.id(far),
+                  "a refreshed override should keep referencing the entity outside the instance");
 
     // A reference to a prefab entity the instance deleted becomes none.
-    expect(prefabs.refresh(other, other.findEntity(secondId), {}, PrefabRefreshMode::RemoveAddedObjects).success &&
-               follow(other, other.findEntity(secondId)).target ==
-                   other.id(childNamed(other, other.findEntity(secondId), "Arm")),
-           "reverting should point the reference at the instance's arm again");
+    CHECK_MESSAGE(
+        (prefabs.refresh(other, other.findEntity(secondId), {}, PrefabRefreshMode::RemoveAddedObjects).success &&
+         follow(other, other.findEntity(secondId)).target ==
+             other.id(childNamed(other, other.findEntity(secondId), "Arm"))),
+        "reverting should point the reference at the instance's arm again");
     const Entity secondArm = childNamed(other, other.findEntity(secondId), "Arm");
-    expect(recordPrefabEntityRemoval(other, secondArm), "the arm's deletion should be recorded");
+    CHECK_MESSAGE(recordPrefabEntityRemoval(other, secondArm), "the arm's deletion should be recorded");
     other.destroyEntity(secondArm);
-    expect(prefabs.refresh(other, other.findEntity(secondId), PrefabRefreshMode::KeepAddedObjects).success &&
-               childNamed(other, other.findEntity(secondId), "Arm") == entt::null &&
-               !follow(other, other.findEntity(secondId)).target,
-           "a reference to a removed prefab entity should become none, not another entity's id");
+    CHECK_MESSAGE((prefabs.refresh(other, other.findEntity(secondId), PrefabRefreshMode::KeepAddedObjects).success &&
+                   childNamed(other, other.findEntity(secondId), "Arm") == entt::null &&
+                   !follow(other, other.findEntity(secondId)).target),
+                  "a reference to a removed prefab entity should become none, not another entity's id");
 }
+
+namespace {
 
 Entity namedChild(const Scene& scene, SceneEntityId parent, const std::string& name) {
     return childNamed(scene, scene.findEntity(parent), name);
 }
 
-void testStructuralOverrides() {
-    OperatorFixture fixture(freshDirectory("structure"));
+} // namespace
+
+TEST_CASE("Prefab: structural overrides") {
+    OperatorFixture fixture("prefab-structure");
     Scene& scene = fixture.scene;
     const Entity cart = scene.createEntity("Cart");
     const Entity axle = scene.createEntity("Axle");
@@ -884,85 +919,89 @@ void testStructuralOverrides() {
     scene.setParent(seat, cart);
     scene.setParent(lamp, cart);
     PrefabAuthoring authoring(fixture.assets, fixture.document.options());
-    expect(authoring.create(scene, cart, "cart.prefab").success, "the cart prefab should be created");
+    CHECK_MESSAGE(authoring.create(scene, cart, "cart.prefab").success, "the cart prefab should be created");
     const SceneEntityId firstId = scene.id(cart);
     Entity secondRoot = entt::null;
-    expect(authoring.instantiate(scene, "cart.prefab", entt::null, secondRoot).success,
-           "a second cart should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(scene, "cart.prefab", entt::null, secondRoot).success),
+                  "a second cart should instantiate");
     const SceneEntityId secondId = scene.id(secondRoot);
 
     // Delete the first cart's axle (and its wheel) and move its seat under the lamp.
     fixture.select(namedChild(scene, firstId, "Axle"));
-    expect(fixture.invoke("object.delete").status == OperatorStatus::Finished, "the axle should delete");
+    CHECK_MESSAGE(fixture.invoke("object.delete").status == OperatorStatus::Finished, "the axle should delete");
     const SceneEntityId lampId = scene.id(namedChild(scene, firstId, "Lamp"));
     const SceneEntityId seatId = scene.id(namedChild(scene, firstId, "Seat"));
     fixture.edit([&] { scene.reparent(fixture.find(seatId), fixture.find(lampId)); });
     std::vector<PrefabOverride> live;
     PrefabSystem prefabs(fixture.assets, fixture.document.options());
-    expect(prefabs.overrides(scene, fixture.find(firstId), live).success, "the overrides should be computed");
+    CHECK_MESSAGE(prefabs.overrides(scene, fixture.find(firstId), live).success, "the overrides should be computed");
     const auto has = [&live](const std::string& field) {
         return std::ranges::any_of(live, [&field](const PrefabOverride& value) { return value.field == field; });
     };
-    expect(has("/removed") && has("/parent"), "deleting and reparenting should be recorded as overrides");
+    CHECK_MESSAGE((has("/removed") && has("/parent")), "deleting and reparenting should be recorded as overrides");
     PrefabEntityOverrides seatOverrides;
-    expect(authoring.overrides(scene, fixture.find(seatId), seatOverrides).success && seatOverrides.parent &&
-               seatOverrides.removedEntities == 1,
-           "the override query should report the moved entity and the deleted one");
+    CHECK_MESSAGE((authoring.overrides(scene, fixture.find(seatId), seatOverrides).success && seatOverrides.parent &&
+                   seatOverrides.removedEntities == 1),
+                  "the override query should report the moved entity and the deleted one");
 
     // A refresh (revertField on another value) keeps both.
     fixture.edit([&] { scene.registry().get<NameComponent>(fixture.find(lampId)).name = "Torch"; });
-    expect(authoring.revertField(scene, fixture.find(lampId), "", "/name").success,
-           "reverting the lamp's name should refresh the instance");
-    expect(namedChild(scene, firstId, "Axle") == entt::null &&
-               scene.registry().get<RelationshipComponent>(fixture.find(seatId)).parent == fixture.find(lampId),
-           "a refresh should keep the deletion and the move");
+    CHECK_MESSAGE(authoring.revertField(scene, fixture.find(lampId), "", "/name").success,
+                  "reverting the lamp's name should refresh the instance");
+    CHECK_MESSAGE((namedChild(scene, firstId, "Axle") == entt::null &&
+                   scene.registry().get<RelationshipComponent>(fixture.find(seatId)).parent == fixture.find(lampId)),
+                  "a refresh should keep the deletion and the move");
 
     // Survives a save and load of the scene.
     std::string saved;
     Scene reloaded;
-    expect(SceneDocument::serialize(scene, fixture.assets, fixture.document.options(), saved).success &&
-               SceneDocument::deserialize(saved, fixture.assets, fixture.document.options(), reloaded).success,
-           "the scene with structural overrides should save and load");
-    expect(prefabs.refresh(reloaded, reloaded.findEntity(firstId), PrefabRefreshMode::KeepAddedObjects).success &&
-               namedChild(reloaded, firstId, "Axle") == entt::null,
-           "a reloaded instance should keep its deletion through a refresh");
+    CHECK_MESSAGE((SceneDocument::serialize(scene, fixture.assets, fixture.document.options(), saved).success &&
+                   SceneDocument::deserialize(saved, fixture.assets, fixture.document.options(), reloaded).success),
+                  "the scene with structural overrides should save and load");
+    CHECK_MESSAGE(
+        (prefabs.refresh(reloaded, reloaded.findEntity(firstId), PrefabRefreshMode::KeepAddedObjects).success &&
+         namedChild(reloaded, firstId, "Axle") == entt::null),
+        "a reloaded instance should keep its deletion through a refresh");
 
     // Another instance's apply keeps them too.
     fixture.edit([&] {
         const Entity secondWheel = childNamed(scene, namedChild(scene, secondId, "Axle"), "Wheel");
         scene.registry().get<NameComponent>(secondWheel).name = "Rim";
     });
-    expect(authoring.apply(scene, fixture.find(secondId)).success, "the second cart should apply");
-    expect(namedChild(scene, firstId, "Axle") == entt::null &&
-               scene.registry().get<RelationshipComponent>(fixture.find(seatId)).parent == fixture.find(lampId),
-           "apply propagation should keep the other instance's deletion and move");
+    CHECK_MESSAGE(authoring.apply(scene, fixture.find(secondId)).success, "the second cart should apply");
+    CHECK_MESSAGE((namedChild(scene, firstId, "Axle") == entt::null &&
+                   scene.registry().get<RelationshipComponent>(fixture.find(seatId)).parent == fixture.find(lampId)),
+                  "apply propagation should keep the other instance's deletion and move");
 
     // Revert restores; undo brings the overrides back.
     fixture.select(fixture.find(firstId));
-    expect(fixture.invoke("prefab.revert").status == OperatorStatus::Finished, "the first cart should revert");
+    CHECK_MESSAGE(fixture.invoke("prefab.revert").status == OperatorStatus::Finished, "the first cart should revert");
     const Entity restoredAxle = namedChild(scene, firstId, "Axle");
-    expect(restoredAxle != entt::null && childNamed(scene, restoredAxle, "Rim") != entt::null &&
-               scene.registry().get<RelationshipComponent>(fixture.find(seatId)).parent == fixture.find(firstId),
-           "revert should restore the deleted entities and the parent");
+    CHECK_MESSAGE((restoredAxle != entt::null && childNamed(scene, restoredAxle, "Rim") != entt::null &&
+                   scene.registry().get<RelationshipComponent>(fixture.find(seatId)).parent == fixture.find(firstId)),
+                  "revert should restore the deleted entities and the parent");
     fixture.editing().undo();
-    expect(namedChild(scene, firstId, "Axle") == entt::null, "undoing revert should delete them again");
+    CHECK_MESSAGE((namedChild(scene, firstId, "Axle") == entt::null), "undoing revert should delete them again");
 
     // Apply writes both changes into the prefab and the other instance.
     fixture.select(fixture.find(firstId));
-    expect(fixture.invoke("prefab.apply").status == OperatorStatus::Finished, "the first cart should apply");
+    CHECK_MESSAGE(fixture.invoke("prefab.apply").status == OperatorStatus::Finished, "the first cart should apply");
     PrefabDocument document;
-    expect(loadPrefab(fixture.root / "cart.prefab", document).success &&
-               std::ranges::none_of(
-                   document.entities,
-                   [](const PrefabEntity& entity) { return entity.name == "Axle" || entity.name == "Rim"; }),
-           "apply should remove deleted entities from the prefab");
+    CHECK_MESSAGE((loadPrefab(fixture.root / "cart.prefab", document).success &&
+                   std::ranges::none_of(
+                       document.entities,
+                       [](const PrefabEntity& entity) { return entity.name == "Axle" || entity.name == "Rim"; })),
+                  "apply should remove deleted entities from the prefab");
     const Entity secondLamp = namedChild(scene, secondId, "Lamp");
-    expect(namedChild(scene, secondId, "Axle") == entt::null && childNamed(scene, secondLamp, "Seat") != entt::null,
-           "apply should carry the deletion and the move to the other instance");
+    CHECK_MESSAGE(
+        (namedChild(scene, secondId, "Axle") == entt::null && childNamed(scene, secondLamp, "Seat") != entt::null),
+        "apply should carry the deletion and the move to the other instance");
     std::vector<PrefabOverride> after;
-    expect(prefabs.overrides(scene, fixture.find(firstId), after).success && after.empty(),
-           "the applied instance should have no structural overrides left");
+    CHECK_MESSAGE((prefabs.overrides(scene, fixture.find(firstId), after).success && after.empty()),
+                  "the applied instance should have no structural overrides left");
 }
+
+namespace {
 
 bool hasNestedRemoval(const std::vector<PrefabOverride>& overrides) {
     return std::ranges::any_of(
@@ -981,23 +1020,25 @@ bool refreshWithLiveOverrides(PrefabSystem& prefabs, Scene& scene, Entity root) 
            prefabs.refresh(scene, root, live, PrefabRefreshMode::KeepAddedObjects).success;
 }
 
-void testNestedInstanceRemoval() {
-    OperatorFixture fixture(freshDirectory("nested-removal"));
+} // namespace
+
+TEST_CASE("Prefab: nested instance removal") {
+    OperatorFixture fixture("prefab-nested-removal");
     Scene& scene = fixture.scene;
     PrefabAuthoring authoring(fixture.assets, fixture.document.options());
     PrefabSystem prefabs(fixture.assets, fixture.document.options());
     const Entity wheel = scene.createEntity("Wheel");
     scene.registry().emplace<PointLightComponent>(wheel);
-    expect(authoring.create(scene, wheel, "wheel.prefab").success, "the wheel prefab should be created");
+    CHECK_MESSAGE(authoring.create(scene, wheel, "wheel.prefab").success, "the wheel prefab should be created");
     const Entity cart = scene.createEntity("Cart");
     scene.setParent(wheel, cart);
-    expect(authoring.create(scene, cart, "cart.prefab").success, "the cart prefab should be created");
+    CHECK_MESSAGE(authoring.create(scene, cart, "cart.prefab").success, "the cart prefab should be created");
     const SceneEntityId firstId = scene.id(cart);
     Entity second = entt::null;
     Entity third = entt::null;
-    expect(authoring.instantiate(scene, "cart.prefab", entt::null, second).success &&
-               authoring.instantiate(scene, "cart.prefab", entt::null, third).success,
-           "more carts should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(scene, "cart.prefab", entt::null, second).success &&
+                   authoring.instantiate(scene, "cart.prefab", entt::null, third).success),
+                  "more carts should instantiate");
     const SceneEntityId secondId = scene.id(second);
     const SceneEntityId thirdId = scene.id(third);
 
@@ -1005,73 +1046,76 @@ void testNestedInstanceRemoval() {
     // keeps it as an instance of its own prefab.
     const SceneEntityId movedWheelId = scene.id(namedChild(scene, thirdId, "Wheel"));
     fixture.select(fixture.find(movedWheelId));
-    expect(fixture.invoke("outliner.parent_drop", R"({"parent":null})").status == OperatorStatus::Finished,
-           "the third cart's wheel should move to the scene root");
+    CHECK_MESSAGE(fixture.invoke("outliner.parent_drop", R"({"parent":null})").status == OperatorStatus::Finished,
+                  "the third cart's wheel should move to the scene root");
     const Entity movedWheel = fixture.find(movedWheelId);
-    expect(scene.registry().get<RelationshipComponent>(movedWheel).parent == entt::null &&
-               scene.registry().get<PrefabInstanceComponent>(movedWheel).nestedId == 0 &&
-               hasNestedRemoval(persistedOverrides(scene, fixture.find(thirdId))),
-           "a nested instance moved out should become a placed instance and be recorded as removed");
-    expect(refreshWithLiveOverrides(prefabs, scene, fixture.find(thirdId)) &&
-               namedChild(scene, thirdId, "Wheel") == entt::null && fixture.find(movedWheelId) != entt::null,
-           "a refresh should not recreate a nested instance moved out");
+    CHECK_MESSAGE((scene.registry().get<RelationshipComponent>(movedWheel).parent == entt::null &&
+                   scene.registry().get<PrefabInstanceComponent>(movedWheel).nestedId == 0 &&
+                   hasNestedRemoval(persistedOverrides(scene, fixture.find(thirdId)))),
+                  "a nested instance moved out should become a placed instance and be recorded as removed");
+    CHECK_MESSAGE((refreshWithLiveOverrides(prefabs, scene, fixture.find(thirdId)) &&
+                   namedChild(scene, thirdId, "Wheel") == entt::null && fixture.find(movedWheelId) != entt::null),
+                  "a refresh should not recreate a nested instance moved out");
 
     // Delete the first cart's nested wheel.
     fixture.select(namedChild(scene, firstId, "Wheel"));
-    expect(fixture.invoke("object.delete").status == OperatorStatus::Finished, "the nested wheel should delete");
-    expect(hasNestedRemoval(persistedOverrides(scene, fixture.find(firstId))),
-           "deleting a nested instance should be recorded on the containing instance");
+    CHECK_MESSAGE(fixture.invoke("object.delete").status == OperatorStatus::Finished, "the nested wheel should delete");
+    CHECK_MESSAGE(hasNestedRemoval(persistedOverrides(scene, fixture.find(firstId))),
+                  "deleting a nested instance should be recorded on the containing instance");
     std::vector<PrefabOverride> live;
-    expect(prefabs.overrides(scene, fixture.find(firstId), live).success && live.size() == 1 && hasNestedRemoval(live),
-           "the removed nested record should be a live override");
+    CHECK_MESSAGE(
+        (prefabs.overrides(scene, fixture.find(firstId), live).success && live.size() == 1 && hasNestedRemoval(live)),
+        "the removed nested record should be a live override");
     PrefabEntityOverrides header;
-    expect(authoring.overrides(scene, fixture.find(firstId), header).success && header.removedEntities == 1,
-           "the instance header should count the deleted nested instance");
-    expect(refreshWithLiveOverrides(prefabs, scene, fixture.find(firstId)) &&
-               prefabs.refresh(scene, fixture.find(firstId), PrefabRefreshMode::KeepAddedObjects).success &&
-               namedChild(scene, firstId, "Wheel") == entt::null,
-           "a refresh should not recreate the deleted nested instance");
+    CHECK_MESSAGE((authoring.overrides(scene, fixture.find(firstId), header).success && header.removedEntities == 1),
+                  "the instance header should count the deleted nested instance");
+    CHECK_MESSAGE((refreshWithLiveOverrides(prefabs, scene, fixture.find(firstId)) &&
+                   prefabs.refresh(scene, fixture.find(firstId), PrefabRefreshMode::KeepAddedObjects).success &&
+                   namedChild(scene, firstId, "Wheel") == entt::null),
+                  "a refresh should not recreate the deleted nested instance");
 
     // Survives a save and load of the scene.
     std::string saved;
     Scene reloaded;
-    expect(SceneDocument::serialize(scene, fixture.assets, fixture.document.options(), saved).success &&
-               SceneDocument::deserialize(saved, fixture.assets, fixture.document.options(), reloaded).success &&
-               prefabs.refresh(reloaded, reloaded.findEntity(firstId), PrefabRefreshMode::KeepAddedObjects).success &&
-               namedChild(reloaded, firstId, "Wheel") == entt::null,
-           "a reloaded instance should keep the nested instance deleted");
+    CHECK_MESSAGE(
+        (SceneDocument::serialize(scene, fixture.assets, fixture.document.options(), saved).success &&
+         SceneDocument::deserialize(saved, fixture.assets, fixture.document.options(), reloaded).success &&
+         prefabs.refresh(reloaded, reloaded.findEntity(firstId), PrefabRefreshMode::KeepAddedObjects).success &&
+         namedChild(reloaded, firstId, "Wheel") == entt::null),
+        "a reloaded instance should keep the nested instance deleted");
 
     // Another instance's apply keeps it deleted.
     fixture.edit(
         [&] { scene.registry().get<PointLightComponent>(namedChild(scene, secondId, "Wheel")).intensity = 6.0f; });
-    expect(authoring.apply(scene, fixture.find(secondId)).success, "the second cart should apply");
-    expect(namedChild(scene, firstId, "Wheel") == entt::null && namedChild(scene, thirdId, "Wheel") == entt::null,
-           "apply propagation should keep the other instances' nested deletions");
+    CHECK_MESSAGE(authoring.apply(scene, fixture.find(secondId)).success, "the second cart should apply");
+    CHECK_MESSAGE(
+        (namedChild(scene, firstId, "Wheel") == entt::null && namedChild(scene, thirdId, "Wheel") == entt::null),
+        "apply propagation should keep the other instances' nested deletions");
 
     // Revert restores it; undo deletes it again.
     fixture.select(fixture.find(firstId));
-    expect(fixture.invoke("prefab.revert").status == OperatorStatus::Finished, "the first cart should revert");
+    CHECK_MESSAGE(fixture.invoke("prefab.revert").status == OperatorStatus::Finished, "the first cart should revert");
     const Entity restored = namedChild(scene, firstId, "Wheel");
-    expect(restored != entt::null && scene.registry().get<PointLightComponent>(restored).intensity == 6.0f,
-           "revert should recreate the nested instance from the current record");
+    CHECK_MESSAGE((restored != entt::null && scene.registry().get<PointLightComponent>(restored).intensity == 6.0f),
+                  "revert should recreate the nested instance from the current record");
     fixture.editing().undo();
-    expect(namedChild(scene, firstId, "Wheel") == entt::null, "undoing revert should delete it again");
+    CHECK_MESSAGE((namedChild(scene, firstId, "Wheel") == entt::null), "undoing revert should delete it again");
 
     // Apply removes the record from the prefab and from the other instance.
     fixture.select(fixture.find(firstId));
-    expect(fixture.invoke("prefab.apply").status == OperatorStatus::Finished, "the first cart should apply");
+    CHECK_MESSAGE(fixture.invoke("prefab.apply").status == OperatorStatus::Finished, "the first cart should apply");
     PrefabDocument document;
-    expect(loadPrefab(fixture.root / "cart.prefab", document).success && document.nested.empty(),
-           "apply should remove the deleted nested record from the prefab");
-    expect(namedChild(scene, secondId, "Wheel") == entt::null && fixture.find(movedWheelId) != entt::null,
-           "apply should remove the nested instance from the other instance and keep the one moved out");
+    CHECK_MESSAGE((loadPrefab(fixture.root / "cart.prefab", document).success && document.nested.empty()),
+                  "apply should remove the deleted nested record from the prefab");
+    CHECK_MESSAGE((namedChild(scene, secondId, "Wheel") == entt::null && fixture.find(movedWheelId) != entt::null),
+                  "apply should remove the nested instance from the other instance and keep the one moved out");
     std::vector<PrefabOverride> after;
-    expect(prefabs.overrides(scene, fixture.find(firstId), after).success && after.empty(),
-           "the applied instance should have no overrides left");
+    CHECK_MESSAGE((prefabs.overrides(scene, fixture.find(firstId), after).success && after.empty()),
+                  "the applied instance should have no overrides left");
 }
 
-void testMovesOutOfAndWithinInstances() {
-    OperatorFixture fixture(freshDirectory("moves"));
+TEST_CASE("Prefab: moves out of and within instances") {
+    OperatorFixture fixture("prefab-moves");
     Scene& scene = fixture.scene;
     PrefabAuthoring authoring(fixture.assets, fixture.document.options());
     PrefabSystem prefabs(fixture.assets, fixture.document.options());
@@ -1083,10 +1127,11 @@ void testMovesOutOfAndWithinInstances() {
     scene.setParent(seat, cart);
     scene.setParent(lamp, cart);
     scene.setParent(bulb, lamp);
-    expect(authoring.create(scene, cart, "cart.prefab").success, "the cart prefab should be created");
+    CHECK_MESSAGE(authoring.create(scene, cart, "cart.prefab").success, "the cart prefab should be created");
     const SceneEntityId firstId = scene.id(cart);
     Entity second = entt::null;
-    expect(authoring.instantiate(scene, "cart.prefab", entt::null, second).success, "a second cart should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(scene, "cart.prefab", entt::null, second).success),
+                  "a second cart should instantiate");
     const SceneEntityId secondId = scene.id(second);
     const SceneEntityId seatId = scene.id(seat);
     const SceneEntityId lampId = scene.id(lamp);
@@ -1100,38 +1145,39 @@ void testMovesOutOfAndWithinInstances() {
         rackId = scene.id(rack);
     });
     fixture.select(fixture.find(seatId));
-    expect(fixture.invoke("outliner.parent_drop", R"({"parent":)" + std::to_string(rackId.value) + "}").status ==
-               OperatorStatus::Finished,
-           "the seat should move under the added rack");
+    CHECK_MESSAGE(fixture.invoke("outliner.parent_drop", R"({"parent":)" + std::to_string(rackId.value) + "}").status ==
+                      OperatorStatus::Finished,
+                  "the seat should move under the added rack");
     std::vector<PrefabOverride> live;
-    expect(prefabs.overrides(scene, fixture.find(firstId), live).success && live.size() == 1 &&
-               live.front().field == "/parent" &&
-               nlohmann::json::parse(live.front().jsonValue).get<uint64_t>() == (rackId.value | (uint64_t{1} << 63u)),
-           "moving under an added object should be a /parent override naming it by tagged scene id");
+    CHECK_MESSAGE(
+        (prefabs.overrides(scene, fixture.find(firstId), live).success && live.size() == 1 &&
+         live.front().field == "/parent" &&
+         nlohmann::json::parse(live.front().jsonValue).get<uint64_t>() == (rackId.value | (uint64_t{1} << 63u))),
+        "moving under an added object should be a /parent override naming it by tagged scene id");
     PrefabEntityOverrides seatOverrides;
-    expect(authoring.overrides(scene, fixture.find(seatId), seatOverrides).success && seatOverrides.parent,
-           "the override query should report the move");
+    CHECK_MESSAGE((authoring.overrides(scene, fixture.find(seatId), seatOverrides).success && seatOverrides.parent),
+                  "the override query should report the move");
     const auto seatParent = [&] { return scene.registry().get<RelationshipComponent>(fixture.find(seatId)).parent; };
 
     // A refresh keeps it, also after a save and load.
     fixture.edit([&] { scene.registry().get<NameComponent>(fixture.find(lampId)).name = "Torch"; });
-    expect(authoring.revertField(scene, fixture.find(lampId), "", "/name").success &&
-               seatParent() == fixture.find(rackId),
-           "a refresh should keep the seat under the added rack");
+    CHECK_MESSAGE((authoring.revertField(scene, fixture.find(lampId), "", "/name").success &&
+                   seatParent() == fixture.find(rackId)),
+                  "a refresh should keep the seat under the added rack");
     std::string saved;
     Scene reloaded;
-    expect(SceneDocument::serialize(scene, fixture.assets, fixture.document.options(), saved).success &&
-               SceneDocument::deserialize(saved, fixture.assets, fixture.document.options(), reloaded).success &&
-               refreshWithLiveOverrides(prefabs, reloaded, reloaded.findEntity(firstId)) &&
-               reloaded.registry().get<RelationshipComponent>(reloaded.findEntity(seatId)).parent ==
-                   reloaded.findEntity(rackId),
-           "a reloaded instance should keep the seat under the rack through a refresh");
+    CHECK_MESSAGE((SceneDocument::serialize(scene, fixture.assets, fixture.document.options(), saved).success &&
+                   SceneDocument::deserialize(saved, fixture.assets, fixture.document.options(), reloaded).success &&
+                   refreshWithLiveOverrides(prefabs, reloaded, reloaded.findEntity(firstId)) &&
+                   reloaded.registry().get<RelationshipComponent>(reloaded.findEntity(seatId)).parent ==
+                       reloaded.findEntity(rackId)),
+                  "a reloaded instance should keep the seat under the rack through a refresh");
 
     // Moving the lamp to the scene root takes it (and its bulb) out of the
     // instance as plain objects that keep their components.
     fixture.select(fixture.find(lampId));
-    expect(fixture.invoke("outliner.parent_drop", R"({"parent":null})").status == OperatorStatus::Finished,
-           "the lamp should move to the scene root");
+    CHECK_MESSAGE(fixture.invoke("outliner.parent_drop", R"({"parent":null})").status == OperatorStatus::Finished,
+                  "the lamp should move to the scene root");
     const auto unlinkedLamp = [&] {
         const Entity moved = fixture.find(lampId);
         return moved != entt::null && scene.registry().get<RelationshipComponent>(moved).parent == entt::null &&
@@ -1139,62 +1185,63 @@ void testMovesOutOfAndWithinInstances() {
                !scene.registry().all_of<PrefabEntityComponent>(fixture.find(bulbId)) &&
                scene.registry().get<PointLightComponent>(moved).intensity == 3.0f;
     };
-    expect(unlinkedLamp(), "the moved lamp should be an unlinked scene object with its components");
-    expect(prefabs.overrides(scene, fixture.find(firstId), live).success &&
-               std::ranges::any_of(live, [](const PrefabOverride& value) { return value.field == "/removed"; }),
-           "moving out should be recorded as a removal");
-    expect(refreshWithLiveOverrides(prefabs, scene, fixture.find(firstId)) &&
-               namedChild(scene, firstId, "Lamp") == entt::null && unlinkedLamp() &&
-               seatParent() == fixture.find(rackId),
-           "a refresh should neither recreate the lamp in the instance nor touch the moved one");
+    CHECK_MESSAGE(unlinkedLamp(), "the moved lamp should be an unlinked scene object with its components");
+    CHECK_MESSAGE((prefabs.overrides(scene, fixture.find(firstId), live).success &&
+                   std::ranges::any_of(live, [](const PrefabOverride& value) { return value.field == "/removed"; })),
+                  "moving out should be recorded as a removal");
+    CHECK_MESSAGE((refreshWithLiveOverrides(prefabs, scene, fixture.find(firstId)) &&
+                   namedChild(scene, firstId, "Lamp") == entt::null && unlinkedLamp() &&
+                   seatParent() == fixture.find(rackId)),
+                  "a refresh should neither recreate the lamp in the instance nor touch the moved one");
     fixture.editing().undo();
-    expect(scene.registry().get<RelationshipComponent>(fixture.find(lampId)).parent == fixture.find(firstId) &&
-               scene.registry().all_of<PrefabEntityComponent>(fixture.find(lampId)),
-           "undoing the move should put the lamp back, linked");
+    CHECK_MESSAGE((scene.registry().get<RelationshipComponent>(fixture.find(lampId)).parent == fixture.find(firstId) &&
+                   scene.registry().all_of<PrefabEntityComponent>(fixture.find(lampId))),
+                  "undoing the move should put the lamp back, linked");
     fixture.editing().redo();
-    expect(unlinkedLamp(), "redoing the move should unlink it again");
+    CHECK_MESSAGE(unlinkedLamp(), "redoing the move should unlink it again");
 
     // Revert restores both; undo brings the overrides back.
     fixture.select(fixture.find(firstId));
-    expect(fixture.invoke("prefab.revert").status == OperatorStatus::Finished, "the first cart should revert");
-    expect(seatParent() == fixture.find(firstId) && fixture.find(rackId) == entt::null &&
-               namedChild(scene, firstId, "Lamp") != entt::null && unlinkedLamp(),
-           "revert should restore the seat's parent and a lamp, and keep the moved lamp");
+    CHECK_MESSAGE(fixture.invoke("prefab.revert").status == OperatorStatus::Finished, "the first cart should revert");
+    CHECK_MESSAGE((seatParent() == fixture.find(firstId) && fixture.find(rackId) == entt::null &&
+                   namedChild(scene, firstId, "Lamp") != entt::null && unlinkedLamp()),
+                  "revert should restore the seat's parent and a lamp, and keep the moved lamp");
     fixture.editing().undo();
-    expect(seatParent() == fixture.find(rackId) && namedChild(scene, firstId, "Lamp") == entt::null,
-           "undoing revert should restore the moves");
+    CHECK_MESSAGE((seatParent() == fixture.find(rackId) && namedChild(scene, firstId, "Lamp") == entt::null),
+                  "undoing revert should restore the moves");
 
     // Apply writes both into the prefab and the other instance.
     fixture.select(fixture.find(firstId));
-    expect(fixture.invoke("prefab.apply").status == OperatorStatus::Finished, "the first cart should apply");
+    CHECK_MESSAGE(fixture.invoke("prefab.apply").status == OperatorStatus::Finished, "the first cart should apply");
     PrefabDocument document;
-    expect(
-        loadPrefab(fixture.root / "cart.prefab", document).success &&
-            std::ranges::none_of(document.entities, [](const PrefabEntity& entity) { return entity.name == "Lamp"; }),
+    CHECK_MESSAGE(
+        (loadPrefab(fixture.root / "cart.prefab", document).success &&
+         std::ranges::none_of(document.entities, [](const PrefabEntity& entity) { return entity.name == "Lamp"; })),
         "apply should remove the moved-out lamp from the prefab");
     const Entity secondRack = namedChild(scene, secondId, "Rack");
-    expect(secondRack != entt::null && childNamed(scene, secondRack, "Seat") != entt::null &&
-               namedChild(scene, secondId, "Lamp") == entt::null && unlinkedLamp(),
-           "apply should give the other instance the rack with the seat and remove its lamp");
-    expect(prefabs.overrides(scene, fixture.find(firstId), live).success && live.empty(),
-           "the applied instance should have no overrides left");
+    CHECK_MESSAGE((secondRack != entt::null && childNamed(scene, secondRack, "Seat") != entt::null &&
+                   namedChild(scene, secondId, "Lamp") == entt::null && unlinkedLamp()),
+                  "apply should give the other instance the rack with the seat and remove its lamp");
+    CHECK_MESSAGE((prefabs.overrides(scene, fixture.find(firstId), live).success && live.empty()),
+                  "the applied instance should have no overrides left");
 
     // Moving into another instance makes the object an added one there.
     fixture.select(fixture.find(seatId));
-    expect(fixture.invoke("outliner.parent_drop", R"({"parent":)" + std::to_string(secondId.value) + "}").status ==
-                   OperatorStatus::Finished &&
-               !scene.registry().all_of<PrefabEntityComponent>(fixture.find(seatId)),
-           "a prefab object moved into another instance should be added there, unlinked");
+    CHECK_MESSAGE(
+        (fixture.invoke("outliner.parent_drop", R"({"parent":)" + std::to_string(secondId.value) + "}").status ==
+             OperatorStatus::Finished &&
+         !scene.registry().all_of<PrefabEntityComponent>(fixture.find(seatId))),
+        "a prefab object moved into another instance should be added there, unlinked");
     PrefabEntityOverrides movedOverrides;
-    expect(authoring.overrides(scene, fixture.find(seatId), movedOverrides).success && movedOverrides.added &&
-               movedOverrides.instanceRoot == secondId,
-           "the moved object should count as added to the other instance");
+    CHECK_MESSAGE((authoring.overrides(scene, fixture.find(seatId), movedOverrides).success && movedOverrides.added &&
+                   movedOverrides.instanceRoot == secondId),
+                  "the moved object should count as added to the other instance");
 }
 
 // R > Q > P, then P under an added A and Q under P: falling back to prefab
 // parents (as the validation rebuild does) must not make a cycle.
-void testMovesUnderAddedWithoutCycles() {
-    OperatorFixture fixture(freshDirectory("move-cycles"));
+TEST_CASE("Prefab: moves under added without cycles") {
+    OperatorFixture fixture("prefab-move-cycles");
     Scene& scene = fixture.scene;
     PrefabAuthoring authoring(fixture.assets, fixture.document.options());
     PrefabSystem prefabs(fixture.assets, fixture.document.options());
@@ -1203,7 +1250,7 @@ void testMovesUnderAddedWithoutCycles() {
     const Entity p = scene.createEntity("P");
     scene.setParent(q, root);
     scene.setParent(p, q);
-    expect(authoring.create(scene, root, "chain.prefab").success, "the chain prefab should be created");
+    CHECK_MESSAGE(authoring.create(scene, root, "chain.prefab").success, "the chain prefab should be created");
     const Entity added = scene.createEntity("A");
     scene.setParent(added, root);
     scene.reparent(p, added);
@@ -1215,24 +1262,29 @@ void testMovesUnderAddedWithoutCycles() {
     const auto parentOf = [&](SceneEntityId id) {
         return scene.registry().get<RelationshipComponent>(scene.findEntity(id)).parent;
     };
-    expect(refreshWithLiveOverrides(prefabs, scene, scene.findEntity(rootId)) &&
-               parentOf(pId) == scene.findEntity(addedId) && parentOf(qId) == scene.findEntity(pId),
-           "a refresh should keep both moves without making a cycle");
+    CHECK_MESSAGE((refreshWithLiveOverrides(prefabs, scene, scene.findEntity(rootId)) &&
+                   parentOf(pId) == scene.findEntity(addedId) && parentOf(qId) == scene.findEntity(pId)),
+                  "a refresh should keep both moves without making a cycle");
     std::vector<PrefabOverride> live;
-    expect(prefabs.overrides(scene, scene.findEntity(rootId), live).success &&
-               prefabs.refresh(scene, scene.findEntity(rootId), live, PrefabRefreshMode::RemoveAddedObjects).success &&
-               scene.findEntity(addedId) == entt::null &&
-               prefabInstanceRoot(scene, scene.findEntity(pId)) == scene.findEntity(rootId) &&
-               prefabInstanceRoot(scene, scene.findEntity(qId)) == scene.findEntity(rootId),
-           "removing the added parent should put the moved entities back without a cycle");
+    CHECK_MESSAGE(
+        (prefabs.overrides(scene, scene.findEntity(rootId), live).success &&
+         prefabs.refresh(scene, scene.findEntity(rootId), live, PrefabRefreshMode::RemoveAddedObjects).success &&
+         scene.findEntity(addedId) == entt::null &&
+         prefabInstanceRoot(scene, scene.findEntity(pId)) == scene.findEntity(rootId) &&
+         prefabInstanceRoot(scene, scene.findEntity(qId)) == scene.findEntity(rootId)),
+        "removing the added parent should put the moved entities back without a cycle");
 }
+
+namespace {
 
 FollowComponent& followOf(Scene& scene, Entity entity) {
     return scene.registry().get<FollowComponent>(entity);
 }
 
-void testNestedReferences() {
-    OperatorFixture fixture(freshDirectory("nested-references"));
+} // namespace
+
+TEST_CASE("Prefab: nested references") {
+    OperatorFixture fixture("prefab-nested-references");
     Scene& scene = fixture.scene;
     PrefabAuthoring authoring(fixture.assets, fixture.document.options());
     // Scene ids well above the prefab-local ids, so the two cannot match.
@@ -1242,7 +1294,7 @@ void testNestedReferences() {
     const Entity wheel = scene.createEntity("Wheel");
     const Entity hub = scene.createEntity("Hub");
     scene.setParent(hub, wheel);
-    expect(authoring.create(scene, wheel, "wheel.prefab").success, "the wheel prefab should be created");
+    CHECK_MESSAGE(authoring.create(scene, wheel, "wheel.prefab").success, "the wheel prefab should be created");
     const Entity cart = scene.createEntity("Cart");
     const Entity axle = scene.createEntity("Axle");
     const Entity outside = scene.createEntity("Outside");
@@ -1255,15 +1307,16 @@ void testNestedReferences() {
     scene.registry().emplace<FollowComponent>(
         hub, FollowComponent{.target = scene.id(axle), .settings = {.target = scene.id(outside)}});
     const PrefabResult created = authoring.create(scene, cart, "cart.prefab");
-    expect(created.success && std::ranges::any_of(created.diagnostics,
-                                                  [](const std::string& diagnostic) {
-                                                      return diagnostic.find("outside the prefab") != std::string::npos;
-                                                  }),
-           "the cart should be created, reporting the reference outside it");
+    CHECK_MESSAGE((created.success && std::ranges::any_of(created.diagnostics,
+                                                          [](const std::string& diagnostic) {
+                                                              return diagnostic.find("outside the prefab") !=
+                                                                     std::string::npos;
+                                                          })),
+                  "the cart should be created, reporting the reference outside it");
 
     PrefabDocument document;
-    expect(loadPrefab(fixture.root / "cart.prefab", document).success && document.nested.size() == 1,
-           "the cart prefab should load with its nested wheel");
+    CHECK_MESSAGE((loadPrefab(fixture.root / "cart.prefab", document).success && document.nested.size() == 1),
+                  "the cart prefab should load with its nested wheel");
     const auto axleEntity = std::ranges::find(document.entities, std::string("Axle"),
                                               [](const PrefabEntity& entity) { return entity.name; });
     const auto follow = axleEntity == document.entities.end()
@@ -1271,22 +1324,22 @@ void testNestedReferences() {
                             : std::ranges::find(axleEntity->components, std::string("test_follow"),
                                                 &std::pair<std::string, std::string>::first);
     const uint64_t hubReference = prefabNestedReference(document.nested.front().id, PrefabEntityId{2});
-    expect(axleEntity != document.entities.end() && follow != axleEntity->components.end() &&
-               nlohmann::json::parse(follow->second).value("target", uint64_t{0}) == hubReference,
-           "a reference into a nested instance should be stored as a nested reference");
+    CHECK_MESSAGE((axleEntity != document.entities.end() && follow != axleEntity->components.end() &&
+                   nlohmann::json::parse(follow->second).value("target", uint64_t{0}) == hubReference),
+                  "a reference into a nested instance should be stored as a nested reference");
     const auto hubFollow =
         std::ranges::find(document.nested.front().overrides, std::string("test_follow"), &PrefabOverride::component);
     const nlohmann::json hubValue = hubFollow == document.nested.front().overrides.end()
                                         ? nlohmann::json()
                                         : nlohmann::json::parse(hubFollow->jsonValue);
-    expect(hubValue.is_object() && axleEntity != document.entities.end() &&
-               hubValue.value("target", uint64_t{0}) == (axleEntity->id.value | (uint64_t{1} << 63u)) &&
-               hubValue["settings"]["target"].is_null(),
-           "a nested record's reference to the container should name its prefab-local id, and others none");
+    CHECK_MESSAGE((hubValue.is_object() && axleEntity != document.entities.end() &&
+                   hubValue.value("target", uint64_t{0}) == (axleEntity->id.value | (uint64_t{1} << 63u)) &&
+                   hubValue["settings"]["target"].is_null()),
+                  "a nested record's reference to the container should name its prefab-local id, and others none");
     const std::string text = readText(fixture.root / "cart.prefab");
     for (const Entity entity : {axle, outside, cart}) {
-        expect(text.find(std::to_string(scene.id(entity).value | (uint64_t{1} << 63u))) == std::string::npos,
-               "the prefab file should hold no scene ids");
+        CHECK_MESSAGE(text.find(std::to_string(scene.id(entity).value | (uint64_t{1} << 63u))) == std::string::npos,
+                      "the prefab file should hold no scene ids");
     }
 
     // Instances resolve both kinds to their own entities.
@@ -1296,9 +1349,9 @@ void testNestedReferences() {
     }
     Entity first = entt::null;
     Entity second = entt::null;
-    expect(authoring.instantiate(other, "cart.prefab", entt::null, first).success &&
-               authoring.instantiate(other, "cart.prefab", entt::null, second).success,
-           "two carts should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(other, "cart.prefab", entt::null, first).success &&
+                   authoring.instantiate(other, "cart.prefab", entt::null, second).success),
+                  "two carts should instantiate");
     const auto references = [&](Entity root) {
         const Entity instanceAxle = childNamed(other, root, "Beam") != entt::null ? childNamed(other, root, "Beam")
                                                                                   : childNamed(other, root, "Axle");
@@ -1309,25 +1362,28 @@ void testNestedReferences() {
                followOf(other, instanceHub).target == other.id(instanceAxle) &&
                !followOf(other, instanceHub).settings.target;
     };
-    expect(references(first) && references(second), "instances should resolve references into and out of nested ones");
+    CHECK_MESSAGE((references(first) && references(second)),
+                  "instances should resolve references into and out of nested ones");
     PrefabSystem prefabs(fixture.assets, fixture.document.options());
     std::vector<PrefabOverride> overrides;
-    expect(prefabs.overrides(other, first, overrides).success && overrides.empty(),
-           "resolved nested references should not be overrides");
+    CHECK_MESSAGE((prefabs.overrides(other, first, overrides).success && overrides.empty()),
+                  "resolved nested references should not be overrides");
 
     // Apply keeps them in the other instance.
     const SceneEntityId secondId = other.id(second);
     other.registry().get<NameComponent>(childNamed(other, first, "Axle")).name = "Beam";
-    expect(authoring.apply(other, first).success, "the renamed cart should apply");
-    expect(references(first) && references(other.findEntity(secondId)) &&
-               childNamed(other, other.findEntity(secondId), "Beam") != entt::null,
-           "apply and refresh should keep the references inside each instance");
+    CHECK_MESSAGE(authoring.apply(other, first).success, "the renamed cart should apply");
+    CHECK_MESSAGE((references(first) && references(other.findEntity(secondId)) &&
+                   childNamed(other, other.findEntity(secondId), "Beam") != entt::null),
+                  "apply and refresh should keep the references inside each instance");
     const std::string applied = readText(fixture.root / "cart.prefab");
     for (const Entity entity : prefabInstanceMembers(other, first)) {
-        expect(applied.find(std::to_string(other.id(entity).value | (uint64_t{1} << 63u))) == std::string::npos,
-               "an applied prefab should hold no scene ids");
+        CHECK_MESSAGE(applied.find(std::to_string(other.id(entity).value | (uint64_t{1} << 63u))) == std::string::npos,
+                      "an applied prefab should hold no scene ids");
     }
 }
+
+namespace {
 
 // Opens reference into an empty scene and saves it again without edits;
 // returns whether the file kept every byte.
@@ -1345,20 +1401,23 @@ bool reopenKeepsBytes(const std::filesystem::path& root, AssetManager& assets, c
     return roundTrip && readText(root / reference) == written;
 }
 
-void testOpenAndSaveRoundTrip() {
-    OperatorFixture fixture(freshDirectory("round-trip"));
+} // namespace
+
+TEST_CASE("Prefab: open and save round trip") {
+    OperatorFixture fixture("prefab-round-trip");
     Scene& scene = fixture.scene;
     const SceneDocumentOptions& options = fixture.document.options();
     PrefabAuthoring authoring(fixture.assets, options);
     // Module and preserved unknown components, and a child.
     const Entity lamp = authorLamp(scene);
     scene.registry().get<TransformComponent>(lamp).local[3] = glm::vec4(3.0f, 0.0f, 0.0f, 1.0f);
-    expect(authoring.create(scene, lamp, "lamp.prefab").success, "the round-trip lamp should be created");
+    CHECK_MESSAGE(authoring.create(scene, lamp, "lamp.prefab").success, "the round-trip lamp should be created");
     // A nested prefab and entity references into and out of it.
     const Entity wheel = scene.createEntity("Wheel");
     const Entity hub = scene.createEntity("Hub");
     scene.setParent(hub, wheel);
-    expect(authoring.create(scene, wheel, "parts/wheel.prefab").success, "the round-trip wheel should be created");
+    CHECK_MESSAGE(authoring.create(scene, wheel, "parts/wheel.prefab").success,
+                  "the round-trip wheel should be created");
     const Entity cart = scene.createEntity("Cart");
     const Entity axle = scene.createEntity("Axle");
     scene.setParent(axle, cart);
@@ -1367,11 +1426,11 @@ void testOpenAndSaveRoundTrip() {
     scene.registry().emplace<FollowComponent>(axle, FollowComponent{.target = scene.id(hub)});
     scene.registry().emplace<FollowComponent>(
         hub, FollowComponent{.target = scene.id(axle), .settings = {.target = scene.id(axle), .distance = 3.0f}});
-    expect(authoring.create(scene, cart, "cart.prefab").success, "the round-trip cart should be created");
+    CHECK_MESSAGE(authoring.create(scene, cart, "cart.prefab").success, "the round-trip cart should be created");
 
     for (const char* reference : {"lamp.prefab", "parts/wheel.prefab", "cart.prefab"}) {
-        expect(reopenKeepsBytes(fixture.root, fixture.assets, options, reference),
-               "opening and saving an editor-written prefab without edits should keep every byte");
+        CHECK_MESSAGE(reopenKeepsBytes(fixture.root, fixture.assets, options, reference),
+                      "opening and saving an editor-written prefab without edits should keep every byte");
     }
 
     // The engine capture alone, as an editor saving a prefab document calls it.
@@ -1380,83 +1439,60 @@ void testOpenAndSaveRoundTrip() {
     const PrefabInstanceResult cartInstance = prefabs.instantiate("cart.prefab", empty);
     PrefabCapture capture;
     std::string serialized;
-    expect(cartInstance.success &&
-               prefabs
-                   .capture(empty, cartInstance.root, "cart.prefab", capture,
-                            PrefabCaptureOptions{.keepRootTransform = true})
-                   .success &&
-               serializePrefab(capture.document, serialized).success &&
-               serialized + '\n' == readText(fixture.root / "cart.prefab"),
-           "capturing an instantiated prefab with keepRootTransform should reproduce its file");
+    CHECK_MESSAGE(
+        (cartInstance.success &&
+         prefabs
+             .capture(empty, cartInstance.root, "cart.prefab", capture, PrefabCaptureOptions{.keepRootTransform = true})
+             .success &&
+         serializePrefab(capture.document, serialized).success &&
+         serialized + '\n' == readText(fixture.root / "cart.prefab")),
+        "capturing an instantiated prefab with keepRootTransform should reproduce its file");
 
     // An edited root transform is the prefab's content there.
     Scene document;
     OpenedPrefabDocument opened;
-    expect(openPrefabDocument("lamp.prefab", document, prefabs, opened).success && opened.displayName == "Lamp",
-           "the lamp should open with its display name");
+    CHECK_MESSAGE(
+        (openPrefabDocument("lamp.prefab", document, prefabs, opened).success && opened.displayName == "Lamp"),
+        "the lamp should open with its display name");
     const Entity openedRoot = document.findEntity(opened.root);
-    expect(openedRoot != entt::null && document.registry().get<TransformComponent>(openedRoot).local[3].x == 3.0f,
-           "the opened root should carry the prefab's root transform");
+    CHECK_MESSAGE(
+        (openedRoot != entt::null && document.registry().get<TransformComponent>(openedRoot).local[3].x == 3.0f),
+        "the opened root should carry the prefab's root transform");
     document.registry().get<TransformComponent>(openedRoot).local[3] = glm::vec4(0.0f, 5.0f, 0.0f, 1.0f);
     const Entity extra = document.createEntity("Extra");
     document.setParent(extra, openedRoot);
     SavedPrefabDocument saved;
-    expect(savePrefabDocument(document, opened.root, "lamp.prefab", prefabs, saved).success &&
-               saved.before == opened.fileBytes && saved.after != opened.fileBytes,
-           "saving an edited prefab document should report both contents");
+    CHECK_MESSAGE((savePrefabDocument(document, opened.root, "lamp.prefab", prefabs, saved).success &&
+                   saved.before == opened.fileBytes && saved.after != opened.fileBytes),
+                  "saving an edited prefab document should report both contents");
     PrefabDocument reloaded;
-    expect(loadPrefab(fixture.root / "lamp.prefab", reloaded).success && reloaded.entities.size() == 3 &&
-               reloaded.entities.front().localTransform[3].y == 5.0f,
-           "an edited root transform and an added entity should be saved");
-    expect(document.registry().all_of<PrefabEntityComponent>(extra),
-           "saving should link an added entity, so the next save keeps its id");
-    expect(reopenKeepsBytes(fixture.root, fixture.assets, options, "lamp.prefab"),
-           "a saved prefab document should reopen and save unchanged");
+    CHECK_MESSAGE((loadPrefab(fixture.root / "lamp.prefab", reloaded).success && reloaded.entities.size() == 3 &&
+                   reloaded.entities.front().localTransform[3].y == 5.0f),
+                  "an edited root transform and an added entity should be saved");
+    CHECK_MESSAGE(document.registry().all_of<PrefabEntityComponent>(extra),
+                  "saving should link an added entity, so the next save keeps its id");
+    CHECK_MESSAGE(reopenKeepsBytes(fixture.root, fixture.assets, options, "lamp.prefab"),
+                  "a saved prefab document should reopen and save unchanged");
 
     // An apply still keeps the prefab's own root placement.
     Entity instance = entt::null;
-    expect(authoring.instantiate(scene, "lamp.prefab", entt::null, instance).success, "the lamp should instantiate");
+    CHECK_MESSAGE((authoring.instantiate(scene, "lamp.prefab", entt::null, instance).success),
+                  "the lamp should instantiate");
     scene.registry().get<TransformComponent>(instance).local[3] = glm::vec4(9.0f, 0.0f, 0.0f, 1.0f);
-    expect(authoring.apply(scene, instance).success && loadPrefab(fixture.root / "lamp.prefab", reloaded).success &&
-               reloaded.entities.front().localTransform[3].y == 5.0f &&
-               reloaded.entities.front().localTransform[3].x == 0.0f,
-           "apply should keep the prefab's root transform");
+    CHECK_MESSAGE((authoring.apply(scene, instance).success &&
+                   loadPrefab(fixture.root / "lamp.prefab", reloaded).success &&
+                   reloaded.entities.front().localTransform[3].y == 5.0f &&
+                   reloaded.entities.front().localTransform[3].x == 0.0f),
+                  "apply should keep the prefab's root transform");
 
     Scene occupied;
     occupied.createEntity("Existing");
-    expect(!openPrefabDocument("lamp.prefab", occupied, prefabs, opened),
-           "a prefab should open only into an empty scene");
+    CHECK_MESSAGE(!openPrefabDocument("lamp.prefab", occupied, prefabs, opened),
+                  "a prefab should open only into an empty scene");
     Scene missing;
-    expect(!openPrefabDocument("missing.prefab", missing, prefabs, opened) &&
-               missing.registry().view<const SceneEntityIdComponent>().empty(),
-           "opening a missing prefab should fail without changing the scene");
+    CHECK_MESSAGE((!openPrefabDocument("missing.prefab", missing, prefabs, opened) &&
+                   missing.registry().view<const SceneEntityIdComponent>().empty()),
+                  "opening a missing prefab should fail without changing the scene");
 }
-} // namespace
 
-int main() {
-    testRegistryRoundTrip();
-    testVersion1Migration();
-    testLinkPersistence();
-    testOverrideQuery();
-    testOperators();
-    testAddCharacter();
-    testNestedPrefabs();
-    testFailedRefreshRestoresScene();
-    testApplyPropagation();
-    testCollectionsStayInScene();
-    testEntityReferenceRemap();
-    testStructuralOverrides();
-    testNestedInstanceRemoval();
-    testMovesOutOfAndWithinInstances();
-    testMovesUnderAddedWithoutCycles();
-    testNestedReferences();
-    testOpenAndSaveRoundTrip();
-    for (const char* name : {"registry", "v1", "persistence", "overrides", "operators", "character", "nested",
-                             "rollback", "propagation", "collections", "references", "structure", "nested-removal",
-                             "moves", "move-cycles", "nested-references", "round-trip"}) {
-        std::error_code error;
-        std::filesystem::remove_all(
-            std::filesystem::temp_directory_path() / ("zenith-prefab-tests-" + std::string(name)), error);
-    }
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

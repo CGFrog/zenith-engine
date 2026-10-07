@@ -18,6 +18,7 @@
 #include "editor/operators/PlacementOperators.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/diagnostics/Benchmark.hpp"
+#include "support/TempDirectory.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -62,7 +63,8 @@ int main() {
     try {
         AssetManager assets;
         Scene scene;
-        EditorDocument document(std::filesystem::temp_directory_path());
+        const testsupport::TempDirectory documentRoot("scene-editing-benchmark");
+        EditorDocument document(documentRoot.path());
         CommandHistory history;
         EditorDiagnostics diagnostics;
         const SceneEditing editing(scene, assets, document, history, diagnostics);

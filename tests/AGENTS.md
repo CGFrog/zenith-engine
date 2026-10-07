@@ -31,9 +31,8 @@ before adding or changing one. In short:
   result against a generous deadline (see the streaming check in
   `engine/AudioSystemTests.cpp`). Give engine-launching tests timeouts several
   times their loaded run time.
-- `python tools/tests/check_tests.py` enforces these rules; files listed in
-  `tools/tests/legacy_tests.txt` predate them and are converted area by area.
-  Remove a file from that list in the change that converts it, and never add one.
+- `python tools/tests/check_tests.py` enforces these rules for every file
+  under `tests/`, with no exemptions.
 - CTest points `TMP`/`TEMP`/`TMPDIR` at the build tree's `test-temp/`
   (the `zenith_test_temp` fixture), so suites in other build trees never share
   temporary paths with this one. A folder that registers tests only with plain

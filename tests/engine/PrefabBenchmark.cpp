@@ -10,6 +10,8 @@
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 
+#include "support/TempDirectory.hpp"
+
 #include <chrono>
 #include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
@@ -84,10 +86,8 @@ template <typename Body> void measure(BenchmarkReport& report, const std::string
 } // namespace
 
 int main() {
-    const fs::path root = fs::temp_directory_path() / "zenith_prefab_benchmark";
-    std::error_code error;
-    fs::remove_all(root, error);
-    fs::create_directories(root);
+    const testsupport::TempDirectory temporary("prefab-benchmark");
+    const fs::path& root = temporary.path();
     try {
         AssetManager assets;
         PrefabSystem prefabs(assets, {.assetRoot = root});
@@ -165,9 +165,7 @@ int main() {
         std::cout << report.json(false) << '\n';
     } catch (const std::exception& failure) {
         std::cerr << "Prefab benchmark failed: " << failure.what() << '\n';
-        fs::remove_all(root, error);
         return 1;
     }
-    fs::remove_all(root, error);
     return 0;
 }

@@ -14,6 +14,10 @@
 #include "engine/graphics/GraphicsValidation.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
+#include "support/Skip.hpp"
+#include "support/StandaloneChecks.hpp"
+#include "support/VulkanProbe.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cmath>
@@ -31,17 +35,11 @@ constexpr uint32_t defaultViewIsolatedFrame = 40;
 constexpr uint32_t settleFrames = 3;
 
 struct SmokeResults {
-    std::vector<std::string> failures;
+    testsupport::StandaloneChecks checks;
     uint32_t checkedCreatedPhaseFrames{0};
     uint32_t checkedDefaultPhaseFrames{0};
     // Sun and local caster counts of each view, sampled once per phase.
     std::vector<std::string> samples;
-
-    void expect(bool condition, uint32_t frame, const std::string& message) {
-        if (!condition) {
-            failures.push_back("frame " + std::to_string(frame) + ": " + message);
-        }
-    }
 };
 
 glm::mat4 cameraWorld(const glm::vec3& position, const glm::vec3& target) {
@@ -114,24 +112,25 @@ class IsolatedShadowScene final : public ApplicationScene {
             settings.localShadows = LocalShadowQuality::Medium;
             rendering.setSettings(settings);
             m_view = rendering.createView();
-            m_results.expect(static_cast<bool>(m_view), m_frame, "a view is created");
+            m_results.checks.check(static_cast<bool>(m_view), m_frame, "a view is created");
             RenderSettings viewSettings = settings;
             viewSettings.volumetricFog = VolumetricFogQuality::Medium;
-            m_results.expect(rendering.setViewSettings(m_view, viewSettings), m_frame, "the view accepts settings");
-            m_results.expect(
+            m_results.checks.check(rendering.setViewSettings(m_view, viewSettings), m_frame,
+                                   "the view accepts settings");
+            m_results.checks.check(
                 rendering.setViewOverride(m_view, RenderView{.position = {-9.0f, 8.0f, 6.0f},
                                                              .forward = glm::normalize(glm::vec3(9.0f, -8.0f, -6.0f))}),
                 m_frame, "the view accepts a camera");
         }
         rendering.requestViewSize(m_view, 320, 240);
         if (m_frame == createdViewIsolatedFrame) {
-            m_results.expect(rendering.setViewVisibleEntities(m_view, isolation(false)), m_frame,
-                             "the created view accepts isolation");
+            m_results.checks.check(rendering.setViewVisibleEntities(m_view, isolation(false)), m_frame,
+                                   "the created view accepts isolation");
         }
         if (m_frame == defaultViewIsolatedFrame) {
-            m_results.expect(rendering.setViewVisibleEntities(m_view, std::nullopt) &&
-                                 rendering.setViewVisibleEntities(rendering.defaultView(), isolation(true)),
-                             m_frame, "isolation moves to the default view");
+            m_results.checks.check(rendering.setViewVisibleEntities(m_view, std::nullopt) &&
+                                       rendering.setViewVisibleEntities(rendering.defaultView(), isolation(true)),
+                                   m_frame, "isolation moves to the default view");
         }
         // The isolated cube moves, so the local-light tiles it touches redraw.
         Scene& scene = context.scene;
@@ -163,26 +162,26 @@ class IsolatedShadowScene final : public ApplicationScene {
 
     // An isolated view's maps hold at most `isolated` casters per redrawn
     // cascade or tile. Only the default view samples the frame's maps.
-    void expectIsolatedShadows(const RenderViewStats& stats, uint32_t isolated, bool ownMaps, uint32_t frame,
-                               const std::string& view) {
-        m_results.expect(stats.ownShadowMaps == ownMaps, frame, view + " samples the expected shadow maps");
-        m_results.expect(stats.shadowCascadesRendered == 3 && stats.shadowCasterCount > 0 &&
-                             stats.shadowCasterCount <= isolated * stats.shadowCascadesRendered,
-                         frame, view + " casts sun shadows from its isolated objects only");
-        m_results.expect(stats.localShadowTilesRendered > 0 && stats.localShadowCasterCount > 0 &&
-                             stats.localShadowCasterCount <= isolated * stats.localShadowTilesRendered,
-                         frame, view + " casts point and spot shadows from its isolated objects only");
+    void checkIsolatedShadows(const RenderViewStats& stats, uint32_t isolated, bool ownMaps, uint32_t frame,
+                              const std::string& view) {
+        m_results.checks.check(stats.ownShadowMaps == ownMaps, frame, view + " samples the expected shadow maps");
+        m_results.checks.check(stats.shadowCascadesRendered == 3 && stats.shadowCasterCount > 0 &&
+                                   stats.shadowCasterCount <= isolated * stats.shadowCascadesRendered,
+                               frame, view + " casts sun shadows from its isolated objects only");
+        m_results.checks.check(stats.localShadowTilesRendered > 0 && stats.localShadowCasterCount > 0 &&
+                                   stats.localShadowCasterCount <= isolated * stats.localShadowTilesRendered,
+                               frame, view + " casts point and spot shadows from its isolated objects only");
     }
 
     // A view of the whole scene beside one isolated to `isolated` objects
     // holds more casters than an isolated view could: the lights' tiles and
     // the sun's cascades see the ground and most cubes.
-    void expectFullShadows(const RenderViewStats& stats, uint32_t isolated, bool ownMaps, uint32_t frame,
-                           const std::string& view) {
-        m_results.expect(stats.ownShadowMaps == ownMaps, frame, view + " samples the expected shadow maps");
-        m_results.expect(stats.localShadowTilesRendered > 0 &&
-                             stats.localShadowCasterCount > isolated * stats.localShadowTilesRendered,
-                         frame, view + " casts point and spot shadows from the whole scene");
+    void checkFullShadows(const RenderViewStats& stats, uint32_t isolated, bool ownMaps, uint32_t frame,
+                          const std::string& view) {
+        m_results.checks.check(stats.ownShadowMaps == ownMaps, frame, view + " samples the expected shadow maps");
+        m_results.checks.check(stats.localShadowTilesRendered > 0 &&
+                                   stats.localShadowCasterCount > isolated * stats.localShadowTilesRendered,
+                               frame, view + " casts point and spot shadows from the whole scene");
     }
 
     void sample(uint32_t frame, const std::string& isolatedName, const RenderViewStats& isolated,
@@ -206,25 +205,26 @@ class IsolatedShadowScene final : public ApplicationScene {
         const RenderViewStats defaultStats = rendering.viewStats(rendering.defaultView());
         const RenderViewStats created = rendering.viewStats(m_view);
         if (frame >= 2 && frame < createdViewIsolatedFrame) {
-            m_results.expect(!defaultStats.ownShadowMaps && created.rendered && !created.ownShadowMaps, frame,
-                             "views without isolation share the frame's shadow maps");
+            m_results.checks.check(!defaultStats.ownShadowMaps && created.rendered && !created.ownShadowMaps, frame,
+                                   "views without isolation share the frame's shadow maps");
         }
         if (frame >= createdViewIsolatedFrame + settleFrames && frame < defaultViewIsolatedFrame) {
-            m_results.expect(created.rendered && created.visibleCount == 1, frame, "the created view is isolated");
-            expectIsolatedShadows(created, 1, true, frame, "the isolated created view");
+            m_results.checks.check(created.rendered && created.visibleCount == 1, frame,
+                                   "the created view is isolated");
+            checkIsolatedShadows(created, 1, true, frame, "the isolated created view");
             // The default view's sun casters may be counted by GPU culling of
             // a retired frame, so only its CPU-culled local tiles are checked.
-            expectFullShadows(defaultStats, 1, false, frame, "the full default view");
+            checkFullShadows(defaultStats, 1, false, frame, "the full default view");
             sample(frame, "isolated created", created, "full default", defaultStats);
             ++m_results.checkedCreatedPhaseFrames;
         }
         if (frame >= defaultViewIsolatedFrame + settleFrames) {
-            m_results.expect(defaultStats.visibleCount == 2, frame, "the default view is isolated");
-            expectIsolatedShadows(defaultStats, 2, false, frame, "the isolated default view");
-            m_results.expect(created.rendered, frame, "the created view renders");
-            expectFullShadows(created, 2, true, frame, "the full created view");
-            m_results.expect(created.shadowCascadesRendered == 3 && created.shadowCasterCount > 2 * 3, frame,
-                             "the full created view casts sun shadows from the whole scene");
+            m_results.checks.check(defaultStats.visibleCount == 2, frame, "the default view is isolated");
+            checkIsolatedShadows(defaultStats, 2, false, frame, "the isolated default view");
+            m_results.checks.check(created.rendered, frame, "the created view renders");
+            checkFullShadows(created, 2, true, frame, "the full created view");
+            m_results.checks.check(created.shadowCascadesRendered == 3 && created.shadowCasterCount > 2 * 3, frame,
+                                   "the full created view casts sun shadows from the whole scene");
             sample(frame, "isolated default", defaultStats, "full created", created);
             ++m_results.checkedDefaultPhaseFrames;
         }
@@ -261,23 +261,22 @@ int main(int, char** argv) {
     if (!engine.init()) {
         std::cerr << "Engine initialization failed\n";
         engine.shutdown();
+        if (std::string reason; !testsupport::vulkanDeviceAvailable(testsupport::VulkanDeviceKind::Any, reason)) {
+            std::cout << "Skipping: " << reason << '\n';
+            return testsupport::skipExitCode;
+        }
         return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
     SmokeResults results;
     IsolatedShadowApplication application(results);
     const bool ran = engine.run(application);
     engine.shutdown();
-    for (const std::string& failure : results.failures) {
-        std::cerr << "FAILED: " << failure << '\n';
-    }
     for (const std::string& sample : results.samples) {
         std::cout << sample << '\n';
     }
-    const bool covered = results.checkedCreatedPhaseFrames > 0 && results.checkedDefaultPhaseFrames > 0;
-    if (!covered) {
-        std::cerr << "FAILED: a phase was never checked (is ZENITH_SMOKE_FRAMES at least 50?)\n";
-    }
-    const bool passed = ran && results.failures.empty() && covered;
+    results.checks.check(results.checkedCreatedPhaseFrames > 0 && results.checkedDefaultPhaseFrames > 0,
+                         "a phase was never checked (is ZENITH_SMOKE_FRAMES at least 50?)");
+    const bool passed = ran && results.checks.failures() == 0;
     if (passed) {
         std::cout << "Isolated shadow smoke test passed\n";
     }

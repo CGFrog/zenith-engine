@@ -13,6 +13,8 @@
 #include "engine/navigation/NavigationWorld.hpp"
 #include "engine/physics/CharacterController.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
@@ -21,15 +23,9 @@
 #include <utility>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("Navigation");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 Entity addBox(Scene& scene, const glm::vec3& center, const glm::vec3& halfExtents, RigidBodyComponent body = {}) {
     const Entity entity = scene.createEntity("Box");
@@ -48,7 +44,7 @@ void buildLevel(Scene& scene) {
     scene.updateWorldTransforms();
 }
 
-void testGeometry() {
+TEST_CASE("Navigation: geometry") {
     Scene scene;
     addBox(scene, {0.0f, -0.5f, 0.0f}, {10.0f, 0.5f, 10.0f});
     addBox(scene, {0.0f, 3.0f, 0.0f}, {1.0f, 1.0f, 1.0f}, {.motionType = PhysicsMotionType::Dynamic});
@@ -57,10 +53,10 @@ void testGeometry() {
     scene.updateWorldTransforms();
     AssetManager assets;
     const NavigationGeometry all = gatherNavigationGeometry(scene, assets);
-    expect(all.indices.size() == 2 * 12 * 3 && all.vertices.size() == 2 * 24,
-           "only static, solid colliders become navigation geometry, a box as twelve triangles");
+    CHECK_MESSAGE((all.indices.size() == 2 * 12 * 3 && all.vertices.size() == 2 * 24),
+                  "only static, solid colliders become navigation geometry, a box as twelve triangles");
     const NavigationGeometry masked = gatherNavigationGeometry(scene, assets, physicsLayerMask({PhysicsLayer::Static}));
-    expect(masked.indices.size() == 12 * 3, "the layer mask chooses which colliders count");
+    CHECK_MESSAGE(masked.indices.size() == 12 * 3, "the layer mask chooses which colliders count");
     // The floor's top face winds upward, as Recast expects of walkable ground.
     bool upward = false;
     for (size_t index = 0; index + 2 < all.indices.size(); index += 3) {
@@ -69,48 +65,50 @@ void testGeometry() {
         const glm::vec3 c = all.vertices[all.indices[index + 2]];
         upward = upward || (a.y == 0.0f && b.y == 0.0f && c.y == 0.0f && glm::cross(b - a, c - a).y > 0.0f);
     }
-    expect(upward, "upward faces wind counter-clockwise seen from above");
+    CHECK_MESSAGE(upward, "upward faces wind counter-clockwise seen from above");
 }
 
-void testBakeAndPaths() {
+TEST_CASE("Navigation: bake and paths") {
     Scene scene;
     buildLevel(scene);
     AssetManager assets;
     NavigationWorld navigation;
     std::vector<glm::vec3> path;
-    expect(navigation.findPath({-4.0f, 0.0f, 0.0f}, {4.0f, 0.0f, 0.0f}, path) == NavPath::None,
-           "an unbaked world finds no path");
+    CHECK_MESSAGE(navigation.findPath({-4.0f, 0.0f, 0.0f}, {4.0f, 0.0f, 0.0f}, path) == NavPath::None,
+                  "an unbaked world finds no path");
     const NavigationResult baked = navigation.bake(scene, assets);
-    expect(baked.success && navigation.baked() && navigation.stats().polygons > 0,
-           "a navigation mesh bakes from the static colliders");
+    CHECK_MESSAGE((baked.success && navigation.baked() && navigation.stats().polygons > 0),
+                  "a navigation mesh bakes from the static colliders");
     if (!baked) {
         std::cerr << baked.error << '\n';
         return;
     }
 
-    expect(navigation.findPath({-4.0f, 0.0f, 0.0f}, {4.0f, 0.0f, 0.0f}, path) == NavPath::Complete && path.size() >= 3,
-           "a path crosses the wall's side");
+    CHECK_MESSAGE(
+        (navigation.findPath({-4.0f, 0.0f, 0.0f}, {4.0f, 0.0f, 0.0f}, path) == NavPath::Complete && path.size() >= 3),
+        "a path crosses the wall's side");
     const bool aroundTheWall =
         std::ranges::any_of(path, [](const glm::vec3& corner) { return std::abs(corner.z) > 6.0f; });
-    expect(aroundTheWall, "a path goes around the wall rather than through it");
-    expect(!path.empty() && glm::distance(path.front(), glm::vec3(-4.0f, path.front().y, 0.0f)) < 0.3f &&
-               glm::distance(path.back(), glm::vec3(4.0f, path.back().y, 0.0f)) < 0.3f,
-           "a path starts and ends at its points");
+    CHECK_MESSAGE(aroundTheWall, "a path goes around the wall rather than through it");
+    CHECK_MESSAGE((!path.empty() && glm::distance(path.front(), glm::vec3(-4.0f, path.front().y, 0.0f)) < 0.3f &&
+                   glm::distance(path.back(), glm::vec3(4.0f, path.back().y, 0.0f)) < 0.3f),
+                  "a path starts and ends at its points");
 
-    expect(navigation.findPath({-4.0f, 0.0f, 0.0f}, {30.0f, 0.0f, 0.0f}, path) == NavPath::Partial && !path.empty() &&
-               path.back().x > 9.0f && std::abs(path.back().z) < 1.0f,
-           "a separate island is reached partially: the path ends at the floor's edge nearest it");
-    expect(navigation.findPath({-4.0f, 0.0f, 0.0f}, {100.0f, 0.0f, 100.0f}, path) == NavPath::None && path.empty(),
-           "a point off the mesh has no path");
+    CHECK_MESSAGE((navigation.findPath({-4.0f, 0.0f, 0.0f}, {30.0f, 0.0f, 0.0f}, path) == NavPath::Partial &&
+                   !path.empty() && path.back().x > 9.0f && std::abs(path.back().z) < 1.0f),
+                  "a separate island is reached partially: the path ends at the floor's edge nearest it");
+    CHECK_MESSAGE(
+        (navigation.findPath({-4.0f, 0.0f, 0.0f}, {100.0f, 0.0f, 100.0f}, path) == NavPath::None && path.empty()),
+        "a point off the mesh has no path");
     const std::optional<glm::vec3> nearest = navigation.nearestPoint({0.0f, 0.0f, 0.0f});
-    expect(nearest && std::abs(nearest->x) > 0.25f, "the nearest point to the wall's centre is beside it");
+    CHECK_MESSAGE((nearest && std::abs(nearest->x) > 0.25f), "the nearest point to the wall's centre is beside it");
 
     DebugDraw draw;
     navigation.drawDebug(draw);
-    expect(draw.lineCount() > 0, "the mesh draws its polygon edges");
+    CHECK_MESSAGE(draw.lineCount() > 0, "the mesh draws its polygon edges");
     navigation.clear();
-    expect(!navigation.baked(), "clearing removes the mesh");
-    expect(!navigation.bake(NavigationGeometry{}).success, "baking nothing fails");
+    CHECK_MESSAGE(!navigation.baked(), "clearing removes the mesh");
+    CHECK_MESSAGE(!navigation.bake(NavigationGeometry{}).success, "baking nothing fails");
 }
 
 // Runs the agents for frames of seconds each.
@@ -133,7 +131,7 @@ Entity addWalker(Scene& scene, const glm::vec3& position, float speed = 3.5f) {
     return walker;
 }
 
-void testAgents() {
+TEST_CASE("Navigation: agents") {
     Scene scene;
     buildLevel(scene);
     AssetManager assets;
@@ -151,22 +149,23 @@ void testAgents() {
     }
     const glm::vec3 position(scene.registry().get<TransformComponent>(walker).world[3]);
     const NavAgentComponent& arrived = scene.registry().get<NavAgentComponent>(walker);
-    expect(arrived.arrived && !arrived.destination && glm::distance(position, glm::vec3(4.0f, position.y, 0.0f)) < 0.3f,
-           "an agent walks around the wall to its destination and stops");
+    CHECK_MESSAGE(
+        (arrived.arrived && !arrived.destination && glm::distance(position, glm::vec3(4.0f, position.y, 0.0f)) < 0.3f),
+        "an agent walks around the wall to its destination and stops");
 
     setNavDestination(scene.registry().get<NavAgentComponent>(walker), {30.0f, 0.0f, 0.0f});
     for (int frame = 0; frame < 200 && !scene.registry().get<NavAgentComponent>(walker).arrived; ++frame) {
         walk(scene, navigation, crowd, 1);
     }
     const NavAgentComponent& nearest = scene.registry().get<NavAgentComponent>(walker);
-    expect(nearest.arrived && nearest.partialPath && !nearest.pathFailed && positionOf(scene, walker).x > 8.5f,
-           "an agent sent to an unreachable island walks as near as it can and arrives there");
+    CHECK_MESSAGE((nearest.arrived && nearest.partialPath && !nearest.pathFailed && positionOf(scene, walker).x > 8.5f),
+                  "an agent sent to an unreachable island walks as near as it can and arrives there");
 
     setNavDestination(scene.registry().get<NavAgentComponent>(walker), {100.0f, 0.0f, 100.0f});
     walk(scene, navigation, crowd, 1);
-    expect(scene.registry().get<NavAgentComponent>(walker).pathFailed &&
-               !scene.registry().get<NavAgentComponent>(walker).destination,
-           "an agent sent off the mesh gives up");
+    CHECK_MESSAGE((scene.registry().get<NavAgentComponent>(walker).pathFailed &&
+                   !scene.registry().get<NavAgentComponent>(walker).destination),
+                  "an agent sent off the mesh gives up");
 
     const Entity character = scene.createEntity("Character");
     scene.registry().get<TransformComponent>(character).local = glm::translate(glm::mat4(1.0f), {-4.0f, 0.9f, 2.0f});
@@ -176,13 +175,13 @@ void testAgents() {
     scene.updateWorldTransforms();
     walk(scene, navigation, crowd, 1);
     const glm::vec3 desired = scene.registry().get<CharacterControllerComponent>(character).desiredVelocity;
-    expect(std::abs(glm::length(desired) - 3.0f) < 0.3f && desired.z > 2.5f && desired.y == 0.0f,
-           "an agent with a character controller steers its desired velocity");
+    CHECK_MESSAGE((std::abs(glm::length(desired) - 3.0f) < 0.3f && desired.z > 2.5f && desired.y == 0.0f),
+                  "an agent with a character controller steers its desired velocity");
 }
 
 // Two agents walking head-on along the same line pass each other instead of
 // walking through each other, and both arrive.
-void testAvoidance() {
+TEST_CASE("Navigation: avoidance") {
     Scene scene;
     buildLevel(scene);
     AssetManager assets;
@@ -203,16 +202,16 @@ void testAvoidance() {
             break;
         }
     }
-    expect(closest > 0.6f, "agents walking head-on keep apart");
-    expect(scene.registry().get<NavAgentComponent>(east).arrived &&
-               scene.registry().get<NavAgentComponent>(west).arrived,
-           "agents that avoided each other both arrive");
+    CHECK_MESSAGE(closest > 0.6f, "agents walking head-on keep apart");
+    CHECK_MESSAGE((scene.registry().get<NavAgentComponent>(east).arrived &&
+                   scene.registry().get<NavAgentComponent>(west).arrived),
+                  "agents that avoided each other both arrive");
 }
 
 // The crowd follows the mesh and the scene: a rebake starts it over with the
 // agents rejoining, destroyed agents leave it, a copied agent takes its own
 // slot, and a full crowd turns agents away.
-void testCrowdMembership() {
+TEST_CASE("Navigation: crowd membership") {
     Scene scene;
     buildLevel(scene);
     AssetManager assets;
@@ -222,32 +221,32 @@ void testCrowdMembership() {
     const Entity first = addWalker(scene, {-6.0f, 0.0f, -8.0f});
     const Entity second = addWalker(scene, {-6.0f, 0.0f, 8.0f});
     walk(scene, navigation, crowd, 1);
-    expect(crowd.agentCount() == 2, "idle agents join the crowd, so others walk around them");
+    CHECK_MESSAGE(crowd.agentCount() == 2, "idle agents join the crowd, so others walk around them");
 
     const uint64_t generation = navigation.generation();
     navigation.bake(scene, assets);
-    expect(navigation.generation() != generation, "a rebake changes the mesh generation");
+    CHECK_MESSAGE(navigation.generation() != generation, "a rebake changes the mesh generation");
     setNavDestination(scene.registry().get<NavAgentComponent>(first), {6.0f, 0.0f, -8.0f});
     walk(scene, navigation, crowd, 1);
-    expect(crowd.meshGeneration() == navigation.generation() && crowd.agentCount() == 2,
-           "after a rebake the crowd starts over and the agents rejoin");
+    CHECK_MESSAGE((crowd.meshGeneration() == navigation.generation() && crowd.agentCount() == 2),
+                  "after a rebake the crowd starts over and the agents rejoin");
     for (int frame = 0; frame < 200 && !scene.registry().get<NavAgentComponent>(first).arrived; ++frame) {
         walk(scene, navigation, crowd, 1);
     }
-    expect(scene.registry().get<NavAgentComponent>(first).arrived, "an agent walks on the rebaked mesh");
+    CHECK_MESSAGE((scene.registry().get<NavAgentComponent>(first).arrived), "an agent walks on the rebaked mesh");
 
     const Entity copy = scene.createEntity("Copy");
     scene.registry().get<TransformComponent>(copy).local = glm::translate(glm::mat4(1.0f), {-2.0f, 0.0f, 8.0f});
     scene.registry().emplace<NavAgentComponent>(copy, scene.registry().get<NavAgentComponent>(second));
     scene.updateWorldTransforms();
     walk(scene, navigation, crowd, 1);
-    expect(crowd.agentCount() == 3 && scene.registry().get<NavAgentComponent>(copy).crowdAgent !=
-                                          scene.registry().get<NavAgentComponent>(second).crowdAgent,
-           "a copied agent takes its own slot instead of sharing its original's");
+    CHECK_MESSAGE((crowd.agentCount() == 3 && scene.registry().get<NavAgentComponent>(copy).crowdAgent !=
+                                                  scene.registry().get<NavAgentComponent>(second).crowdAgent),
+                  "a copied agent takes its own slot instead of sharing its original's");
 
     scene.destroyEntity(second);
     walk(scene, navigation, crowd, 1);
-    expect(crowd.agentCount() == 2, "a destroyed agent leaves the crowd");
+    CHECK_MESSAGE(crowd.agentCount() == 2, "a destroyed agent leaves the crowd");
 
     NavigationCrowd full;
     const NavCrowdSettings oneAgent{.maximumAgents = 1};
@@ -261,10 +260,11 @@ void testCrowdMembership() {
     updateNavAgents(crowded, navigation, full, 0.05f, oneAgent);
     const bool oneFailed = crowded.registry().get<NavAgentComponent>(one).pathFailed;
     const bool otherFailed = crowded.registry().get<NavAgentComponent>(other).pathFailed;
-    expect(full.agentCount() == 1 && oneFailed != otherFailed, "an agent beyond the crowd's maximum is turned away");
+    CHECK_MESSAGE((full.agentCount() == 1 && oneFailed != otherFailed),
+                  "an agent beyond the crowd's maximum is turned away");
 }
 
-void testEngineSystem() {
+TEST_CASE("Navigation: engine system") {
     Scene scene;
     buildLevel(scene);
     Logger logger;
@@ -285,10 +285,10 @@ void testEngineSystem() {
                                                     .services = &services});
         scene.updateWorldTransforms();
     }
-    expect(services.outside().navigation(scene).baked(),
-           "the session bakes its navigation mesh when an agent needs it");
-    expect(scene.registry().get<TransformComponent>(walker).world[3].x > -3.0f,
-           "the engine's agent system moves agents in Play");
+    CHECK_MESSAGE(services.outside().navigation(scene).baked(),
+                  "the session bakes its navigation mesh when an agent needs it");
+    CHECK_MESSAGE((scene.registry().get<TransformComponent>(walker).world[3].x > -3.0f),
+                  "the engine's agent system moves agents in Play");
 }
 
 // Runs the engine's Update systems (zenith.nav_agents among them) for frames.
@@ -315,7 +315,7 @@ size_t waitingWarnings(const Logger& logger) {
 // the agent system bakes the half-built level first, so the game's own bake is
 // a second one; under Explicit only the game's bake runs, and agents wait for
 // it with their destinations.
-void testBakePolicy() {
+TEST_CASE("Navigation: bake policy") {
     for (const NavigationBakePolicy policy : {NavigationBakePolicy::Lazy, NavigationBakePolicy::Explicit}) {
         const bool lazy = policy == NavigationBakePolicy::Lazy;
         Scene scene;
@@ -324,8 +324,8 @@ void testBakePolicy() {
         AssetManager assets{&logger};
         DebugDraw debugDraw;
         GameServices services(assets, {}, debugDraw, &logger);
-        expect(services.outside().navigationBakePolicy() == NavigationBakePolicy::Lazy,
-               "sessions bake lazily by default");
+        CHECK_MESSAGE(services.outside().navigationBakePolicy() == NavigationBakePolicy::Lazy,
+                      "sessions bake lazily by default");
         services.outside().setNavigationBakePolicy(policy);
         const Entity walker = addWalker(scene, {-4.0f, 0.0f, -8.0f});
         setNavDestination(scene.registry().get<NavAgentComponent>(walker), {4.0f, 0.0f, -8.0f});
@@ -335,29 +335,29 @@ void testBakePolicy() {
         runAgentFrames(scene, services, logger, 3);
         const NavAgentComponent& agent = scene.registry().get<NavAgentComponent>(walker);
         if (lazy) {
-            expect(services.outside().navigation(scene).generation() == unbaked + 1,
-                   "the Lazy policy bakes as soon as an agent exists");
+            CHECK_MESSAGE(services.outside().navigation(scene).generation() == unbaked + 1,
+                          "the Lazy policy bakes as soon as an agent exists");
         } else {
-            expect(services.outside().navigation(scene).generation() == unbaked &&
-                       !services.outside().navigation(scene).baked(),
-                   "the Explicit policy never bakes on its own");
-            expect(agent.destination.has_value() && !agent.pathFailed && positionOf(scene, walker).x < -3.9f,
-                   "agents wait for the bake with their destinations");
-            expect(waitingWarnings(logger) == 1, "waiting agents are reported once");
+            CHECK_MESSAGE((services.outside().navigation(scene).generation() == unbaked &&
+                           !services.outside().navigation(scene).baked()),
+                          "the Explicit policy never bakes on its own");
+            CHECK_MESSAGE((agent.destination.has_value() && !agent.pathFailed && positionOf(scene, walker).x < -3.9f),
+                          "agents wait for the bake with their destinations");
+            CHECK_MESSAGE(waitingWarnings(logger) == 1, "waiting agents are reported once");
         }
 
-        expect(services.outside().bakeNavigation(scene).success, "the game bakes its level");
-        expect(services.outside().navigation(scene).generation() == unbaked + (lazy ? 2u : 1u),
-               lazy ? "the Lazy policy bakes a level the game bakes too twice"
-                    : "the Explicit policy bakes a level the game bakes once");
+        CHECK_MESSAGE(services.outside().bakeNavigation(scene).success, "the game bakes its level");
+        CHECK_MESSAGE(services.outside().navigation(scene).generation() == unbaked + (lazy ? 2u : 1u),
+                      (lazy ? "the Lazy policy bakes a level the game bakes too twice"
+                            : "the Explicit policy bakes a level the game bakes once"));
         runAgentFrames(scene, services, logger, 5);
-        expect(positionOf(scene, walker).x > -3.0f, "agents walk once the mesh is baked");
+        CHECK_MESSAGE(positionOf(scene, walker).x > -3.0f, "agents walk once the mesh is baked");
     }
 }
 
 // A host's default settings (the project's) are what the lazy bake and
 // bakeNavigation without settings use; navigationIfBaked only looks.
-void testDefaultSettingsAndLooking() {
+TEST_CASE("Navigation: default settings and looking") {
     Scene scene;
     buildLevel(scene);
     Logger logger(LoggerConfig{.echoToStderr = false});
@@ -365,31 +365,31 @@ void testDefaultSettingsAndLooking() {
     DebugDraw debugDraw;
     GameServices services(assets, {}, debugDraw, &logger);
     const NavMeshBuildSettings project{.cellSize = 0.25f, .agentRadius = 0.8f};
-    expect(services.outside().defaultNavigationSettings() == NavMeshBuildSettings{},
-           "sessions start with the default settings");
+    CHECK_MESSAGE(services.outside().defaultNavigationSettings() == NavMeshBuildSettings{},
+                  "sessions start with the default settings");
     services.outside().setDefaultNavigationSettings(project);
 
-    expect(services.outside().navigationIfBaked() == nullptr, "nothing is baked before anything asks");
-    expect(services.outside().navigationIfBaked() == nullptr &&
-               std::as_const(services).outside().navigationCrowd().agentCount() == 0,
-           "looking at the mesh and crowd never bakes");
+    CHECK_MESSAGE(services.outside().navigationIfBaked() == nullptr, "nothing is baked before anything asks");
+    CHECK_MESSAGE((services.outside().navigationIfBaked() == nullptr &&
+                   std::as_const(services).outside().navigationCrowd().agentCount() == 0),
+                  "looking at the mesh and crowd never bakes");
     const NavigationWorld& lazy = services.outside().navigation(scene);
-    expect(lazy.baked() && lazy.settings() == project, "the lazy bake uses the session's default settings");
-    expect(services.outside().navigationIfBaked() == &lazy, "once baked, the mesh can be looked at");
+    CHECK_MESSAGE((lazy.baked() && lazy.settings() == project), "the lazy bake uses the session's default settings");
+    CHECK_MESSAGE(services.outside().navigationIfBaked() == &lazy, "once baked, the mesh can be looked at");
 
-    expect(services.outside().bakeNavigation(scene).success &&
-               services.outside().navigation(scene).settings() == project,
-           "bakeNavigation without settings uses the defaults");
+    CHECK_MESSAGE((services.outside().bakeNavigation(scene).success &&
+                   services.outside().navigation(scene).settings() == project),
+                  "bakeNavigation without settings uses the defaults");
     const NavMeshBuildSettings explicitSettings{.agentRadius = 0.2f};
-    expect(services.outside().bakeNavigation(scene, explicitSettings).success &&
-               services.outside().navigation(scene).settings() == explicitSettings,
-           "settings passed to bakeNavigation win");
+    CHECK_MESSAGE((services.outside().bakeNavigation(scene, explicitSettings).success &&
+                   services.outside().navigation(scene).settings() == explicitSettings),
+                  "settings passed to bakeNavigation win");
 }
 } // namespace
 
 // Geometry gathered right after a move, with no updateWorldTransforms in
 // between, sits where the hierarchy now places it.
-void testGeometryBeforeTransformUpdate() {
+TEST_CASE("Navigation: geometry before transform update") {
     Scene scene;
     const Entity level = scene.createEntity("Level");
     const Entity floor = addBox(scene, {0.0f, -0.5f, 0.0f}, {2.0f, 0.5f, 2.0f});
@@ -399,26 +399,16 @@ void testGeometryBeforeTransformUpdate() {
 
     AssetManager assets;
     const NavigationGeometry geometry = gatherNavigationGeometry(scene, assets);
-    expect(!geometry.vertices.empty() && std::all_of(geometry.vertices.begin(), geometry.vertices.end(),
-                                                     [](const glm::vec3& vertex) { return vertex.x >= 47.9f; }),
-           "geometry follows a moved parent before world transforms update");
+    CHECK_MESSAGE(
+        (!geometry.vertices.empty() && std::all_of(geometry.vertices.begin(), geometry.vertices.end(),
+                                                   [](const glm::vec3& vertex) { return vertex.x >= 47.9f; })),
+        "geometry follows a moved parent before world transforms update");
 
     NavigationWorld navigation;
-    expect(navigation.bake(scene, assets).success, "a bake straight after the move succeeds");
+    CHECK_MESSAGE(navigation.bake(scene, assets).success, "a bake straight after the move succeeds");
     const std::optional<glm::vec3> onMesh = navigation.nearestPoint({50.0f, 0.0f, 0.0f});
-    expect(onMesh && glm::distance(*onMesh, glm::vec3(50.0f, 0.0f, 0.0f)) < 0.5f,
-           "the baked mesh lies under the moved floor");
+    CHECK_MESSAGE((onMesh && glm::distance(*onMesh, glm::vec3(50.0f, 0.0f, 0.0f)) < 0.5f),
+                  "the baked mesh lies under the moved floor");
 }
 
-int main() {
-    testGeometry();
-    testGeometryBeforeTransformUpdate();
-    testBakeAndPaths();
-    testAgents();
-    testAvoidance();
-    testCrowdMembership();
-    testEngineSystem();
-    testBakePolicy();
-    testDefaultSettingsAndLooking();
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

@@ -1,76 +1,30 @@
+// Depth prepass building blocks on the CPU: octahedral scene-normal encoding,
+// depth pyramid level extents and coverage, the single-pass pyramid layout and
+// its match with the per-level build, and the depth prepass render setting.
+
 #include "engine/graphics/DepthPyramidLayout.hpp"
 #include "engine/graphics/RenderConfiguration.hpp"
 #include "engine/graphics/SceneNormalEncoding.hpp"
+
+#include "support/Doctest.hpp"
 
 #include <glm/gtc/constants.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <iostream>
 #include <random>
 #include <string>
 #include <vector>
 
 namespace {
-int failures = 0;
-
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
-
 float angleBetween(glm::vec3 first, glm::vec3 second) {
     return std::acos(std::clamp(glm::dot(glm::normalize(first), glm::normalize(second)), -1.0f, 1.0f));
 }
 
-void testOctahedralRoundTrip() {
-    // Axes, diagonals, and the folded lower hemisphere's edges.
-    const std::vector<glm::vec3> special{{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},    {0, -1, 0},      {0, 0, 1},
-                                         {0, 0, -1}, {1, 1, 1},  {-1, -1, -1}, {1, -1, -0.01f}, {-0.3f, 0.2f, -0.9f}};
-    float worstExact = 0.0f;
-    for (const glm::vec3& normal : special) {
-        const glm::vec2 encoded = scene_normal::encodeOctahedral(glm::normalize(normal));
-        expect(std::abs(encoded.x) <= 1.0f && std::abs(encoded.y) <= 1.0f, "octahedral codes stay in [-1, 1]");
-        worstExact = std::max(worstExact, angleBetween(scene_normal::decodeOctahedral(encoded), normal));
-    }
-    expect(worstExact < 1e-5f, "unquantized octahedral round trip is exact");
-
-    // Sweep the sphere through the stored 10-bit representation.
-    float worstStored = 0.0f;
-    constexpr int steps = 96;
-    for (int latitude = 0; latitude <= steps; ++latitude) {
-        const float polar = glm::pi<float>() * static_cast<float>(latitude) / steps;
-        for (int longitude = 0; longitude < steps * 2; ++longitude) {
-            const float azimuth = glm::pi<float>() * static_cast<float>(longitude) / steps;
-            const glm::vec3 normal(std::sin(polar) * std::cos(azimuth), std::sin(polar) * std::sin(azimuth),
-                                   std::cos(polar));
-            worstStored = std::max(worstStored, angleBetween(scene_normal::storeAndLoadNormal(normal), normal));
-        }
-    }
-    // 10 bits per axis keep every direction within about a quarter degree.
-    expect(worstStored < glm::radians(0.3f), "10-bit octahedral normals stay within 0.3 degrees");
-}
-
-void testPyramidLevelExtents() {
-    expect(depth_pyramid::levelCount({1, 1}) == 1, "a single pixel has one level");
-    expect(depth_pyramid::levelCount({1920, 1080}) == 11, "1080p has 11 levels");
-    expect(depth_pyramid::levelCount({1024, 1}) == 11, "the longer axis sets the level count");
-    expect(depth_pyramid::levelCount({1023, 7}) == 10, "odd sizes truncate the level count");
-    expect(depth_pyramid::levelExtent({1283, 721}, 0) == glm::uvec2(1283, 721), "level 0 is the render extent");
-    expect(depth_pyramid::levelExtent({1283, 721}, 1) == glm::uvec2(641, 360), "levels halve with truncation");
-    expect(depth_pyramid::levelExtent({1283, 721}, 10) == glm::uvec2(1, 1), "levels never drop below one texel");
-    expect(depth_pyramid::levelExtent({1283, 3}, 4) == glm::uvec2(80, 1), "a short axis clamps at one texel");
-    // Dynamic resolution uses fewer levels than the storage provides.
-    expect(depth_pyramid::levelCount({1280, 720}) <= depth_pyramid::levelCount({1920, 1080}),
-           "a smaller render extent never needs more levels than its storage");
-}
-
 // Every base pixel must fall in exactly the texel the readers expect, and the
 // recursive reduction must cover it, or occlusion culling turns unsafe.
-void testPyramidCoverage(glm::uvec2 base) {
+void checkPyramidCoverage(glm::uvec2 base) {
     const uint32_t levels = depth_pyramid::levelCount(base);
     // owner[level][pixel] = texel index that reduced the pixel at that level.
     std::vector<uint32_t> owner(static_cast<size_t>(base.x) * base.y);
@@ -106,7 +60,7 @@ void testPyramidCoverage(glm::uvec2 base) {
         }
         sourceExtent = outputExtent;
     }
-    expect(consistent, "each pyramid texel covers exactly the base pixels min(p >> level, extent - 1) names");
+    CHECK_MESSAGE(consistent, "each pyramid texel covers exactly the base pixels min(p >> level, extent - 1) names");
 }
 
 // One texel per level: x farthest (minimum), y closest (maximum), reversed Z.
@@ -217,22 +171,9 @@ Pyramid buildSinglePass(const std::vector<float>& depth, glm::uvec2 base) {
     return pyramid;
 }
 
-void testSinglePassLayout() {
-    expect(depth_pyramid::singlePassWorkgroups({1280, 720}) == glm::uvec2(20, 12), "720p needs 20 x 12 tiles");
-    expect(depth_pyramid::singlePassWorkgroups({64, 64}) == glm::uvec2(1, 1), "one tile covers 64 x 64");
-    expect(depth_pyramid::singlePassWorkgroups({65, 1}) == glm::uvec2(2, 1), "a leftover column needs a tile");
-    expect(depth_pyramid::singlePassWorkgroups({1, 1}) == glm::uvec2(1, 1), "a single pixel needs one tile");
-    expect(!glm::any(depth_pyramid::singlePassEdgeIncomplete({1280, 720}, 4)), "720p tiles level 4 exactly");
-    expect(depth_pyramid::singlePassEdgeIncomplete({1280, 720}, 5) == glm::bvec2(false, true),
-           "720 rows do not tile level 5");
-    expect(depth_pyramid::singlePassEdgeIncomplete({1283, 721}, 1) == glm::bvec2(true, true),
-           "odd axes leave the first level's edge incomplete");
-    expect(!glm::any(depth_pyramid::singlePassEdgeIncomplete({1283, 721}, 0)), "level 0 is always complete");
-}
-
 // The single-pass build must reproduce the per-level build exactly, and every
 // texel must bound the base pixels it covers, or occlusion culling turns unsafe.
-void testSinglePassMatchesPerLevel(glm::uvec2 base, uint32_t seed) {
+void checkSinglePassMatchesPerLevel(glm::uvec2 base, uint32_t seed) {
     std::mt19937 random(seed);
     std::uniform_real_distribution<float> distribution(0.0f, 1.0f);
     std::vector<float> depth(static_cast<size_t>(base.x) * base.y);
@@ -241,7 +182,7 @@ void testSinglePassMatchesPerLevel(glm::uvec2 base, uint32_t seed) {
     }
     const Pyramid perLevel = buildPerLevel(depth, base);
     const Pyramid singlePass = buildSinglePass(depth, base);
-    expect(perLevel == singlePass, "the single-pass build matches the per-level build texel for texel");
+    CHECK_MESSAGE(perLevel == singlePass, "the single-pass build matches the per-level build texel for texel");
 
     bool conservative = true;
     for (uint32_t level = 0; level < perLevel.size(); ++level) {
@@ -256,57 +197,115 @@ void testSinglePassMatchesPerLevel(glm::uvec2 base, uint32_t seed) {
         }
         conservative = conservative && expected == singlePass[level];
     }
-    expect(conservative, "each single-pass texel holds the exact depth range of its base pixels");
+    CHECK_MESSAGE(conservative, "each single-pass texel holds the exact depth range of its base pixels");
+}
+} // namespace
+
+TEST_SUITE_BEGIN("DepthPrepass");
+
+TEST_CASE("DepthPrepass: octahedral round trip") {
+    // Axes, diagonals, and the folded lower hemisphere's edges.
+    const std::vector<glm::vec3> special{{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},    {0, -1, 0},      {0, 0, 1},
+                                         {0, 0, -1}, {1, 1, 1},  {-1, -1, -1}, {1, -1, -0.01f}, {-0.3f, 0.2f, -0.9f}};
+    float worstExact = 0.0f;
+    for (const glm::vec3& normal : special) {
+        const glm::vec2 encoded = scene_normal::encodeOctahedral(glm::normalize(normal));
+        CHECK_MESSAGE((std::abs(encoded.x) <= 1.0f && std::abs(encoded.y) <= 1.0f), "octahedral codes stay in [-1, 1]");
+        worstExact = std::max(worstExact, angleBetween(scene_normal::decodeOctahedral(encoded), normal));
+    }
+    CHECK_MESSAGE(worstExact < 1e-5f, "unquantized octahedral round trip is exact");
+
+    // Sweep the sphere through the stored 10-bit representation.
+    float worstStored = 0.0f;
+    constexpr int steps = 96;
+    for (int latitude = 0; latitude <= steps; ++latitude) {
+        const float polar = glm::pi<float>() * static_cast<float>(latitude) / steps;
+        for (int longitude = 0; longitude < steps * 2; ++longitude) {
+            const float azimuth = glm::pi<float>() * static_cast<float>(longitude) / steps;
+            const glm::vec3 normal(std::sin(polar) * std::cos(azimuth), std::sin(polar) * std::sin(azimuth),
+                                   std::cos(polar));
+            worstStored = std::max(worstStored, angleBetween(scene_normal::storeAndLoadNormal(normal), normal));
+        }
+    }
+    // 10 bits per axis keep every direction within about a quarter degree.
+    CHECK_MESSAGE(worstStored < glm::radians(0.3f), "10-bit octahedral normals stay within 0.3 degrees");
 }
 
-void testDepthPrepassSetting() {
+TEST_CASE("DepthPrepass: pyramid level extents") {
+    CHECK_MESSAGE(depth_pyramid::levelCount({1, 1}) == 1, "a single pixel has one level");
+    CHECK_MESSAGE(depth_pyramid::levelCount({1920, 1080}) == 11, "1080p has 11 levels");
+    CHECK_MESSAGE(depth_pyramid::levelCount({1024, 1}) == 11, "the longer axis sets the level count");
+    CHECK_MESSAGE(depth_pyramid::levelCount({1023, 7}) == 10, "odd sizes truncate the level count");
+    CHECK_MESSAGE(depth_pyramid::levelExtent({1283, 721}, 0) == glm::uvec2(1283, 721), "level 0 is the render extent");
+    CHECK_MESSAGE(depth_pyramid::levelExtent({1283, 721}, 1) == glm::uvec2(641, 360), "levels halve with truncation");
+    CHECK_MESSAGE(depth_pyramid::levelExtent({1283, 721}, 10) == glm::uvec2(1, 1), "levels never drop below one texel");
+    CHECK_MESSAGE(depth_pyramid::levelExtent({1283, 3}, 4) == glm::uvec2(80, 1), "a short axis clamps at one texel");
+    // Dynamic resolution uses fewer levels than the storage provides.
+    CHECK_MESSAGE(depth_pyramid::levelCount({1280, 720}) <= depth_pyramid::levelCount({1920, 1080}),
+                  "a smaller render extent never needs more levels than its storage");
+}
+
+TEST_CASE("DepthPrepass: pyramid coverage") {
+    for (const glm::uvec2 base : {glm::uvec2(1, 1), glm::uvec2(2, 1), glm::uvec2(3, 3), glm::uvec2(17, 5),
+                                  glm::uvec2(31, 64), glm::uvec2(97, 41), glm::uvec2(128, 3)}) {
+        CAPTURE(base);
+        checkPyramidCoverage(base);
+    }
+}
+
+TEST_CASE("DepthPrepass: single pass layout") {
+    CHECK_MESSAGE(depth_pyramid::singlePassWorkgroups({1280, 720}) == glm::uvec2(20, 12), "720p needs 20 x 12 tiles");
+    CHECK_MESSAGE(depth_pyramid::singlePassWorkgroups({64, 64}) == glm::uvec2(1, 1), "one tile covers 64 x 64");
+    CHECK_MESSAGE(depth_pyramid::singlePassWorkgroups({65, 1}) == glm::uvec2(2, 1), "a leftover column needs a tile");
+    CHECK_MESSAGE(depth_pyramid::singlePassWorkgroups({1, 1}) == glm::uvec2(1, 1), "a single pixel needs one tile");
+    CHECK_MESSAGE(!glm::any(depth_pyramid::singlePassEdgeIncomplete({1280, 720}, 4)), "720p tiles level 4 exactly");
+    CHECK_MESSAGE(depth_pyramid::singlePassEdgeIncomplete({1280, 720}, 5) == glm::bvec2(false, true),
+                  "720 rows do not tile level 5");
+    CHECK_MESSAGE(depth_pyramid::singlePassEdgeIncomplete({1283, 721}, 1) == glm::bvec2(true, true),
+                  "odd axes leave the first level's edge incomplete");
+    CHECK_MESSAGE(!glm::any(depth_pyramid::singlePassEdgeIncomplete({1283, 721}, 0)), "level 0 is always complete");
+}
+
+TEST_CASE("DepthPrepass: single pass matches per level") {
+    uint32_t seed = 1;
+    for (const glm::uvec2 base :
+         {glm::uvec2(1, 1), glm::uvec2(3, 2), glm::uvec2(63, 65), glm::uvec2(64, 64), glm::uvec2(129, 1),
+          glm::uvec2(200, 7), glm::uvec2(317, 181), glm::uvec2(1280, 720), glm::uvec2(1283, 721)}) {
+        const uint32_t baseSeed = seed++;
+        CAPTURE(base);
+        CAPTURE(baseSeed);
+        checkSinglePassMatchesPerLevel(base, baseSeed);
+    }
+}
+
+TEST_CASE("DepthPrepass: depth prepass setting") {
     RenderSettings defaults;
-    expect(defaults.depthPrepass, "the depth prepass is on by default");
+    CHECK_MESSAGE(defaults.depthPrepass, "the depth prepass is on by default");
 
     RenderSettings disabled;
     disabled.depthPrepass = false;
     std::string encoded;
     RenderSettings decoded;
-    expect(serializeRenderSettings(disabled, encoded) && deserializeRenderSettings(encoded, decoded),
-           "settings with the prepass disabled round-trip");
-    expect(!decoded.depthPrepass, "a disabled prepass survives serialization");
+    CHECK_MESSAGE((serializeRenderSettings(disabled, encoded) && deserializeRenderSettings(encoded, decoded)),
+                  "settings with the prepass disabled round-trip");
+    CHECK_MESSAGE(!decoded.depthPrepass, "a disabled prepass survives serialization");
 
     // Documents written before the setting existed enable the prepass.
     const std::string field = "\"depthPrepass\": false,";
     const size_t fieldStart = encoded.find(field);
-    expect(fieldStart != std::string::npos, "serialized settings name the prepass toggle");
+    CHECK_MESSAGE(fieldStart != std::string::npos, "serialized settings name the prepass toggle");
     if (fieldStart != std::string::npos) {
         std::string legacyDocument = encoded;
         legacyDocument.erase(fieldStart, field.size());
         RenderSettings legacy;
         legacy.depthPrepass = false;
-        expect(deserializeRenderSettings(legacyDocument, legacy) && legacy.depthPrepass,
-               "documents without the field enable the prepass");
+        CHECK_MESSAGE((deserializeRenderSettings(legacyDocument, legacy) && legacy.depthPrepass),
+                      "documents without the field enable the prepass");
         std::string invalidDocument = encoded;
         invalidDocument.replace(fieldStart, field.size(), "\"depthPrepass\": \"yes\",");
         RenderSettings rejected;
-        expect(!deserializeRenderSettings(invalidDocument, rejected), "a non-boolean prepass value is rejected");
+        CHECK_MESSAGE(!deserializeRenderSettings(invalidDocument, rejected), "a non-boolean prepass value is rejected");
     }
 }
-} // namespace
 
-int main() {
-    testOctahedralRoundTrip();
-    testPyramidLevelExtents();
-    for (const glm::uvec2 base : {glm::uvec2(1, 1), glm::uvec2(2, 1), glm::uvec2(3, 3), glm::uvec2(17, 5),
-                                  glm::uvec2(31, 64), glm::uvec2(97, 41), glm::uvec2(128, 3)}) {
-        testPyramidCoverage(base);
-    }
-    testSinglePassLayout();
-    uint32_t seed = 1;
-    for (const glm::uvec2 base :
-         {glm::uvec2(1, 1), glm::uvec2(3, 2), glm::uvec2(63, 65), glm::uvec2(64, 64), glm::uvec2(129, 1),
-          glm::uvec2(200, 7), glm::uvec2(317, 181), glm::uvec2(1280, 720), glm::uvec2(1283, 721)}) {
-        testSinglePassMatchesPerLevel(base, seed++);
-    }
-    testDepthPrepassSetting();
-    if (failures == 0) {
-        std::cout << "Depth prepass tests passed\n";
-    }
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

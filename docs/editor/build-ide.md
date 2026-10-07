@@ -103,8 +103,9 @@ C++ Game first. Each template's `template.json` (`ProjectTemplateInfo`) gives
 its name and description and may name a startup scene, an input action file,
 and tags, which the generated project's manifest records; a template without
 a startup scene gets the generated starter scene. `templates/fps_game/` ships
-its scene and impact prefab, which `tests/editor/FpsTemplateTests.cpp`
-writes with the engine's serializers (`--write <folder>`) and checks.
+its scene and impact prefab, which `zenith_fps_template_writer <folder>`
+(`tests/editor/FpsTemplateWriter.cpp`) writes with the engine's serializers
+and `tests/editor/FpsTemplateTests.cpp` checks.
 `zenith_fps_template_module_build` builds a generated FPS project, loads its
 scene with the module's types, and plays it headless: a shot destroys a
 target, the HUD counts it, and Escape pauses. `zenith_project_template_module_build` generates one type of each
