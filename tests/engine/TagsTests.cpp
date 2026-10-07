@@ -6,6 +6,8 @@
 #include "engine/scene/SceneDocument.hpp"
 #include "engine/scene/Tags.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -13,71 +15,57 @@
 #include <string>
 #include <string_view>
 
+TEST_SUITE_BEGIN("Tags");
+
 namespace {
-int failures = 0;
 
-void expect(bool condition, std::string_view message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
-
-void testHelpers() {
+TEST_CASE("Tags: helpers") {
     TagsComponent tags;
-    expect(tags.add("enemy") && !tags.add("enemy") && tags.has("enemy") && tags.tags.size() == 1,
-           "a tag is added once");
-    expect(tags.remove("enemy") && !tags.remove("enemy") && tags.tags.empty(), "a tag is removed once");
+    CHECK_MESSAGE((tags.add("enemy") && !tags.add("enemy") && tags.has("enemy") && tags.tags.size() == 1),
+                  "a tag is added once");
+    CHECK_MESSAGE((tags.remove("enemy") && !tags.remove("enemy") && tags.tags.empty()), "a tag is removed once");
 }
 
-void testFind() {
+TEST_CASE("Tags: find") {
     Scene scene;
     const Entity first = scene.createEntity("First");
     const Entity untagged = scene.createEntity("Untagged");
     const Entity second = scene.createEntity("Second");
     scene.registry().emplace<TagsComponent>(second).tags = {"enemy"};
     scene.registry().emplace<TagsComponent>(first).tags = {"enemy", "boss"};
-    expect(hasTag(scene, first, "boss") && !hasTag(scene, second, "boss") && !hasTag(scene, untagged, "enemy") &&
-               !hasTag(scene, entt::null, "enemy"),
-           "hasTag reads the entity's tags");
+    CHECK_MESSAGE((hasTag(scene, first, "boss") && !hasTag(scene, second, "boss") &&
+                   !hasTag(scene, untagged, "enemy") && !hasTag(scene, entt::null, "enemy")),
+                  "hasTag reads the entity's tags");
     const std::vector<Entity> enemies = findEntitiesWithTag(scene, "enemy");
-    expect(enemies == std::vector<Entity>{first, second}, "findEntitiesWithTag lists entities in scene id order");
-    expect(findEntitiesWithTag(scene, "pickup").empty(), "an unused tag finds nothing");
+    CHECK_MESSAGE((enemies == std::vector<Entity>{first, second}),
+                  "findEntitiesWithTag lists entities in scene id order");
+    CHECK_MESSAGE(findEntitiesWithTag(scene, "pickup").empty(), "an unused tag finds nothing");
 }
 
-void testDocument() {
+TEST_CASE("Tags: document") {
     const ComponentType* type = builtInComponentTypes()->find("tags");
-    expect(type != nullptr && type->displayName() == "Tags" && type->category() == "Gameplay",
-           "tags are a built-in Gameplay component");
+    CHECK_MESSAGE((type != nullptr && type->displayName() == "Tags" && type->category() == "Gameplay"),
+                  "tags are a built-in Gameplay component");
     AssetManager assets;
-    const SceneDocumentOptions options{.assetRoot = std::filesystem::temp_directory_path()};
+    const testsupport::TempDirectory root("tags");
+    const SceneDocumentOptions options{.assetRoot = root.path()};
     Scene scene;
     scene.registry().emplace<TagsComponent>(scene.createEntity("Crate")).tags = {"pickup", "breakable"};
     std::string text;
-    expect(SceneDocument::serialize(scene, assets, options, text).success, "tags save");
+    CHECK_MESSAGE(SceneDocument::serialize(scene, assets, options, text).success, "tags save");
     nlohmann::json document = nlohmann::json::parse(text);
     nlohmann::json& saved = document.at("entities").at(0).at("components").at("tags");
-    expect(saved == nlohmann::json{{"tags", {"pickup", "breakable"}}}, "tags save as a list of names");
+    CHECK_MESSAGE((saved == nlohmann::json{{"tags", {"pickup", "breakable"}}}), "tags save as a list of names");
     Scene restored;
-    expect(SceneDocument::deserialize(text, assets, options, restored).success, "tags load");
+    CHECK_MESSAGE(SceneDocument::deserialize(text, assets, options, restored).success, "tags load");
     const auto view = restored.registry().view<const TagsComponent>();
-    expect(view.size() == 1 &&
-               view.get<const TagsComponent>(view.front()).tags == std::vector<std::string>{"pickup", "breakable"},
-           "tags round-trip in order");
+    CHECK_MESSAGE((view.size() == 1 &&
+                   view.get<const TagsComponent>(view.front()).tags == std::vector<std::string>{"pickup", "breakable"}),
+                  "tags round-trip in order");
     saved["tags"] = {"pickup", ""};
     Scene rejected;
-    expect(!SceneDocument::deserialize(document.dump(), assets, options, rejected), "an empty tag is rejected");
+    CHECK_MESSAGE(!SceneDocument::deserialize(document.dump(), assets, options, rejected), "an empty tag is rejected");
 }
 } // namespace
 
-int main() {
-    testHelpers();
-    testFind();
-    testDocument();
-    if (failures != 0) {
-        std::cerr << failures << " tags test(s) failed\n";
-        return 1;
-    }
-    std::cout << "Tags tests passed\n";
-    return 0;
-}
+TEST_SUITE_END();

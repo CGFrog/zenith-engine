@@ -1,5 +1,7 @@
 #include "engine/assets/PackedVertexStreams.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -10,15 +12,9 @@
 #include <string>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("PackedVertexStream");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 float angleBetween(glm::vec3 first, glm::vec3 second) {
     return std::acos(std::clamp(glm::dot(glm::normalize(first), glm::normalize(second)), -1.0f, 1.0f));
@@ -43,18 +39,18 @@ std::vector<glm::vec3> randomDirections(uint32_t count) {
     return directions;
 }
 
-void testNormalRoundTrip() {
+TEST_CASE("PackedVertexStream: normal round trip") {
     float worstError = 0.0f;
     for (const glm::vec3 direction : randomDirections(20000)) {
         const glm::vec3 decoded = vertex_packing::unpackNormal(vertex_packing::packNormal(direction));
         worstError = std::max(worstError, angleBetween(direction, decoded));
     }
-    expect(worstError < 0.001f, "octahedral snorm16 normals round-trip within 0.001 rad");
+    CHECK_MESSAGE(worstError < 0.001f, "octahedral snorm16 normals round-trip within 0.001 rad");
     const glm::vec3 fallback = vertex_packing::unpackNormal(vertex_packing::packNormal(glm::vec3(0.0f)));
-    expect(std::abs(glm::length(fallback) - 1.0f) < 1e-4f, "zero-length normals decode to a unit vector");
+    CHECK_MESSAGE(std::abs(glm::length(fallback) - 1.0f) < 1e-4f, "zero-length normals decode to a unit vector");
 }
 
-void testTangentRoundTrip() {
+TEST_CASE("PackedVertexStream: tangent round trip") {
     float worstError = 0.0f;
     bool signsPreserved = true;
     const std::vector<glm::vec3> directions = randomDirections(20000);
@@ -65,20 +61,20 @@ void testTangentRoundTrip() {
         worstError = std::max(worstError, angleBetween(glm::vec3(tangent), glm::vec3(decoded)));
         signsPreserved = signsPreserved && decoded.w == sign;
     }
-    expect(worstError < 0.001f, "octahedral tangents round-trip within 0.001 rad");
-    expect(signsPreserved, "the bitangent sign survives packing for every direction");
+    CHECK_MESSAGE(worstError < 0.001f, "octahedral tangents round-trip within 0.001 rad");
+    CHECK_MESSAGE(signsPreserved, "the bitangent sign survives packing for every direction");
 
     // The folded component's minimum must still carry the sign: an encoded y
     // of -1 occurs for directions such as -Y.
     for (const float sign : {1.0f, -1.0f}) {
         const glm::vec4 decoded = vertex_packing::unpackTangent(vertex_packing::packTangent({0.0f, -1.0f, 0.0f, sign}));
-        expect(decoded.w == sign, "the sign survives at the folded component's minimum");
-        expect(angleBetween(glm::vec3(decoded), glm::vec3(0.0f, -1.0f, 0.0f)) < 0.001f,
-               "the folded component's minimum decodes to the original direction");
+        CHECK_MESSAGE(decoded.w == sign, "the sign survives at the folded component's minimum");
+        CHECK_MESSAGE(angleBetween(glm::vec3(decoded), glm::vec3(0.0f, -1.0f, 0.0f)) < 0.001f,
+                      "the folded component's minimum decodes to the original direction");
     }
 }
 
-void testSkinInfluence() {
+TEST_CASE("PackedVertexStream: skin influence") {
     std::string error;
     std::mt19937 generator(99u);
     std::uniform_real_distribution<float> weightDistribution(0.0f, 1.0f);
@@ -104,28 +100,30 @@ void testSkinInfluence() {
                 std::max(worstWeightError, std::abs(packed->weights[influence] / 255.0f - normalized[influence]));
         }
     }
-    expect(sumsExact, "quantized weights always sum to exactly 255");
-    expect(worstWeightError <= 1.0f / 255.0f, "each quantized weight stays within 1/255 of the normalized weight");
+    CHECK_MESSAGE(sumsExact, "quantized weights always sum to exactly 255");
+    CHECK_MESSAGE(worstWeightError <= 1.0f / 255.0f,
+                  "each quantized weight stays within 1/255 of the normalized weight");
 
     const auto joints = vertex_packing::packSkinInfluence({3, 17, 300, 65535}, {0.25f, 0.25f, 0.25f, 0.25f}, error);
-    expect(joints && joints->joints[0] == 3 && joints->joints[1] == 17 && joints->joints[2] == 300 &&
-               joints->joints[3] == 65535,
-           "16-bit joint indices are preserved");
+    CHECK_MESSAGE((joints && joints->joints[0] == 3 && joints->joints[1] == 17 && joints->joints[2] == 300 &&
+                   joints->joints[3] == 65535),
+                  "16-bit joint indices are preserved");
 
     const auto unweighted = vertex_packing::packSkinInfluence({7, 9, 11, 13}, glm::vec4(0.0f), error);
-    expect(unweighted && unweighted->weights == std::array<uint8_t, 4>{} &&
-               unweighted->joints == std::array<uint16_t, 4>{},
-           "vertices without weights pack to a zero influence");
+    CHECK_MESSAGE((unweighted && unweighted->weights == std::array<uint8_t, 4>{} &&
+                   unweighted->joints == std::array<uint16_t, 4>{}),
+                  "vertices without weights pack to a zero influence");
 
     const auto unusedLargeJoint = vertex_packing::packSkinInfluence({1, 70000, 0, 0}, {1.0f, 0.0f, 0.0f, 0.0f}, error);
-    expect(unusedLargeJoint && unusedLargeJoint->joints[1] == 0, "unweighted joints never fail the 16-bit limit");
+    CHECK_MESSAGE((unusedLargeJoint && unusedLargeJoint->joints[1] == 0),
+                  "unweighted joints never fail the 16-bit limit");
 
     error.clear();
     const auto tooLarge = vertex_packing::packSkinInfluence({1, 65536, 0, 0}, {0.5f, 0.5f, 0.0f, 0.0f}, error);
-    expect(!tooLarge && !error.empty(), "weighted joints beyond 65535 are rejected with an error");
+    CHECK_MESSAGE((!tooLarge && !error.empty()), "weighted joints beyond 65535 are rejected with an error");
 }
 
-void testMeshStreams() {
+TEST_CASE("PackedVertexStream: mesh streams") {
     std::vector<Vertex> staticVertices(5);
     for (size_t index = 0; index < staticVertices.size(); ++index) {
         staticVertices[index].position = glm::vec3(static_cast<float>(index), 2.0f, -1.0f);
@@ -133,37 +131,33 @@ void testMeshStreams() {
     }
     std::string error;
     const auto staticStreams = vertex_packing::packVertexStreams(staticVertices, error);
-    expect(staticStreams && staticStreams->positions.size() == 5 && staticStreams->attributes.size() == 5 &&
-               !staticStreams->skinned(),
-           "static meshes produce position and attribute streams only");
-    expect(staticStreams && staticStreams->positions[3] == glm::vec3(3.0f, 2.0f, -1.0f),
-           "positions are stored at full precision");
-    expect(staticStreams && staticStreams->attributes[3].texCoord == std::array<float, 2>{0.75f, 0.5f},
-           "texture coordinates are stored at full precision");
-    expect(vertex_packing::packedByteSize(staticVertices) == 5u * 28u, "static vertices occupy 28 GPU bytes each");
+    CHECK_MESSAGE((staticStreams && staticStreams->positions.size() == 5 && staticStreams->attributes.size() == 5 &&
+                   !staticStreams->skinned()),
+                  "static meshes produce position and attribute streams only");
+    CHECK_MESSAGE((staticStreams && staticStreams->positions[3] == glm::vec3(3.0f, 2.0f, -1.0f)),
+                  "positions are stored at full precision");
+    CHECK_MESSAGE((staticStreams && staticStreams->attributes[3].texCoord == std::array<float, 2>{0.75f, 0.5f}),
+                  "texture coordinates are stored at full precision");
+    CHECK_MESSAGE(vertex_packing::packedByteSize(staticVertices) == 5u * 28u,
+                  "static vertices occupy 28 GPU bytes each");
 
     std::vector<Vertex> skinnedVertices = staticVertices;
     skinnedVertices[2].joints = {1, 2, 0, 0};
     skinnedVertices[2].weights = {0.75f, 0.25f, 0.0f, 0.0f};
     const auto skinnedStreams = vertex_packing::packVertexStreams(skinnedVertices, error);
-    expect(skinnedStreams && skinnedStreams->skinned() && skinnedStreams->skin.size() == 5,
-           "any weighted vertex gives the whole mesh a skin stream");
-    expect(skinnedStreams && skinnedStreams->skin[0].weights == std::array<uint8_t, 4>{},
-           "unweighted vertices of a skinned mesh keep zero weights");
-    expect(vertex_packing::packedByteSize(skinnedVertices) == 5u * 40u, "skinned vertices occupy 40 GPU bytes each");
+    CHECK_MESSAGE((skinnedStreams && skinnedStreams->skinned() && skinnedStreams->skin.size() == 5),
+                  "any weighted vertex gives the whole mesh a skin stream");
+    CHECK_MESSAGE((skinnedStreams && skinnedStreams->skin[0].weights == std::array<uint8_t, 4>{}),
+                  "unweighted vertices of a skinned mesh keep zero weights");
+    CHECK_MESSAGE(vertex_packing::packedByteSize(skinnedVertices) == 5u * 40u,
+                  "skinned vertices occupy 40 GPU bytes each");
 
     skinnedVertices[4].joints = {70000, 0, 0, 0};
     skinnedVertices[4].weights = {1.0f, 0.0f, 0.0f, 0.0f};
     error.clear();
-    expect(!vertex_packing::packVertexStreams(skinnedVertices, error) && !error.empty(),
-           "a mesh with unrepresentable joints fails to pack with an error");
+    CHECK_MESSAGE((!vertex_packing::packVertexStreams(skinnedVertices, error) && !error.empty()),
+                  "a mesh with unrepresentable joints fails to pack with an error");
 }
 } // namespace
 
-int main() {
-    testNormalRoundTrip();
-    testTangentRoundTrip();
-    testSkinInfluence();
-    testMeshStreams();
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();
