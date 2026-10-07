@@ -3,6 +3,8 @@
 #include "engine/graphics/RenderConfiguration.hpp"
 #include "engine/graphics/RenderSubmission.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -12,15 +14,9 @@
 #include <tuple>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("MeshLod");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 // Morph deltas and skin data are derived from the position so tests can check
 // that every per-vertex stream moved with its vertex.
@@ -129,7 +125,7 @@ bool lodRangesValid(const MeshAsset& mesh, const MeshPrimitive& primitive, uint3
     return true;
 }
 
-void testOptimizationPreservesGeometry() {
+TEST_CASE("MeshLod: optimization preserves geometry") {
     MeshAsset mesh;
     appendSphere(mesh, glm::vec3(0.0f), 1.0f, 24, 48, true);
     const uint32_t secondFirstVertex = static_cast<uint32_t>(mesh.vertices.size());
@@ -145,35 +141,35 @@ void testOptimizationPreservesGeometry() {
 
     optimizeMesh(mesh);
 
-    expect(mesh.vertices.size() == vertexCount && vertexSet(mesh) == verticesBefore,
-           "optimization keeps every vertex, including unreferenced ones");
-    expect(mesh.primitives[0].firstIndex == primitivesBefore[0].firstIndex &&
-               mesh.primitives[0].indexCount == primitivesBefore[0].indexCount,
-           "the full-detail range keeps its position and size");
-    expect(triangleSet(mesh, mesh.primitives[0].firstIndex, mesh.primitives[0].indexCount) == firstBefore &&
-               triangleSet(mesh, mesh.primitives[1].firstIndex, mesh.primitives[1].indexCount) == secondBefore,
-           "reordering preserves each primitive's triangles and winding");
-    expect(lodRangesValid(mesh, mesh.primitives[0], 0, secondFirstVertex) &&
-               lodRangesValid(mesh, mesh.primitives[1], secondFirstVertex, secondVertexCount),
-           "every LOD stays inside its primitive's vertex range");
+    CHECK_MESSAGE((mesh.vertices.size() == vertexCount && vertexSet(mesh) == verticesBefore),
+                  "optimization keeps every vertex, including unreferenced ones");
+    CHECK_MESSAGE((mesh.primitives[0].firstIndex == primitivesBefore[0].firstIndex &&
+                   mesh.primitives[0].indexCount == primitivesBefore[0].indexCount),
+                  "the full-detail range keeps its position and size");
+    CHECK_MESSAGE((triangleSet(mesh, mesh.primitives[0].firstIndex, mesh.primitives[0].indexCount) == firstBefore &&
+                   triangleSet(mesh, mesh.primitives[1].firstIndex, mesh.primitives[1].indexCount) == secondBefore),
+                  "reordering preserves each primitive's triangles and winding");
+    CHECK_MESSAGE((lodRangesValid(mesh, mesh.primitives[0], 0, secondFirstVertex) &&
+                   lodRangesValid(mesh, mesh.primitives[1], secondFirstVertex, secondVertexCount)),
+                  "every LOD stays inside its primitive's vertex range");
 
     const MeshPrimitive& sphere = mesh.primitives[0];
-    expect(sphere.lodCount() > 1 && sphere.lodCount() <= maximumMeshLods,
-           "a dense curved primitive receives simplified levels within the LOD limit");
+    CHECK_MESSAGE((sphere.lodCount() > 1 && sphere.lodCount() <= maximumMeshLods),
+                  "a dense curved primitive receives simplified levels within the LOD limit");
     bool decreasing = true;
     for (uint32_t level = 1; level < sphere.lodCount(); ++level) {
         decreasing = decreasing && sphere.lod(level).indexCount < sphere.lod(level - 1).indexCount &&
                      sphere.lod(level).geometricError >= sphere.lod(level - 1).geometricError;
     }
-    expect(decreasing, "LOD index counts decrease while geometric errors never decrease");
-    expect(sphere.lod(sphere.lodCount() - 1).geometricError > 0.0f &&
-               sphere.lod(sphere.lodCount() - 1).geometricError < 0.1f,
-           "the coarsest level records a bounded object-space error");
-    expect(sphere.lod(maximumMeshLods + 3).firstIndex == sphere.lod(sphere.lodCount() - 1).firstIndex,
-           "levels past the coarsest clamp to it");
+    CHECK_MESSAGE(decreasing, "LOD index counts decrease while geometric errors never decrease");
+    CHECK_MESSAGE((sphere.lod(sphere.lodCount() - 1).geometricError > 0.0f &&
+                   sphere.lod(sphere.lodCount() - 1).geometricError < 0.1f),
+                  "the coarsest level records a bounded object-space error");
+    CHECK_MESSAGE(sphere.lod(maximumMeshLods + 3).firstIndex == sphere.lod(sphere.lodCount() - 1).firstIndex,
+                  "levels past the coarsest clamp to it");
 }
 
-void testDeformableStreamsStayConsistent() {
+TEST_CASE("MeshLod: deformable streams stay consistent") {
     MeshAsset morphed;
     appendSphere(morphed, glm::vec3(0.0f), 1.0f, 12, 24, false);
     MorphTarget target;
@@ -192,8 +188,8 @@ void testDeformableStreamsStayConsistent() {
                           moved.normalDeltas[index] == vertex.normal &&
                           moved.tangentDeltas[index] == glm::vec3(vertex.texCoord, 1.0f);
     }
-    expect(morphConsistent, "morph-target deltas are remapped with their vertices");
-    expect(morphed.primitives.front().lodCount() == 1, "meshes with morph targets keep only full detail");
+    CHECK_MESSAGE(morphConsistent, "morph-target deltas are remapped with their vertices");
+    CHECK_MESSAGE(morphed.primitives.front().lodCount() == 1, "meshes with morph targets keep only full detail");
 
     MeshAsset skinned;
     appendSphere(skinned, glm::vec3(0.0f), 1.0f, 12, 24, false);
@@ -202,18 +198,18 @@ void testDeformableStreamsStayConsistent() {
         vertex.weights = {1.0f, 0.0f, 0.0f, 0.0f};
     }
     optimizeMesh(skinned);
-    expect(std::ranges::all_of(skinned.vertices,
-                               [](const Vertex& vertex) { return vertex.joints == jointsFor(vertex.position); }),
-           "joint indices move with their vertices");
-    expect(skinned.primitives.front().lodCount() == 1, "skinned primitives keep only full detail");
+    CHECK_MESSAGE(std::ranges::all_of(skinned.vertices,
+                                      [](const Vertex& vertex) { return vertex.joints == jointsFor(vertex.position); }),
+                  "joint indices move with their vertices");
+    CHECK_MESSAGE(skinned.primitives.front().lodCount() == 1, "skinned primitives keep only full detail");
 
     MeshAsset small;
     appendSphere(small, glm::vec3(0.0f), 1.0f, 3, 4, false);
     optimizeMesh(small);
-    expect(small.primitives.front().lodCount() == 1, "small primitives are not simplified");
+    CHECK_MESSAGE(small.primitives.front().lodCount() == 1, "small primitives are not simplified");
 }
 
-void testLodSelection() {
+TEST_CASE("MeshLod: lod selection") {
     MeshPrimitive primitive{.firstIndex = 0, .indexCount = 300};
     primitive.simplifiedLods[0] = {.firstIndex = 300, .indexCount = 150, .geometricError = 0.01f};
     primitive.simplifiedLods[1] = {.firstIndex = 450, .indexCount = 60, .geometricError = 0.04f};
@@ -221,19 +217,20 @@ void testLodSelection() {
     const float projectionYScale = 1.0f / std::tan(glm::radians(30.0f));
     const MeshLodView view = makeMeshLodView(glm::vec3(0.0f), projectionYScale, 1080, 1.0f);
     // One world unit at distance one covers 1080 / 2 / tan(30 degrees) pixels.
-    expect(std::abs(view.errorScale - 935.3074f) < 0.01f, "the error scale follows the projection and viewport");
+    CHECK_MESSAGE(std::abs(view.errorScale - 935.3074f) < 0.01f, "the error scale follows the projection and viewport");
 
     const auto levelAt = [&](float distance, float radius, float scale) {
         return selectMeshLod(primitive, view, glm::vec3(0.0f, 0.0f, -distance), radius, scale);
     };
-    expect(levelAt(0.0f, 1.0f, 1.0f) == 0, "a camera inside the bounds draws full detail");
-    expect(levelAt(9.0f, 0.0f, 1.0f) == 0 && levelAt(9.5f, 0.0f, 1.0f) == 1,
-           "the first simplified level appears once its error projects within one pixel");
-    expect(levelAt(10.5f, 1.0f, 1.0f) == 1 && levelAt(9.5f, 1.0f, 1.0f) == 0,
-           "distance is measured to the nearest point of the bounding sphere");
-    expect(levelAt(38.0f, 0.0f, 1.0f) == 2 && levelAt(1.0e6f, 0.0f, 1.0f) == 2, "far objects use the coarsest level");
-    expect(levelAt(18.0f, 0.0f, 2.0f) == 0 && levelAt(18.0f, 0.0f, 1.0f) == 1,
-           "larger world scales keep finer levels at the same distance");
+    CHECK_MESSAGE(levelAt(0.0f, 1.0f, 1.0f) == 0, "a camera inside the bounds draws full detail");
+    CHECK_MESSAGE((levelAt(9.0f, 0.0f, 1.0f) == 0 && levelAt(9.5f, 0.0f, 1.0f) == 1),
+                  "the first simplified level appears once its error projects within one pixel");
+    CHECK_MESSAGE((levelAt(10.5f, 1.0f, 1.0f) == 1 && levelAt(9.5f, 1.0f, 1.0f) == 0),
+                  "distance is measured to the nearest point of the bounding sphere");
+    CHECK_MESSAGE((levelAt(38.0f, 0.0f, 1.0f) == 2 && levelAt(1.0e6f, 0.0f, 1.0f) == 2),
+                  "far objects use the coarsest level");
+    CHECK_MESSAGE((levelAt(18.0f, 0.0f, 2.0f) == 0 && levelAt(18.0f, 0.0f, 1.0f) == 1),
+                  "larger world scales keep finer levels at the same distance");
     uint32_t previous = 0;
     bool monotonic = true;
     for (float distance = 0.0f; distance < 100.0f; distance += 0.25f) {
@@ -241,54 +238,47 @@ void testLodSelection() {
         monotonic = monotonic && level >= previous;
         previous = level;
     }
-    expect(monotonic, "LOD selection never becomes finer with distance");
+    CHECK_MESSAGE(monotonic, "LOD selection never becomes finer with distance");
 
     const MeshLodView disabled = makeMeshLodView(glm::vec3(0.0f), projectionYScale, 1080, 0.0f);
-    expect(disabled.errorScale == 0.0f &&
-               selectMeshLod(primitive, disabled, glm::vec3(0.0f, 0.0f, -1.0e6f), 0.0f, 1.0f) == 0,
-           "a zero threshold always selects full detail");
+    CHECK_MESSAGE((disabled.errorScale == 0.0f &&
+                   selectMeshLod(primitive, disabled, glm::vec3(0.0f, 0.0f, -1.0e6f), 0.0f, 1.0f) == 0),
+                  "a zero threshold always selects full detail");
     MeshPrimitive lossless = primitive;
     lossless.simplifiedLods[0].geometricError = 0.0f;
     lossless.simplifiedLods[1].geometricError = 0.0f;
-    expect(selectMeshLod(lossless, view, glm::vec3(0.0f), 1.0f, 1.0f) == 2,
-           "zero-error levels are selected even inside the bounds");
-    expect(maximumAxisScale(glm::mat4(glm::vec4(2.0f, 0.0f, 0.0f, 0.0f), glm::vec4(0.0f, 3.0f, 0.0f, 0.0f),
-                                      glm::vec4(0.0f, 0.0f, 0.5f, 0.0f), glm::vec4(1.0f))) == 3.0f,
-           "the world scale is the largest axis scale");
+    CHECK_MESSAGE(selectMeshLod(lossless, view, glm::vec3(0.0f), 1.0f, 1.0f) == 2,
+                  "zero-error levels are selected even inside the bounds");
+    CHECK_MESSAGE(maximumAxisScale(glm::mat4(glm::vec4(2.0f, 0.0f, 0.0f, 0.0f), glm::vec4(0.0f, 3.0f, 0.0f, 0.0f),
+                                             glm::vec4(0.0f, 0.0f, 0.5f, 0.0f), glm::vec4(1.0f))) == 3.0f,
+                  "the world scale is the largest axis scale");
 }
 
-void testIndirectKeysSeparateLods() {
+TEST_CASE("MeshLod: indirect keys separate lods") {
     const IndirectDrawKey fullDetail{.pipeline = 0, .geometryPage = 0, .firstIndex = 0, .indexCount = 300};
     const IndirectDrawKey simplified{.pipeline = 0, .geometryPage = 0, .firstIndex = 300, .indexCount = 150};
     const std::vector<IndirectDrawKey> instances{fullDetail, simplified, fullDetail, simplified, simplified};
     IndirectDrawPlan plan;
     buildIndirectDrawPlan(instances, plan);
-    expect(plan.batches.size() == 2 && plan.groups.size() == 1,
-           "levels of one primitive form separate batches in one draw group");
-    expect(plan.batches[0].instanceCount == 2 && plan.batches[1].instanceCount == 3,
-           "instances of the same level share a batch");
+    CHECK_MESSAGE((plan.batches.size() == 2 && plan.groups.size() == 1),
+                  "levels of one primitive form separate batches in one draw group");
+    CHECK_MESSAGE((plan.batches[0].instanceCount == 2 && plan.batches[1].instanceCount == 3),
+                  "instances of the same level share a batch");
 }
 
-void testRenderSettingsThreshold() {
+TEST_CASE("MeshLod: render settings threshold") {
     RenderSettings settings;
-    expect(settings.lodErrorThresholdPixels == 1.0f, "LOD selection defaults to a one-pixel threshold");
+    CHECK_MESSAGE(settings.lodErrorThresholdPixels == 1.0f, "LOD selection defaults to a one-pixel threshold");
     settings.lodErrorThresholdPixels = 2.5f;
     std::string serialized;
     RenderSettings loaded;
-    expect(serializeRenderSettings(settings, serialized).success &&
-               deserializeRenderSettings(serialized, loaded).success && loaded.lodErrorThresholdPixels == 2.5f,
-           "the LOD threshold round-trips through render settings");
+    CHECK_MESSAGE((serializeRenderSettings(settings, serialized).success &&
+                   deserializeRenderSettings(serialized, loaded).success && loaded.lodErrorThresholdPixels == 2.5f),
+                  "the LOD threshold round-trips through render settings");
     std::string invalid = serialized;
     invalid.replace(invalid.find("2.5"), 3, "-1.0");
-    expect(!deserializeRenderSettings(invalid, loaded).success, "negative LOD thresholds are rejected");
+    CHECK_MESSAGE(!deserializeRenderSettings(invalid, loaded).success, "negative LOD thresholds are rejected");
 }
 } // namespace
 
-int main() {
-    testOptimizationPreservesGeometry();
-    testDeformableStreamsStayConsistent();
-    testLodSelection();
-    testIndirectKeysSeparateLods();
-    testRenderSettingsThreshold();
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

@@ -1,63 +1,48 @@
+// Whole-file reads through FileContents: binary content survives unchanged,
+// empty files read as empty, and a missing file reports OpenFailed.
+
 #include "engine/platform/FileContents.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <algorithm>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <string_view>
+#include <cstdint>
+#include <string>
+#include <vector>
 
-namespace fs = std::filesystem;
+TEST_SUITE_BEGIN("FileContents");
 
-namespace {
-int failures = 0;
-
-void expect(bool condition, std::string_view message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
-
-void write(const fs::path& path, std::string_view contents) {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
-}
-} // namespace
-
-int main() {
-    const fs::path root = fs::temp_directory_path() / "zenith_file_contents_tests";
-    std::error_code error;
-    fs::remove_all(root, error);
-    fs::create_directories(root);
-
-    // Binary content survives unchanged: embedded zeros and CR/LF pairs are
-    // not text-translated.
+TEST_CASE("FileContents: binary content survives unchanged") {
+    const testsupport::TempDirectory root("file-contents-binary");
+    // Embedded zeros and CR/LF pairs are not text-translated.
     const std::string binary("a\0b\r\nc\xff", 7);
-    write(root / "binary.bin", binary);
+    testsupport::writeText(root / "binary.bin", binary);
     std::vector<uint8_t> bytes{1, 2, 3};
-    expect(readFileBytes(root / "binary.bin", bytes) == FileReadStatus::Success, "bytes: an existing file is read");
-    expect(bytes.size() == binary.size() &&
-               std::equal(bytes.begin(), bytes.end(), binary.begin(),
-                          [](uint8_t byte, char character) { return byte == static_cast<uint8_t>(character); }),
-           "bytes: contents are exact, replacing what the output held");
+    CHECK_MESSAGE(readFileBytes(root / "binary.bin", bytes) == FileReadStatus::Success,
+                  "bytes: an existing file is read");
+    CHECK_MESSAGE((bytes.size() == binary.size() &&
+                   std::equal(bytes.begin(), bytes.end(), binary.begin(),
+                              [](uint8_t byte, char character) { return byte == static_cast<uint8_t>(character); })),
+                  "bytes: contents are exact, replacing what the output held");
 
     std::string text = "stale";
-    expect(readFileText(root / "binary.bin", text) == FileReadStatus::Success && text == binary,
-           "text: contents are exact");
-
-    write(root / "empty.txt", "");
-    expect(readFileText(root / "empty.txt", text) == FileReadStatus::Success && text.empty(),
-           "text: an empty file reads as empty");
-
-    bytes = {4, 5};
-    expect(readFileBytes(root / "missing.bin", bytes) == FileReadStatus::OpenFailed && bytes.empty(),
-           "bytes: a missing file reports OpenFailed and clears the output");
-
-    fs::remove_all(root, error);
-    if (failures != 0) {
-        std::cerr << failures << " file contents test(s) failed\n";
-        return 1;
-    }
-    std::cout << "File contents tests passed\n";
-    return 0;
+    CHECK_MESSAGE((readFileText(root / "binary.bin", text) == FileReadStatus::Success && text == binary),
+                  "text: contents are exact");
 }
+
+TEST_CASE("FileContents: an empty file reads as empty") {
+    const testsupport::TempDirectory root("file-contents-empty");
+    testsupport::writeText(root / "empty.txt", "");
+    std::string text = "stale";
+    CHECK_MESSAGE((readFileText(root / "empty.txt", text) == FileReadStatus::Success && text.empty()),
+                  "text: an empty file reads as empty");
+}
+
+TEST_CASE("FileContents: a missing file reports open failed and clears the output") {
+    const testsupport::TempDirectory root("file-contents-missing");
+    std::vector<uint8_t> bytes{4, 5};
+    CHECK_MESSAGE((readFileBytes(root / "missing.bin", bytes) == FileReadStatus::OpenFailed && bytes.empty()),
+                  "bytes: a missing file reports OpenFailed and clears the output");
+}
+
+TEST_SUITE_END();

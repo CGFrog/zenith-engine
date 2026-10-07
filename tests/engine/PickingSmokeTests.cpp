@@ -11,6 +11,10 @@
 #include "engine/graphics/GraphicsValidation.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
+#include "support/Skip.hpp"
+#include "support/StandaloneChecks.hpp"
+#include "support/VulkanProbe.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -32,14 +36,8 @@ constexpr uint32_t resizeFrame = 40;
 constexpr uint32_t destroyFrame = 50;
 
 struct SmokeResults {
-    std::vector<std::string> failures;
+    testsupport::StandaloneChecks checks;
     bool picksVerified{false};
-
-    void expect(bool condition, uint32_t frame, const std::string& message) {
-        if (!condition) {
-            failures.push_back("frame " + std::to_string(frame) + ": " + message);
-        }
-    }
 };
 
 glm::mat4 cameraWorld(const glm::vec3& position, const glm::vec3& target) {
@@ -100,10 +98,10 @@ class PickingScene final : public ApplicationScene {
         RenderRuntime& rendering = context.rendering;
         if (m_frame == 1) {
             m_view = rendering.createView();
-            m_results.expect(static_cast<bool>(m_view), m_frame, "a view is created");
-            m_results.expect(rendering.setViewOverride(
-                                 m_view, RenderView{.position = {0.0f, 0.0f, 10.0f}, .forward = {0.0f, 0.0f, -1.0f}}),
-                             m_frame, "the view accepts a camera");
+            m_results.checks.check(static_cast<bool>(m_view), m_frame, "a view is created");
+            m_results.checks.check(rendering.setViewOverride(m_view, RenderView{.position = {0.0f, 0.0f, 10.0f},
+                                                                                .forward = {0.0f, 0.0f, -1.0f}}),
+                                   m_frame, "the view accepts a camera");
         }
         checkPassRecording(rendering);
         if (m_frame == pickFrame) {
@@ -142,8 +140,8 @@ class PickingScene final : public ApplicationScene {
                                                                 .width = 3,
                                                                 .height = 3})};
         for (const PendingPick* pick : {&m_centrePick, &m_emptyPick, &m_boxPick, &m_defaultPick}) {
-            m_results.expect(static_cast<bool>(pick->ticket), m_frame,
-                             std::string("the ") + pick->name + " pick is accepted");
+            m_results.checks.check(static_cast<bool>(pick->ticket), m_frame,
+                                   std::string("the ") + pick->name + " pick is accepted");
         }
     }
 
@@ -152,10 +150,11 @@ class PickingScene final : public ApplicationScene {
         const uint32_t frame = m_frame - 1;
         const uint32_t passes = rendering.stats().pickPasses;
         if (frame == pickFrame) {
-            m_results.expect(passes == 4, frame,
-                             "the frame with four picks records four id-buffer passes, not " + std::to_string(passes));
+            m_results.checks.check(passes == 4, frame,
+                                   "the frame with four picks records four id-buffer passes, not " +
+                                       std::to_string(passes));
         } else if (frame >= 2 && frame < resizeFrame) {
-            m_results.expect(passes == 0, frame, "a frame without picks records no id-buffer pass");
+            m_results.checks.check(passes == 0, frame, "a frame without picks records no id-buffer pass");
         }
     }
 
@@ -169,8 +168,9 @@ class PickingScene final : public ApplicationScene {
                     continue;
                 }
                 pick->result = rendering.pickResult(pick->ticket);
-                m_results.expect(pick->result->status == PickStatus::Ready, m_frame,
-                                 std::string("the ") + pick->name + " pick becomes Ready: " + pick->result->error);
+                m_results.checks.check(pick->result->status == PickStatus::Ready, m_frame,
+                                       std::string("the ") + pick->name +
+                                           " pick becomes Ready: " + pick->result->error);
             }
         }
         if (allReady) {
@@ -178,7 +178,7 @@ class PickingScene final : public ApplicationScene {
             m_results.picksVerified = true;
             return;
         }
-        m_results.expect(m_frame < resultDeadline, m_frame, "picks resolve within twenty frames");
+        m_results.checks.check(m_frame < resultDeadline, m_frame, "picks resolve within twenty frames");
         if (m_frame >= resultDeadline) {
             m_results.picksVerified = true;
         }
@@ -186,32 +186,33 @@ class PickingScene final : public ApplicationScene {
 
     void verifyPicks() {
         const PickResult& centre = *m_centrePick.result;
-        m_results.expect(centre.region.width == 3 && centre.ids.size() == 9 && centre.depth.size() == 9, m_frame,
-                         "the centre pick covers its 3x3 region");
+        m_results.checks.check(centre.region.width == 3 && centre.ids.size() == 9 && centre.depth.size() == 9, m_frame,
+                               "the centre pick covers its 3x3 region");
         if (centre.ids.size() == 9) {
             const uint32_t id = centre.ids[4];
-            m_results.expect(id != 0 && id <= centre.objects.size() && centre.objects[id - 1].entity == m_centre,
-                             m_frame, "the centre pixel names the centre cube");
-            m_results.expect(centre.depth[4] > 0.0f && centre.depth[4] <= 1.0f, m_frame,
-                             "the centre pixel has a reversed-Z depth");
+            m_results.checks.check(id != 0 && id <= centre.objects.size() && centre.objects[id - 1].entity == m_centre,
+                                   m_frame, "the centre pixel names the centre cube");
+            m_results.checks.check(centre.depth[4] > 0.0f && centre.depth[4] <= 1.0f, m_frame,
+                                   "the centre pixel has a reversed-Z depth");
             const std::optional<glm::vec3> surface = pickWorldPosition(centre, viewSize / 2, viewSize / 2);
-            m_results.expect(surface && std::abs(surface->x) < 0.1f && std::abs(surface->y) < 0.1f &&
-                                 std::abs(surface->z - 1.0f) < 0.05f,
-                             m_frame, "the centre pixel's depth reconstructs the cube's front face");
+            m_results.checks.check(surface && std::abs(surface->x) < 0.1f && std::abs(surface->y) < 0.1f &&
+                                       std::abs(surface->z - 1.0f) < 0.05f,
+                                   m_frame, "the centre pixel's depth reconstructs the cube's front face");
         }
         const PickResult& empty = *m_emptyPick.result;
-        m_results.expect(empty.ids.size() == 16 && std::ranges::all_of(empty.ids, [](uint32_t id) { return id == 0; }),
-                         m_frame, "a pick on empty space returns no object");
+        m_results.checks.check(empty.ids.size() == 16 &&
+                                   std::ranges::all_of(empty.ids, [](uint32_t id) { return id == 0; }),
+                               m_frame, "a pick on empty space returns no object");
         const PickResult& box = *m_boxPick.result;
-        m_results.expect(box.region.x == 0 && box.region.width == viewSize && box.region.height == viewSize, m_frame,
-                         "a pick past the view's edges is clamped to the view");
+        m_results.checks.check(box.region.x == 0 && box.region.width == viewSize && box.region.height == viewSize,
+                               m_frame, "a pick past the view's edges is clamped to the view");
         std::vector<SceneEntityId> expected{m_centre, m_side};
         std::ranges::sort(expected);
-        m_results.expect(pickedEntities(box) == expected, m_frame, "the whole-view pick names both cubes");
+        m_results.checks.check(pickedEntities(box) == expected, m_frame, "the whole-view pick names both cubes");
         const PickResult& defaultView = *m_defaultPick.result;
-        m_results.expect(defaultView.ids.size() == 9 && defaultView.ids[4] != 0 &&
-                             pickedEntities(defaultView) == std::vector<SceneEntityId>{m_centre},
-                         m_frame, "the default view's centre names the centre cube");
+        m_results.checks.check(defaultView.ids.size() == 9 && defaultView.ids[4] != 0 &&
+                                   pickedEntities(defaultView) == std::vector<SceneEntityId>{m_centre},
+                               m_frame, "the default view's centre names the centre cube");
     }
 
     void checkCancellation(RenderRuntime& rendering) {
@@ -220,16 +221,16 @@ class PickingScene final : public ApplicationScene {
             m_resizedPick = rendering.requestPick(m_view, {.x = 10, .y = 10, .width = 2, .height = 2});
         }
         if (m_frame == resizeFrame + 2) {
-            m_results.expect(rendering.pickResult(m_resizedPick).status == PickStatus::Cancelled, m_frame,
-                             "resizing the view cancels its pending pick");
+            m_results.checks.check(rendering.pickResult(m_resizedPick).status == PickStatus::Cancelled, m_frame,
+                                   "resizing the view cancels its pending pick");
         }
         if (m_frame == destroyFrame) {
             const RenderViewId doomed = rendering.createView();
             const PickTicket ticket = rendering.requestPick(doomed, {});
-            m_results.expect(static_cast<bool>(ticket) && rendering.destroyView(doomed), m_frame,
-                             "a pick on a new view is accepted before the view is destroyed");
-            m_results.expect(rendering.pickStatus(ticket) == PickStatus::Cancelled, m_frame,
-                             "destroying the view cancels its pick");
+            m_results.checks.check(static_cast<bool>(ticket) && rendering.destroyView(doomed), m_frame,
+                                   "a pick on a new view is accepted before the view is destroyed");
+            m_results.checks.check(rendering.pickStatus(ticket) == PickStatus::Cancelled, m_frame,
+                                   "destroying the view cancels its pick");
         }
     }
 
@@ -269,19 +270,18 @@ int main(int, char** argv) {
     if (!engine.init()) {
         std::cerr << "Engine initialization failed\n";
         engine.shutdown();
+        if (std::string reason; !testsupport::vulkanDeviceAvailable(testsupport::VulkanDeviceKind::Any, reason)) {
+            std::cout << "Skipping: " << reason << '\n';
+            return testsupport::skipExitCode;
+        }
         return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
     SmokeResults results;
     PickingApplication application(results);
     const bool ran = engine.run(application);
     engine.shutdown();
-    for (const std::string& failure : results.failures) {
-        std::cerr << "FAILED: " << failure << '\n';
-    }
-    if (!results.picksVerified) {
-        std::cerr << "FAILED: the picks were never checked (is ZENITH_SMOKE_FRAMES at least 60?)\n";
-    }
-    const bool passed = ran && results.failures.empty() && results.picksVerified;
+    results.checks.check(results.picksVerified, "the picks were never checked (is ZENITH_SMOKE_FRAMES at least 60?)");
+    const bool passed = ran && results.checks.failures() == 0;
     if (passed) {
         std::cout << "Picking smoke test passed\n";
     }

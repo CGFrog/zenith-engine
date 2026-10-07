@@ -9,14 +9,16 @@
 #include "engine/scene/AdditiveSceneManager.hpp"
 #include "engine/scene/Prefab.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <array>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <string>
 
+using testsupport::TempDirectory;
+
 namespace {
-int failures = 0;
 
 class DynamicAssetScene final : public ApplicationScene {
   public:
@@ -117,28 +119,6 @@ class ReloadingAssetApplication final : public Application {
     }
 };
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
-
-// Cleanup never throws: under a loaded suite another process (a virus
-// scanner, the indexer) can still hold a file the test just wrote, and an
-// uncaught filesystem_error would abort the test after every check passed.
-void removeTemporaryRoot(const std::filesystem::path& root) {
-    std::error_code ignored;
-    std::filesystem::remove_all(root, ignored);
-}
-
-std::filesystem::path temporaryRoot() {
-    const auto root = std::filesystem::temp_directory_path() / "zenith-production-milestones-tests";
-    removeTemporaryRoot(root);
-    std::filesystem::create_directories(root);
-    return root;
-}
-
 void writePartiallyInvalidModel(const std::filesystem::path& root) {
     const auto bufferPath = root / "invalid-model.bin";
     const float positions[] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
@@ -168,7 +148,13 @@ void writePartiallyInvalidModel(const std::filesystem::path& root) {
 })";
 }
 
-void testAssetLifetime(const std::filesystem::path& root) {
+} // namespace
+
+TEST_SUITE_BEGIN("ProductionMilestones");
+
+TEST_CASE("ProductionMilestones: asset lifetime") {
+    const TempDirectory temporary("asset-lifetime");
+    const std::filesystem::path& root = temporary.path();
     const auto fontPath = root / "font.bin";
     {
         std::ofstream output(fontPath, std::ios::binary);
@@ -176,25 +162,25 @@ void testAssetLifetime(const std::filesystem::path& root) {
     }
     AssetManager assets;
     const auto loaded = assets.loadFont(fontPath);
-    expect(static_cast<bool>(loaded), "font fixture loads");
+    CHECK_MESSAGE(static_cast<bool>(loaded), "font fixture loads");
     const FontHandle old = loaded.handle;
     {
         auto firstLease = assets.lease(old);
         auto secondLease = firstLease;
-        expect(firstLease && secondLease, "shared leases resolve");
+        CHECK_MESSAGE((firstLease && secondLease), "shared leases resolve");
         const AssetCollectionResult retained = assets.collectUnused(true);
-        expect(retained.assetsEvicted == 0 && assets.font(old) != nullptr, "live leases prevent eviction");
+        CHECK_MESSAGE((retained.assetsEvicted == 0 && assets.font(old) != nullptr), "live leases prevent eviction");
     }
-    expect(assets.collectUnused(true).assetsEvicted == 1, "unreferenced asset is evicted deterministically");
-    expect(assets.font(old) == nullptr, "stale handle fails resolution");
+    CHECK_MESSAGE(assets.collectUnused(true).assetsEvicted == 1, "unreferenced asset is evicted deterministically");
+    CHECK_MESSAGE(assets.font(old) == nullptr, "stale handle fails resolution");
     const auto reloaded = assets.loadFont(fontPath);
-    expect(reloaded.handle.index == old.index && reloaded.handle.generation != old.generation,
-           "recycled slot increments its generation");
-    expect(assets.fontHandles() == std::vector<FontHandle>{reloaded.handle},
-           "font enumeration preserves recycled handle generations");
+    CHECK_MESSAGE((reloaded.handle.index == old.index && reloaded.handle.generation != old.generation),
+                  "recycled slot increments its generation");
+    CHECK_MESSAGE(assets.fontHandles() == std::vector<FontHandle>{reloaded.handle},
+                  "font enumeration preserves recycled handle generations");
     assets.setMemoryBudget({0});
     const auto pressure = assets.collectUnused();
-    expect(pressure.budgetSatisfied && pressure.bytesRetained == 0, "budget pressure collects unused bytes");
+    CHECK_MESSAGE((pressure.budgetSatisfied && pressure.bytesRetained == 0), "budget pressure collects unused bytes");
 
     const auto retainedFont = assets.loadFont(fontPath);
     const auto retainedLease = assets.lease(retainedFont.handle);
@@ -203,21 +189,23 @@ void testAssetLifetime(const std::filesystem::path& root) {
     const uint64_t revisionBeforeFailure = assets.revision();
     writePartiallyInvalidModel(root);
     const auto invalidModel = assets.loadModel(root / "invalid-model.gltf");
-    expect(!invalidModel, "invalid model fails after importer allocation begins");
-    expect(assets.diagnostics().size() == diagnosticsBeforeFailure.size() && assets.cpuBytes() == bytesBeforeFailure &&
-               assets.revision() == revisionBeforeFailure && assets.font(retainedFont.handle) != nullptr &&
-               retainedLease,
-           "failed imports restore recycled slots, ownership, accounting, and revision state");
+    CHECK_MESSAGE(!invalidModel, "invalid model fails after importer allocation begins");
+    CHECK_MESSAGE((assets.diagnostics().size() == diagnosticsBeforeFailure.size() &&
+                   assets.cpuBytes() == bytesBeforeFailure && assets.revision() == revisionBeforeFailure &&
+                   assets.font(retainedFont.handle) != nullptr && retainedLease),
+                  "failed imports restore recycled slots, ownership, accounting, and revision state");
 }
 
-void testRecoverableReload(const std::filesystem::path& root) {
+TEST_CASE("ProductionMilestones: recoverable reload") {
+    const TempDirectory temporary("recoverable-reload");
+    const std::filesystem::path& root = temporary.path();
     const auto source = std::filesystem::path{ZENITH_ASSET_DIR} / "sample.gltf";
     const auto reloadPath = root / "reload.gltf";
     std::filesystem::copy_file(source, reloadPath, std::filesystem::copy_options::overwrite_existing);
 
     AssetManager assets;
     const auto original = assets.loadModel(reloadPath);
-    expect(static_cast<bool>(original), "reload fixture initially loads");
+    CHECK_MESSAGE(static_cast<bool>(original), "reload fixture initially loads");
     const auto liveLease = assets.lease(original.handle);
 
     writePartiallyInvalidModel(root);
@@ -225,69 +213,71 @@ void testRecoverableReload(const std::filesystem::path& root) {
                                std::filesystem::copy_options::overwrite_existing);
     const auto failedReload = assets.reloadModel(reloadPath);
     const auto cachedAfterFailure = assets.loadModel(reloadPath);
-    expect(!failedReload && cachedAfterFailure.handle == original.handle && assets.model(original.handle) != nullptr,
-           "failed reload preserves the cached immutable generation");
-    expect(assets.collectUnused(true).assetsEvicted > 0 && assets.model(original.handle) != nullptr && liveLease,
-           "reload failure collection preserves the leased previous generation");
+    CHECK_MESSAGE(
+        (!failedReload && cachedAfterFailure.handle == original.handle && assets.model(original.handle) != nullptr),
+        "failed reload preserves the cached immutable generation");
+    CHECK_MESSAGE(
+        (assets.collectUnused(true).assetsEvicted > 0 && assets.model(original.handle) != nullptr && liveLease),
+        "reload failure collection preserves the leased previous generation");
 }
 
-void testLiveSceneOwnership() {
+TEST_CASE("ProductionMilestones: live scene ownership") {
     DynamicAssetApplication application;
     Scene scene;
     AssetManager assets;
     PhysicsWorld physics;
     AudioSystem audio;
     ApplicationSession session(application, scene, assets, physics, audio);
-    expect(session.start().success, "dynamic-asset application starts");
+    CHECK_MESSAGE(session.start().success, "dynamic-asset application starts");
     session.update({}, 0.0f);
-    expect(application.activeScene != nullptr && application.activeScene->loaded(),
-           "application update adds a model to the live scene");
+    CHECK_MESSAGE((application.activeScene != nullptr && application.activeScene->loaded()),
+                  "application update adds a model to the live scene");
     if (application.activeScene != nullptr) {
-        expect(application.activeScene->error().empty(), "dynamic model load has no error");
+        CHECK_MESSAGE(application.activeScene->error().empty(), "dynamic model load has no error");
     }
     const ModelHandle liveModel = application.activeScene != nullptr ? application.activeScene->model() : ModelHandle{};
     assets.collectUnused(true);
-    expect(assets.model(liveModel) != nullptr, "scene assets added after load remain strongly referenced");
+    CHECK_MESSAGE(assets.model(liveModel) != nullptr, "scene assets added after load remain strongly referenced");
     bool foundGpuEstimate = false;
     for (const AssetDiagnostic& diagnostic : assets.diagnostics()) {
         foundGpuEstimate |= diagnostic.kind == AssetKind::Mesh && diagnostic.gpuBytes > 0;
     }
-    expect(foundGpuEstimate, "asset diagnostics report deterministic GPU byte estimates");
+    CHECK_MESSAGE(foundGpuEstimate, "asset diagnostics report deterministic GPU byte estimates");
     session.shutdown();
-    expect(assets.collectUnused(true).assetsEvicted > 0 && assets.model(liveModel) == nullptr,
-           "scene assets become collectible and stale after application shutdown");
+    CHECK_MESSAGE((assets.collectUnused(true).assetsEvicted > 0 && assets.model(liveModel) == nullptr),
+                  "scene assets become collectible and stale after application shutdown");
 }
 
-void testTransitionCollection() {
+TEST_CASE("ProductionMilestones: transition collection") {
     ReloadingAssetApplication application;
     Scene scene;
     AssetManager assets;
     PhysicsWorld physics;
     AudioSystem audio;
     ApplicationSession session(application, scene, assets, physics, audio);
-    expect(session.start().success, "reloading application starts");
+    CHECK_MESSAGE(session.start().success, "reloading application starts");
     assets.collectUnused(true);
     const uint64_t retainedBaseline = assets.cpuBytes();
-    expect(retainedBaseline > 0, "active reloading scene retains its model graph");
+    CHECK_MESSAGE(retainedBaseline > 0, "active reloading scene retains its model graph");
     for (int transition = 0; transition < 12; ++transition) {
         session.update({}, 0.0f);
-        expect(session.finishFrame().success, "reloading scene transition succeeds");
+        CHECK_MESSAGE(session.finishFrame().success, "reloading scene transition succeeds");
         assets.collectUnused(true);
-        expect(assets.cpuBytes() == retainedBaseline,
-               "repeated transitions return retained asset memory to the baseline");
+        CHECK_MESSAGE(assets.cpuBytes() == retainedBaseline,
+                      "repeated transitions return retained asset memory to the baseline");
     }
     session.shutdown();
     assets.collectUnused(true);
-    expect(assets.cpuBytes() == 0, "transition assets are fully released after session shutdown");
+    CHECK_MESSAGE(assets.cpuBytes() == 0, "transition assets are fully released after session shutdown");
 }
 
-void testDeferredFrameOwnership() {
+TEST_CASE("ProductionMilestones: deferred frame ownership") {
     AssetManager assets;
     const auto loaded = assets.loadModel(std::filesystem::path{ZENITH_ASSET_DIR} / "sample.gltf");
     Scene scene;
     const Entity root = scene.createEntity("In-flight model");
-    expect(loaded && scene.instantiateModel(root, loaded.handle, assets).success,
-           "in-flight ownership fixture instantiates");
+    CHECK_MESSAGE((loaded && scene.instantiateModel(root, loaded.handle, assets).success),
+                  "in-flight ownership fixture instantiates");
 
     std::array<AssetLeaseSet, 3> frameLeases;
     for (AssetLeaseSet& leases : frameLeases) {
@@ -295,17 +285,19 @@ void testDeferredFrameOwnership() {
     }
     scene.clear();
     assets.collectUnused(true);
-    expect(assets.model(loaded.handle) != nullptr, "submitted frame leases defer asset destruction");
+    CHECK_MESSAGE(assets.model(loaded.handle) != nullptr, "submitted frame leases defer asset destruction");
     frameLeases[0].clear();
     frameLeases[1].clear();
     assets.collectUnused(true);
-    expect(assets.model(loaded.handle) != nullptr, "any unfinished frame continues to retain its resources");
+    CHECK_MESSAGE(assets.model(loaded.handle) != nullptr, "any unfinished frame continues to retain its resources");
     frameLeases[2].clear();
     assets.collectUnused(true);
-    expect(assets.model(loaded.handle) == nullptr, "resources are reclaimed after the final frame retires");
+    CHECK_MESSAGE(assets.model(loaded.handle) == nullptr, "resources are reclaimed after the final frame retires");
 }
 
-void testJobsAndAdditiveScenes(const std::filesystem::path& root) {
+TEST_CASE("ProductionMilestones: jobs and additive scenes") {
+    const TempDirectory temporary("jobs-additive-scenes");
+    const std::filesystem::path& root = temporary.path();
     JobSystem jobs({.queueCapacity = 8, .deterministic = true});
     std::vector<int> order;
     const JobHandle low = jobs.submit(
@@ -322,9 +314,9 @@ void testJobsAndAdditiveScenes(const std::filesystem::path& root) {
         2);
     jobs.pumpOne();
     jobs.pumpOne();
-    expect(order == std::vector<int>({2, 1}), "job priorities are deterministic");
-    expect(low.status() == JobStatus::Succeeded && high.status() == JobStatus::Succeeded,
-           "completed jobs publish status");
+    CHECK_MESSAGE(order == std::vector<int>({2, 1}), "job priorities are deterministic");
+    CHECK_MESSAGE((low.status() == JobStatus::Succeeded && high.status() == JobStatus::Succeeded),
+                  "completed jobs publish status");
     jobs.takeCompleted();
 
     AssetManager assets;
@@ -333,9 +325,9 @@ void testJobsAndAdditiveScenes(const std::filesystem::path& root) {
     const auto model = assets.loadModel(std::filesystem::path{ZENITH_ASSET_DIR} / "sample.gltf");
     Scene authored;
     const Entity authoredRoot = authored.createEntity("Layer model");
-    expect(model && authored.instantiateModel(authoredRoot, model.handle, assets).success &&
-               SceneDocument::save(scenePath, authored, assets, options).success,
-           "asset-bearing additive scene fixture saves");
+    CHECK_MESSAGE((model && authored.instantiateModel(authoredRoot, model.handle, assets).success &&
+                   SceneDocument::save(scenePath, authored, assets, options).success),
+                  "asset-bearing additive scene fixture saves");
     authored.clear();
     assets.collectUnused(true);
 
@@ -346,34 +338,37 @@ void testJobsAndAdditiveScenes(const std::filesystem::path& root) {
     jobs.pumpOne();
     jobs.pumpOne();
     layers.update();
-    expect(layers.state(first)->status == AdditiveSceneStatus::Committed && layers.scene(first) != nullptr,
-           "background parse commits an intact additive instance");
+    CHECK_MESSAGE((layers.state(first)->status == AdditiveSceneStatus::Committed && layers.scene(first) != nullptr),
+                  "background parse commits an intact additive instance");
     PrefabDocument sharedPrefab;
     sharedPrefab.entities.push_back({{1}, "Shared prefab", std::nullopt, glm::mat4(1.0f)});
-    expect(savePrefab(root / "shared.prefab", sharedPrefab).success, "shared layer prefab fixture saves");
+    CHECK_MESSAGE(savePrefab(root / "shared.prefab", sharedPrefab).success, "shared layer prefab fixture saves");
     PrefabSystem sharedPrefabs(assets, SceneDocumentOptions{.assetRoot = root});
     Scene primaryScene;
     const PrefabInstanceResult primaryPrefab = sharedPrefabs.instantiate("shared.prefab", primaryScene);
     const PrefabInstanceResult layeredPrefab = sharedPrefabs.instantiate("shared.prefab", *layers.scene(first));
-    expect(primaryPrefab && layeredPrefab,
-           "primary scenes and additive scene layers share runtime prefab definitions without editor state");
+    CHECK_MESSAGE((primaryPrefab && layeredPrefab),
+                  "primary scenes and additive scene layers share runtime prefab definitions without editor state");
     const auto unrelatedCompletions = jobs.takeCompleted();
-    expect(unrelated && unrelatedCompletions.size() == 1 && unrelatedCompletions.front().handle.id() == unrelated.id(),
-           "additive loading leaves other consumers' job completions queued");
+    CHECK_MESSAGE(
+        (unrelated && unrelatedCompletions.size() == 1 && unrelatedCompletions.front().handle.id() == unrelated.id()),
+        "additive loading leaves other consumers' job completions queued");
     assets.collectUnused(true);
     const auto committedModels = layers.scene(first)->registry().view<const ModelComponent>();
     const ModelHandle committedModel = committedModels.empty()
                                            ? ModelHandle{}
                                            : committedModels.get<const ModelComponent>(*committedModels.begin()).model;
-    expect(assets.model(committedModel) != nullptr, "committed additive instances retain their asset generations");
+    CHECK_MESSAGE(assets.model(committedModel) != nullptr,
+                  "committed additive instances retain their asset generations");
     const SceneInstanceId missing = layers.requestLoad(root / "missing.scene");
     jobs.pumpOne();
     layers.update();
-    expect(layers.state(missing)->status == AdditiveSceneStatus::Failed && layers.scene(first) != nullptr,
-           "failed additive loads preserve committed instances");
-    expect(layers.unload(first) && layers.committedInstances().empty(), "additive instances unload explicitly");
+    CHECK_MESSAGE((layers.state(missing)->status == AdditiveSceneStatus::Failed && layers.scene(first) != nullptr),
+                  "failed additive loads preserve committed instances");
+    CHECK_MESSAGE((layers.unload(first) && layers.committedInstances().empty()),
+                  "additive instances unload explicitly");
     assets.collectUnused(true);
-    expect(assets.model(committedModel) == nullptr, "additive unload releases instance asset ownership");
+    CHECK_MESSAGE(assets.model(committedModel) == nullptr, "additive unload releases instance asset ownership");
 
     const auto highPath = root / "high-priority.zenith-scene";
     const auto lowPath = root / "low-priority.zenith-scene";
@@ -388,34 +383,35 @@ void testJobsAndAdditiveScenes(const std::filesystem::path& root) {
     const SceneInstanceId lowInstance = *layers.streamingInstance(lowPath);
     jobs.pumpOne();
     layers.update();
-    expect(layers.state(highInstance)->status == AdditiveSceneStatus::Committed &&
-               layers.state(lowInstance)->status == AdditiveSceneStatus::Loading,
-           "streaming requests execute in application-provided priority order");
+    CHECK_MESSAGE((layers.state(highInstance)->status == AdditiveSceneStatus::Committed &&
+                   layers.state(lowInstance)->status == AdditiveSceneStatus::Loading),
+                  "streaming requests execute in application-provided priority order");
 
     const Scene* highScene = layers.scene(highInstance);
     const Entity highEntity = *highScene->registry().view<const SceneEntityIdComponent>().begin();
     const SceneEntityId stableEntity = highScene->id(highEntity);
-    expect(static_cast<bool>(layers.resolve({highInstance, stableEntity})),
-           "cross-scene references resolve committed stable entity IDs");
-    expect(!layers.resolve({highInstance, SceneEntityId{999999}}), "cross-scene references reject missing entity IDs");
-    expect(!layers.resolve({SceneInstanceId{999999}, stableEntity}),
-           "cross-scene references reject missing scene instances");
+    CHECK_MESSAGE(static_cast<bool>(layers.resolve({highInstance, stableEntity})),
+                  "cross-scene references resolve committed stable entity IDs");
+    CHECK_MESSAGE(!layers.resolve({highInstance, SceneEntityId{999999}}),
+                  "cross-scene references reject missing entity IDs");
+    CHECK_MESSAGE(!layers.resolve({SceneInstanceId{999999}, stableEntity}),
+                  "cross-scene references reject missing scene instances");
 
     const std::array retainedStreamingRequest = {StreamingSceneRequest{highPath, 10}};
     layers.synchronizeStreamingSet(retainedStreamingRequest);
-    expect(!layers.streamingInstance(lowPath) && layers.streamingInstance(highPath),
-           "leaving the streaming set cancels and unloads the departing request");
+    CHECK_MESSAGE((!layers.streamingInstance(lowPath) && layers.streamingInstance(highPath)),
+                  "leaving the streaming set cancels and unloads the departing request");
     jobs.pumpOne();
     layers.update();
     layers.synchronizeStreamingSet(std::span<const StreamingSceneRequest>{});
-    expect(layers.committedInstances().empty(), "empty streaming set unloads committed streamed scenes");
+    CHECK_MESSAGE(layers.committedInstances().empty(), "empty streaming set unloads committed streamed scenes");
 
     const SceneInstanceId cancelled = layers.requestLoad(scenePath);
     layers.cancel(cancelled);
     jobs.pumpOne();
     layers.update();
-    expect(layers.state(cancelled)->status == AdditiveSceneStatus::Cancelled,
-           "cancellation before execution publishes a terminal cancelled state");
+    CHECK_MESSAGE(layers.state(cancelled)->status == AdditiveSceneStatus::Cancelled,
+                  "cancellation before execution publishes a terminal cancelled state");
 
     const auto malformedScenePath = root / "malformed-layer.zenith-scene";
     {
@@ -434,19 +430,20 @@ void testJobsAndAdditiveScenes(const std::filesystem::path& root) {
     const SceneInstanceId failedCommit = layers.requestLoad(malformedScenePath);
     jobs.pumpOne();
     layers.update();
-    expect(layers.state(failedCommit)->status == AdditiveSceneStatus::Failed && layers.committedInstances().empty(),
-           "failed main-thread commits preserve all previously committed instances");
+    CHECK_MESSAGE(
+        (layers.state(failedCommit)->status == AdditiveSceneStatus::Failed && layers.committedInstances().empty()),
+        "failed main-thread commits preserve all previously committed instances");
 
     for (int iteration = 0; iteration < 16; ++iteration) {
         const SceneInstanceId repeated = layers.requestLoad(scenePath);
         jobs.pumpOne();
         layers.update();
-        expect(layers.state(repeated)->status == AdditiveSceneStatus::Committed,
-               "repeated additive load commits deterministically");
+        CHECK_MESSAGE(layers.state(repeated)->status == AdditiveSceneStatus::Committed,
+                      "repeated additive load commits deterministically");
         assets.collectUnused(true);
-        expect(layers.unload(repeated), "repeated additive unload succeeds");
+        CHECK_MESSAGE(layers.unload(repeated), "repeated additive unload succeeds");
         assets.collectUnused(true);
-        expect(assets.cpuBytes() == 0, "repeated additive unload and collection release all asset memory");
+        CHECK_MESSAGE(assets.cpuBytes() == 0, "repeated additive unload and collection release all asset memory");
     }
 
     JobSystem shutdownJobs({.queueCapacity = 8, .deterministic = true});
@@ -456,35 +453,37 @@ void testJobsAndAdditiveScenes(const std::filesystem::path& root) {
     shutdownLayers.clear();
     shutdownJobs.shutdown(true);
     shutdownLayers.update();
-    expect(shutdownJobs.takeCompleted().empty(),
-           "shutdown during loading publishes and consumes every cancelled completion");
+    CHECK_MESSAGE(shutdownJobs.takeCompleted().empty(),
+                  "shutdown during loading publishes and consumes every cancelled completion");
 }
 
-void testPrefabs(const std::filesystem::path& root) {
+TEST_CASE("ProductionMilestones: prefabs") {
+    const TempDirectory temporary("prefabs");
+    const std::filesystem::path& root = temporary.path();
     AssetManager assets;
     const SceneDocumentOptions options{.assetRoot = root};
     PrefabDocument child;
     child.entities.push_back({{1}, "Child", std::nullopt, glm::mat4(1.0f)});
-    expect(savePrefab(root / "child.prefab", child).success, "child prefab saves");
+    CHECK_MESSAGE(savePrefab(root / "child.prefab", child).success, "child prefab saves");
     PrefabDocument parent;
     parent.entities.push_back({{1}, "Root", std::nullopt, glm::mat4(1.0f)});
     parent.nested.push_back({2, "child.prefab", PrefabEntityId{1}, {{{1}, "", "/name", R"("Overridden")"}}});
     std::string encoded;
-    expect(serializePrefab(parent, encoded).success, "prefab serializes");
+    CHECK_MESSAGE(serializePrefab(parent, encoded).success, "prefab serializes");
     PrefabDocument decoded;
-    expect(deserializePrefab(encoded, decoded).success && decoded.nested.size() == 1 &&
-               decoded.nested.front().overrides == parent.nested.front().overrides,
-           "prefab round trips");
-    expect(savePrefab(root / "parent.prefab", parent).success, "parent prefab saves");
+    CHECK_MESSAGE((deserializePrefab(encoded, decoded).success && decoded.nested.size() == 1 &&
+                   decoded.nested.front().overrides == parent.nested.front().overrides),
+                  "prefab round trips");
+    CHECK_MESSAGE(savePrefab(root / "parent.prefab", parent).success, "parent prefab saves");
     Scene scene;
     PrefabSystem prefabs(assets, options);
     const PrefabInstanceResult instance = prefabs.instantiate("parent.prefab", scene);
-    expect(instance.success && instance.entities.size() == 2, "nested prefab instantiates deterministically");
+    CHECK_MESSAGE((instance.success && instance.entities.size() == 2), "nested prefab instantiates deterministically");
     bool foundOverride = false;
     for (Entity entity : instance.entities) {
         foundOverride |= scene.registry().get<NameComponent>(entity).name == "Overridden";
     }
-    expect(foundOverride, "nested overrides remain separate and are applied");
+    CHECK_MESSAGE(foundOverride, "nested overrides remain separate and are applied");
 
     Scene secondScene;
     const PrefabInstanceResult secondInstance = prefabs.instantiate("parent.prefab", secondScene);
@@ -498,61 +497,62 @@ void testPrefabs(const std::filesystem::path& root) {
     }
     std::ranges::sort(firstIds);
     std::ranges::sort(secondIds);
-    expect(firstIds == secondIds, "prefab instance IDs are assigned deterministically across scenes");
+    CHECK_MESSAGE(firstIds == secondIds, "prefab instance IDs are assigned deterministically across scenes");
 
     child.entities.front().name = "Updated child";
-    expect(savePrefab(root / "child.prefab", child).success, "prefab source update saves");
+    CHECK_MESSAGE(savePrefab(root / "child.prefab", child).success, "prefab source update saves");
     const PrefabInstanceResult refreshed = prefabs.refresh(scene, instance.root, PrefabRefreshMode::RemoveAddedObjects);
     foundOverride = false;
     for (Entity entity : refreshed.entities) {
         foundOverride |= scene.registry().get<NameComponent>(entity).name == "Overridden";
     }
-    expect(refreshed && foundOverride, "source refresh preserves valid instance overrides");
+    CHECK_MESSAGE((refreshed && foundOverride), "source refresh preserves valid instance overrides");
     const std::array orphanedOverrides = {PrefabOverride{{999}, "", "/name", R"("Missing")"}};
     Scene orphanScene;
     const PrefabInstanceResult orphaned =
         prefabs.instantiate("child.prefab", orphanScene, entt::null, orphanedOverrides);
-    expect(orphaned && orphaned.diagnostics.size() == 1 &&
-               orphaned.diagnostics.front().find("Orphaned override") != std::string::npos,
-           "source refresh reports orphaned overrides as actionable diagnostics");
+    CHECK_MESSAGE((orphaned && orphaned.diagnostics.size() == 1 &&
+                   orphaned.diagnostics.front().find("Orphaned override") != std::string::npos),
+                  "source refresh reports orphaned overrides as actionable diagnostics");
 
     const auto entityCountBeforeFailure = scene.registry().view<const SceneEntityIdComponent>().size();
     const PrefabInstanceResult missing = prefabs.instantiate("missing.prefab", scene);
-    expect(!missing && scene.registry().view<const SceneEntityIdComponent>().size() == entityCountBeforeFailure,
-           "missing prefab sources preserve previously valid runtime instances");
+    CHECK_MESSAGE(
+        (!missing && scene.registry().view<const SceneEntityIdComponent>().size() == entityCountBeforeFailure),
+        "missing prefab sources preserve previously valid runtime instances");
 
     PrefabDocument cycle;
     cycle.entities.push_back({{1}, "Cycle", std::nullopt, glm::mat4(1.0f)});
     cycle.nested.push_back({1, "cycle.prefab", std::nullopt, {}});
     savePrefab(root / "cycle.prefab", cycle);
     Scene cycleScene;
-    expect(!prefabs.instantiate("cycle.prefab", cycleScene), "nested prefab cycles are rejected");
+    CHECK_MESSAGE(!prefabs.instantiate("cycle.prefab", cycleScene), "nested prefab cycles are rejected");
 
     PrefabDocument duplicateEntities;
     duplicateEntities.entities.push_back({{1}, "One", std::nullopt, glm::mat4(1.0f)});
     duplicateEntities.entities.push_back({{1}, "Two", std::nullopt, glm::mat4(1.0f)});
     std::string duplicateEncoding;
-    expect(serializePrefab(duplicateEntities, duplicateEncoding).success,
-           "duplicate prefab fixture can be encoded for validation");
+    CHECK_MESSAGE(serializePrefab(duplicateEntities, duplicateEncoding).success,
+                  "duplicate prefab fixture can be encoded for validation");
     PrefabDocument invalid;
-    expect(!deserializePrefab(duplicateEncoding, invalid), "duplicate prefab entity IDs are rejected");
+    CHECK_MESSAGE(!deserializePrefab(duplicateEncoding, invalid), "duplicate prefab entity IDs are rejected");
 
     PrefabDocument duplicateNested;
     duplicateNested.entities.push_back({{1}, "Root", std::nullopt, glm::mat4(1.0f)});
     duplicateNested.nested.push_back({2, "child.prefab", std::nullopt, {}});
     duplicateNested.nested.push_back({2, "child.prefab", std::nullopt, {}});
     std::string duplicateNestedEncoding;
-    expect(serializePrefab(duplicateNested, duplicateNestedEncoding).success &&
-               !deserializePrefab(duplicateNestedEncoding, invalid),
-           "duplicate nested-prefab IDs are rejected");
+    CHECK_MESSAGE((serializePrefab(duplicateNested, duplicateNestedEncoding).success &&
+                   !deserializePrefab(duplicateNestedEncoding, invalid)),
+                  "duplicate nested-prefab IDs are rejected");
 
     PrefabDocument hierarchyCycle;
     hierarchyCycle.entities.push_back({{1}, "One", PrefabEntityId{2}, glm::mat4(1.0f)});
     hierarchyCycle.entities.push_back({{2}, "Two", PrefabEntityId{1}, glm::mat4(1.0f)});
     std::string hierarchyCycleEncoding;
-    expect(serializePrefab(hierarchyCycle, hierarchyCycleEncoding).success &&
-               !deserializePrefab(hierarchyCycleEncoding, invalid),
-           "local prefab hierarchy cycles are rejected");
+    CHECK_MESSAGE((serializePrefab(hierarchyCycle, hierarchyCycleEncoding).success &&
+                   !deserializePrefab(hierarchyCycleEncoding, invalid)),
+                  "local prefab hierarchy cycles are rejected");
 
     std::filesystem::copy_file(std::filesystem::path{ZENITH_ASSET_DIR} / "sample.gltf", root / "sample.gltf",
                                std::filesystem::copy_options::overwrite_existing);
@@ -560,15 +560,15 @@ void testPrefabs(const std::filesystem::path& root) {
     PrefabEntity assetEntity{{1}, "Asset", std::nullopt, glm::mat4(1.0f)};
     assetEntity.components.emplace_back("model", R"({"path":"sample.gltf"})");
     assetPrefab.entities.push_back(std::move(assetEntity));
-    expect(savePrefab(root / "asset.prefab", assetPrefab).success, "project-relative prefab asset saves");
+    CHECK_MESSAGE(savePrefab(root / "asset.prefab", assetPrefab).success, "project-relative prefab asset saves");
     Scene assetScene;
     const PrefabInstanceResult assetInstance = prefabs.instantiate("asset.prefab", assetScene);
-    expect(assetInstance && !assetScene.registry().view<const ModelComponent>().empty() &&
-               !assetScene.registry().view<const ModelNodeComponent>().empty(),
-           "runtime prefab instantiation resolves project-relative asset references without editor state");
+    CHECK_MESSAGE((assetInstance && !assetScene.registry().view<const ModelComponent>().empty() &&
+                   !assetScene.registry().view<const ModelNodeComponent>().empty()),
+                  "runtime prefab instantiation resolves project-relative asset references without editor state");
 }
 
-void testLightingAndConfiguration() {
+TEST_CASE("ProductionMilestones: lighting and configuration") {
     Scene scene;
     for (int index = 0; index < 5; ++index) {
         const Entity entity = scene.createEntity("Light");
@@ -582,23 +582,26 @@ void testLightingAndConfiguration() {
     scene.updateWorldTransforms();
     const auto lights = gatherLocalLights(scene);
     const auto selected = selectLocalLights(lights, glm::vec3(-2.0f, 0.0f, -4.0f), 2);
-    expect(lights.size() == 5 && std::ranges::is_sorted(lights, {}, &LocalLight::stableId),
-           "gathered local lights are complete and in stable-id order");
-    expect(selected.size() == 2 && selected[0].stableId < selected[1].stableId,
-           "renderer-facing light selection is bounded and deterministic");
+    CHECK_MESSAGE((lights.size() == 5 && std::ranges::is_sorted(lights, {}, &LocalLight::stableId)),
+                  "gathered local lights are complete and in stable-id order");
+    CHECK_MESSAGE((selected.size() == 2 && selected[0].stableId < selected[1].stableId),
+                  "renderer-facing light selection is bounded and deterministic");
     const auto probes = blendReflectionProbes(scene, glm::vec3(0.0f));
-    expect(probes.size() == 2 && probes.front().entity == probeB, "probe priority and blending are deterministic");
+    CHECK_MESSAGE((probes.size() == 2 && probes.front().entity == probeB),
+                  "probe priority and blending are deterministic");
     const LocalShadowRequest shadowRequests[]{
         {.stableId = 20, .type = LocalLightType::Point, .resolution = 128, .priority = 1.0f},
         {.stableId = 10, .type = LocalLightType::Spot, .resolution = 256, .priority = 2.0f},
         {.stableId = 30, .type = LocalLightType::Spot, .resolution = 512, .priority = 0.5f}};
     const LocalShadowAtlas shadowAtlas = allocateLocalShadowAtlas(shadowRequests, 512, 512);
-    expect(shadowAtlas.tiles.size() == 7 && shadowAtlas.tiles.front().stableId == 10 && shadowAtlas.rejectedLights == 1,
-           "local-shadow atlas allocation is deterministic, face-aware, and rejects over-budget lights");
-    expect(std::ranges::all_of(
-               shadowAtlas.tiles,
-               [](const LocalShadowTile& tile) { return tile.x + tile.size <= 512 && tile.y + tile.size <= 512; }),
-           "local-shadow atlas tiles remain within the configured memory extent");
+    CHECK_MESSAGE(
+        (shadowAtlas.tiles.size() == 7 && shadowAtlas.tiles.front().stableId == 10 && shadowAtlas.rejectedLights == 1),
+        "local-shadow atlas allocation is deterministic, face-aware, and rejects over-budget lights");
+    CHECK_MESSAGE(std::ranges::all_of(shadowAtlas.tiles,
+                                      [](const LocalShadowTile& tile) {
+                                          return tile.x + tile.size <= 512 && tile.y + tile.size <= 512;
+                                      }),
+                  "local-shadow atlas tiles remain within the configured memory extent");
 
     RenderSettings requested;
     requested.environment = EnvironmentQuality::ImageBasedHigh;
@@ -626,38 +629,37 @@ void testLightingAndConfiguration() {
     requested.budgets.environment = {0.0, 0.5};
     requested.budgets.shadowCulling = {0.0, 0.15};
     const ValidatedRenderSettings validated = validateRenderSettings(requested, {});
-    expect(validated.settings.environment == EnvironmentQuality::Hemisphere &&
-               validated.settings.localLights == LocalLightingQuality::Clustered &&
-               validated.settings.maximumLocalLights == RenderCapabilities{}.maximumLocalLights &&
-               !validated.settings.preferGpuDrivenSubmission && !validated.fallbacks.empty(),
-           "unsupported quality choices select explicit fallbacks");
+    CHECK_MESSAGE((validated.settings.environment == EnvironmentQuality::Hemisphere &&
+                   validated.settings.localLights == LocalLightingQuality::Clustered &&
+                   validated.settings.maximumLocalLights == RenderCapabilities{}.maximumLocalLights &&
+                   !validated.settings.preferGpuDrivenSubmission && !validated.fallbacks.empty()),
+                  "unsupported quality choices select explicit fallbacks");
     std::string encoded;
     RenderSettings decoded;
-    expect(serializeRenderSettings(requested, encoded) && deserializeRenderSettings(encoded, decoded) &&
-               decoded.environment == requested.environment && decoded.budgets.shadow.cpuMilliseconds == 1.25 &&
-               decoded.budgets.upload.gpuMilliseconds == 0.25 && decoded.visualizeShadowCascades &&
-               decoded.antialiasing == AntialiasingMode::Taa &&
-               decoded.ambientOcclusion == AmbientOcclusionQuality::HalfResolution &&
-               decoded.reflections == ReflectionQuality::ScreenSpaceFullResolution &&
-               decoded.dynamicResolution.enabled && decoded.dynamicResolution.quantization == 32 &&
-               decoded.budgets.temporalResolve.gpuMilliseconds == 0.4 &&
-               decoded.budgets.ambientOcclusion.gpuMilliseconds == 0.6 &&
-               decoded.budgets.reflections.gpuMilliseconds == 0.8,
-           "render quality settings and per-pass CPU/GPU budgets round trip");
-    expect(decoded.budgets.depthPrepass.gpuMilliseconds == 0.3 && decoded.budgets.depthPyramid.gpuMilliseconds == 0.1 &&
-               decoded.budgets.lightClusters.gpuMilliseconds == 0.2 &&
-               decoded.budgets.environment.gpuMilliseconds == 0.5 &&
-               decoded.budgets.shadowCulling.gpuMilliseconds == 0.15,
-           "new-pass budgets round trip");
+    CHECK_MESSAGE(
+        (serializeRenderSettings(requested, encoded) && deserializeRenderSettings(encoded, decoded) &&
+         decoded.environment == requested.environment && decoded.budgets.shadow.cpuMilliseconds == 1.25 &&
+         decoded.budgets.upload.gpuMilliseconds == 0.25 && decoded.visualizeShadowCascades &&
+         decoded.antialiasing == AntialiasingMode::Taa &&
+         decoded.ambientOcclusion == AmbientOcclusionQuality::HalfResolution &&
+         decoded.reflections == ReflectionQuality::ScreenSpaceFullResolution && decoded.dynamicResolution.enabled &&
+         decoded.dynamicResolution.quantization == 32 && decoded.budgets.temporalResolve.gpuMilliseconds == 0.4 &&
+         decoded.budgets.ambientOcclusion.gpuMilliseconds == 0.6 && decoded.budgets.reflections.gpuMilliseconds == 0.8),
+        "render quality settings and per-pass CPU/GPU budgets round trip");
+    CHECK_MESSAGE(
+        (decoded.budgets.depthPrepass.gpuMilliseconds == 0.3 && decoded.budgets.depthPyramid.gpuMilliseconds == 0.1 &&
+         decoded.budgets.lightClusters.gpuMilliseconds == 0.2 && decoded.budgets.environment.gpuMilliseconds == 0.5 &&
+         decoded.budgets.shadowCulling.gpuMilliseconds == 0.15),
+        "new-pass budgets round trip");
     {
         RenderSettings streamingOff;
         streamingOff.textureStreamingBytesPerFrame = 0;
         std::string streamingEncoded;
         RenderSettings streamingDecoded;
-        expect(serializeRenderSettings(streamingOff, streamingEncoded) &&
-                   deserializeRenderSettings(streamingEncoded, streamingDecoded) &&
-                   streamingDecoded.textureStreamingBytesPerFrame == 0,
-               "the texture-streaming budget round trips, including Off");
+        CHECK_MESSAGE((serializeRenderSettings(streamingOff, streamingEncoded) &&
+                       deserializeRenderSettings(streamingEncoded, streamingDecoded) &&
+                       streamingDecoded.textureStreamingBytesPerFrame == 0),
+                      "the texture-streaming budget round trips, including Off");
         const auto withBudget = [&](const std::string& replacement) {
             const std::string key = "\"textureStreamingBytesPerFrame\": 0";
             std::string document = streamingEncoded;
@@ -665,15 +667,16 @@ void testLightingAndConfiguration() {
             return found == std::string::npos ? std::string{} : document.replace(found, key.size(), replacement);
         };
         RenderSettings legacy;
-        expect(deserializeRenderSettings(withBudget("\"unrelatedKey\": 0"), legacy) &&
-                   legacy.textureStreamingBytesPerFrame == RenderSettings{}.textureStreamingBytesPerFrame,
-               "settings without a texture-streaming budget keep the default");
+        CHECK_MESSAGE((deserializeRenderSettings(withBudget("\"unrelatedKey\": 0"), legacy) &&
+                       legacy.textureStreamingBytesPerFrame == RenderSettings{}.textureStreamingBytesPerFrame),
+                      "settings without a texture-streaming budget keep the default");
         RenderSettings invalid;
-        expect(deserializeRenderSettings(withBudget("\"textureStreamingBytesPerFrame\": 1048576"), invalid) &&
-                   invalid.textureStreamingBytesPerFrame == 1048576 &&
-                   !deserializeRenderSettings(withBudget("\"textureStreamingBytesPerFrame\": -1"), invalid) &&
-                   !deserializeRenderSettings(withBudget("\"textureStreamingBytesPerFrame\": 5000000000"), invalid),
-               "negative or oversized texture-streaming budgets are rejected");
+        CHECK_MESSAGE(
+            (deserializeRenderSettings(withBudget("\"textureStreamingBytesPerFrame\": 1048576"), invalid) &&
+             invalid.textureStreamingBytesPerFrame == 1048576 &&
+             !deserializeRenderSettings(withBudget("\"textureStreamingBytesPerFrame\": -1"), invalid) &&
+             !deserializeRenderSettings(withBudget("\"textureStreamingBytesPerFrame\": 5000000000"), invalid)),
+            "negative or oversized texture-streaming budgets are rejected");
     }
 
     TextureAsset environment;
@@ -684,19 +687,22 @@ void testLightingAndConfiguration() {
     const PrefilteredEnvironment& first = cache.preprocess(environment, 4);
     const uint64_t firstHash = first.sourceHash;
     const PrefilteredEnvironment& cached = cache.preprocess(environment, 4);
-    expect(cache.entryCount() == 1 && cached.sourceHash == firstHash && cached.specularRoughnessLevels.size() == 4,
-           "environment preprocessing is deterministic and content-cached");
+    CHECK_MESSAGE(
+        (cache.entryCount() == 1 && cached.sourceHash == firstHash && cached.specularRoughnessLevels.size() == 4),
+        "environment preprocessing is deterministic and content-cached");
 }
 
-void testDeferredReleaseAndManifest(const std::filesystem::path& root) {
+TEST_CASE("ProductionMilestones: deferred release and manifest") {
+    const TempDirectory temporary("deferred-release-manifest");
+    const std::filesystem::path& root = temporary.path();
     DeferredReleaseQueue releases;
     std::vector<int> order;
     releases.defer(3, [&] { order.push_back(3); });
     releases.defer(1, [&] { order.push_back(1); });
-    expect(releases.collect(2) == 1 && order == std::vector<int>({1}) && releases.pending() == 1,
-           "resource release waits for its completion serial without an idle wait");
+    CHECK_MESSAGE((releases.collect(2) == 1 && order == std::vector<int>({1}) && releases.pending() == 1),
+                  "resource release waits for its completion serial without an idle wait");
     releases.collect(3);
-    expect(order == std::vector<int>({1, 3}), "deferred destruction order is deterministic");
+    CHECK_MESSAGE(order == std::vector<int>({1, 3}), "deferred destruction order is deterministic");
 
     const auto package = root / "package";
     std::filesystem::create_directories(package);
@@ -709,29 +715,12 @@ void testDeferredReleaseAndManifest(const std::filesystem::path& root) {
         output
             << R"({"formatVersion":1,"productVersion":"test","files":[{"path":"payload.txt","sha256":"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}]})";
     }
-    expect(validateContentManifest(package).success, "content manifest validates before services initialize");
+    CHECK_MESSAGE(validateContentManifest(package).success, "content manifest validates before services initialize");
     {
         std::ofstream output(package / "payload.txt", std::ios::app);
         output << "corrupt";
     }
-    expect(!validateContentManifest(package), "content corruption is rejected");
+    CHECK_MESSAGE(!validateContentManifest(package), "content corruption is rejected");
 }
-} // namespace
 
-int main() {
-    const std::filesystem::path root = temporaryRoot();
-    testAssetLifetime(root);
-    testRecoverableReload(root);
-    testLiveSceneOwnership();
-    testTransitionCollection();
-    testDeferredFrameOwnership();
-    testJobsAndAdditiveScenes(root);
-    testPrefabs(root);
-    testLightingAndConfiguration();
-    testDeferredReleaseAndManifest(root);
-    removeTemporaryRoot(root);
-    if (failures == 0) {
-        std::cout << "Production milestone tests passed\n";
-    }
-    return failures == 0 ? 0 : 1;
-}
+TEST_SUITE_END();

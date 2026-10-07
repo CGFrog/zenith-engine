@@ -162,13 +162,18 @@ They register with `zenith_add_test` and a tier label:
   loaded run time.
 
 They use the same support helpers (`TempDirectory`, the file helpers, the glm
-comparisons), and report failures with the frame and reason.
+comparisons), and check with `testsupport::StandaloneChecks`:
+`checks.check(condition, "what")`, or `checks.check(condition, frame, "what")`
+in a frame loop. A failure prints the file, line and frame, and
+`checks.exitCode("<name>")` is the process's result. When `engine.init()`
+fails, a GPU smoke asks `testsupport::vulkanDeviceAvailable` whether there is a
+device at all, and returns `testsupport::skipExitCode` when there is none.
 
 ## Where things are
 
 | Path | What |
 | --- | --- |
-| `tests/support/` | `zenith_test_support`: `Doctest.hpp` (include this), `TempDirectory`, `Files`, `Approx`, `Skip`; and `zenith_test_main`. |
+| `tests/support/` | `zenith_test_support`: `Doctest.hpp` (include this in unit tests), `TempDirectory`, `Files` (with `failureArtifactPath` for files that explain a failure, kept under `test-temp/failures/`), `Approx`, `Skip`, `StandaloneChecks`; `zenith_test_vulkan_probe` (`VulkanProbe`); and `zenith_test_main`. |
 | `tests/<area>/` | The area's unit tests, its standalone executables, and its `CMakeLists.txt`. |
 | `cmake/ZenithTesting.cmake` | `zenith_add_test_suite` (unit binaries), `zenith_add_test` (standalone executables), the tier defaults, and `ZENITH_TEST_TIMEOUT_SCALE`. |
 | `CMakePresets.json` | The `unit`, `cpu`, `gpu`, `benchmark`, and `all` test presets. |

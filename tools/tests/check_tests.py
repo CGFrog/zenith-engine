@@ -33,7 +33,12 @@ LEGACY_LIST = Path(__file__).resolve().parent / 'legacy_tests.txt'
 # command-line arguments, or a frame loop (docs/TESTING.md, "Standalone tests").
 STANDALONE_DIRECTORIES = ('capture', 'validation')
 STANDALONE_NAME_PARTS = ('Smoke', 'Benchmark')
-STANDALONE = set()
+STANDALONE = {
+    # Runs as two processes, one per file-watcher backend (native, polling).
+    'tests/engine/FileWatcherTests.cpp',
+    # Needs a window; skips (77) without one.
+    'tests/engine/InputManagerTests.cpp',
+}
 
 HAND_ROLLED = re.compile(r'^\s*(?:static\s+)?(?:void\s+expect\w*\s*\(|int\s+failures\s*=)', re.M)
 MAIN = re.compile(r'^\s*int\s+main\s*\(', re.M)
@@ -90,7 +95,7 @@ def main():
         breaches = []
         if HAND_ROLLED.search(text):
             breaches.append('hand-rolled expect()/failures; use doctest CHECK/REQUIRE '
-                            '(or testsupport::SmokeCheck in a standalone executable)')
+                            '(or testsupport::StandaloneChecks in a standalone executable)')
         if MAIN.search(text) and not is_standalone(path):
             breaches.append('has its own main(); unit tests are doctest cases in their area suite')
         if TEMP_PATH.search(text):

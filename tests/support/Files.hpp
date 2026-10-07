@@ -17,4 +17,9 @@ std::vector<uint8_t> readBytes(const std::filesystem::path& file);
 // std::runtime_error when it cannot.
 void writeText(const std::filesystem::path& file, std::string_view text);
 
+// Where a test keeps a file that explains a failure (a capture that did not
+// match, a diff): test-temp/failures/<fileName> in the build tree, which
+// outlives the test, unlike a TempDirectory. The directory is created.
+std::filesystem::path failureArtifactPath(std::string_view fileName);
+
 } // namespace testsupport
