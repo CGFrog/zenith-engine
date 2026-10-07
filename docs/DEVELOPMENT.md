@@ -226,8 +226,8 @@ they do not alter generated inputs.
 ### Game module iteration
 
 What changing gameplay code costs in the editor is the project's module build
-plus a hot reload. `zenith_project_hub_tests --measure-iteration [folder]`
-(`zenith_module_iteration_benchmark_run`, labels `benchmark` and `slow`)
+plus a hot reload. `zenith_generated_module_runs --measure-iteration [folder]`
+(`zenith_module_iteration_benchmark_run`, label `benchmark`)
 generates an FPS project in the build tree and times the editor's own build
 request (`projectBuildRequest`, through `BuildRunner`):
 - the first build;
@@ -301,7 +301,7 @@ resource root as `ZENITH_ROOT` when it is a Zenith build directory, else the
 build it was compiled in. New projects build the editor's own configuration.
 `zenith_project_template_module_build` (label `slow`) generates a project and
 builds and loads its module; pass a folder to keep the result:
-`build\Debug\zenith_project_hub_tests.exe --build-generated-module <folder>`.
+`build\Debug\zenith_generated_module_runs.exe --build-generated-module <folder>`.
 
 ## Where to make a change
 

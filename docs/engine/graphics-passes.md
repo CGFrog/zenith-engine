@@ -518,7 +518,7 @@ each 256-thread workgroup reduces a 64x64 tile through six levels in shared
 memory, and a global atomic counter elects the last workgroup, which completes
 the edge texels of levels whose extent does not tile the base exactly and then
 reduces the remaining levels. The result is identical to the per-level build
-(`zenith_depth_prepass` checks both against a brute-force min/max on odd
+(`engine.DepthPrepass` checks both against a brute-force min/max on odd
 sizes). Devices without `shaderStorageImageArrayDynamicIndexing` fall back to
 the per-level build and log it once; `ZENITH_DEPTH_PYRAMID_PER_LEVEL` forces it.
 
@@ -587,7 +587,7 @@ shading when image-based lighting and `reflectionProbes` are on:
   blended over the whole frame, as before. Validation selects it, with a
   fallback message, when the device lacks per-pixel support.
 
-`zenith_reflection_probes` covers box projection against an independent slab
+`engine.ReflectionProbe` covers box projection against an independent slab
 intersection, weight normalization against `blendReflectionProbes`, resident
 selection, and conservative cluster assignment against brute-force frustum
 samples. The showcase project's west and east halves carry two overlapping
@@ -627,7 +627,7 @@ The GPU scope is `gpu.decal_clusters` (timestamp slots 51/52) with the
 `decalClusters` budget; the benchmark also reports `decals.count`,
 `decals.dropped`, `decals.discarded_assignments`, `decals.maximum_per_cluster`
 and `render.decal_bytes` (records and cluster lists, about 0.6 MB per frame in
-flight). `zenith_decals` covers decal-space projection, the angle
+flight). `engine.Decal` covers decal-space projection, the angle
 and depth fades, ordering and nearest selection, conservative cluster
 assignment with overflow counting against a brute-force test, GPU packing,
 scene-document round trips with the shipped textures, and the setting's
@@ -686,7 +686,7 @@ glTF specifications and the Khronos sample viewer:
 
 `gpu.transmission_background` times the copy (inside the `gpu.blended` span and
 subtracted from it); the lobes are part of `gpu.opaque` and `gpu.blended`
-shading. `zenith_material_extensions` covers import, defaults, texture usages,
+shading. `engine.MaterialExtension` covers import, defaults, texture usages,
 record packing and the sheen albedo; `tools/showcase/build_materials.py`
 generates the material gallery (`assets/showcase/materials/`).
 
@@ -711,7 +711,7 @@ previous depth and projection. The benchmark reports `gpu.local_shadows` and
 `cpu.local_shadows` against `RenderPassBudgets::localShadows`, plus
 `local_shadows.tiles_rendered`, `tiles_cached`, `tiles_pending`,
 `lights_rejected` (no atlas space), and `render.local_shadow_atlas_bytes`.
-`zenith_local_shadows` covers request order, cache invalidation, budget
+`engine.LocalShadow` covers request order, cache invalidation, budget
 selection, and the face projections on the CPU.
 
 ## View shading modes

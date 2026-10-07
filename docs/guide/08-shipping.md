@@ -68,7 +68,7 @@ headless:
   catches typos before players do.
 
 See [Debug, test, and ship](../tutorials/fps-game/06-debug-test-and-ship.md)
-in the FPS tutorial, `tests/game/`, and `zenith_project_hub_tests` (`tests/editor/`) for examples.
+in the FPS tutorial, `tests/game/`, and `tests/editor/GeneratedModuleRuns.cpp` for examples.
 
 ## A checklist before you ship
 
