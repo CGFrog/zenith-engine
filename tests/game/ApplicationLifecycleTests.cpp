@@ -168,6 +168,51 @@ class FailingTransitionApplication final : public Application {
     }
 };
 
+// A scene that frees the pointer while its menu is open, as a game's does.
+class PointerScene final : public ApplicationScene {
+  public:
+    explicit PointerScene(const bool& menuOpen)
+        : m_menuOpen(menuOpen) {}
+
+    SceneResult load(ApplicationContext&) override {
+        return {.success = true};
+    }
+
+    void update(ApplicationContext&, const InputState&, float) override {}
+
+    void fixedUpdate(ApplicationContext&, const InputState&, float) override {}
+
+    void unload(ApplicationContext&) override {}
+
+    MouseCapturePolicy mouseCapturePolicy(MouseCapturePolicy application) const override {
+        return m_menuOpen ? MouseCapturePolicy::Released : application;
+    }
+
+  private:
+    const bool& m_menuOpen;
+};
+
+class PointerApplication final : public Application {
+  public:
+    explicit PointerApplication(const bool& menuOpen)
+        : m_menuOpen(menuOpen) {}
+
+    MouseCapturePolicy mouseCapturePolicy() const override {
+        return MouseCapturePolicy::WhileRightMouseDown;
+    }
+
+    SceneKey initialScene() const override {
+        return {0};
+    }
+
+    std::unique_ptr<ApplicationScene> createScene(SceneKey) override {
+        return std::make_unique<PointerScene>(m_menuOpen);
+    }
+
+  private:
+    const bool& m_menuOpen;
+};
+
 size_t entityCount(const Scene& scene) {
     const auto view = scene.registry().view<TransformComponent>();
     return static_cast<size_t>(std::distance(view.begin(), view.end()));
@@ -223,6 +268,25 @@ TEST_CASE("ApplicationLifecycle: a session starts switches and shuts down scenes
     CHECK_MESSAGE((state.events[state.events.size() - 2] == "unload1" && state.events.back() == "stop"),
                   "shutdown unloads the active scene before stopping the application");
     CHECK_MESSAGE(entityCount(scene) == 0, "shutdown clears all ECS state");
+}
+
+TEST_CASE("ApplicationLifecycle: the active scene adjusts the mouse capture policy") {
+    bool menuOpen = false;
+    PointerApplication application(menuOpen);
+    Scene scene;
+    AssetManager assets;
+    PhysicsWorld physics;
+    AudioSystem audio;
+    audio.init(AudioConfig{.outputEnabled = false});
+    ApplicationSession session(application, scene, assets, physics, audio);
+    CHECK_MESSAGE(session.mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
+                  "without an active scene the application's policy applies");
+    CHECK_MESSAGE((static_cast<bool>(session.start())), "the pointer test starts its scene");
+    CHECK_MESSAGE(session.mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
+                  "a scene keeps the application's policy by default");
+    menuOpen = true;
+    CHECK_MESSAGE(session.mouseCapturePolicy() == MouseCapturePolicy::Released, "a scene's menu frees the pointer");
+    session.shutdown();
 }
 
 TEST_CASE("ApplicationLifecycle: a failed transition keeps the active scene") {

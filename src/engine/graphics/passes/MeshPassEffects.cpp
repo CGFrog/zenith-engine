@@ -44,9 +44,8 @@ bool MeshPass::recordScreenSpaceReflections(const DrawContext& draw, VkImage dep
 }
 
 void MeshPass::recordTransmissionBackground(const DrawContext& draw, VkImage depthImage, VkImageView depthView) {
-    const bool transmissive = std::ranges::any_of(draw.viewState->visibleItems, [](const RenderItem* item) {
-        return item->material->transmission.factor > 0.0f;
-    });
+    const bool transmissive = std::ranges::any_of(
+        draw.viewState->visibleItems, [](const RenderItem* item) { return item->material->readsSceneBehind(); });
     if (!transmissive) {
         return;
     }

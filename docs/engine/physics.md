@@ -171,6 +171,14 @@ each character, then:
   and scale), and fills `grounded`, `groundNormal`, `groundVelocity`,
   `velocity`, and `groundDistance` (a sphere cast below the capsule).
 
+`motion` (runtime intent, not serialized) is `CharacterMotion::Walking` by
+default. `Free` is for swimming, flying, or climbing: the step skips gravity,
+jumping, and sticking to the floor, and blends the vertical velocity toward
+`desiredVerticalSpeed` at the full `acceleration`, as it does the horizontal
+one (air control does not apply). Steps and collisions work as when walking.
+The vertical intent is its own field because `zenith.character_input`
+rewrites `desiredVelocity` every frame.
+
 `jumpRequested` is consumed by every step. A transform moved by gameplay is a
 teleport: the character follows it. Interpolation blends characters' positions
 like dynamic bodies'. Each character has a kinematic inner body on its layer

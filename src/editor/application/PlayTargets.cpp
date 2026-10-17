@@ -112,8 +112,11 @@ std::string_view gameViewBannerText(GameViewBanner banner) {
     return {};
 }
 
-MouseCapturePolicy playMouseCapturePolicy(bool gameViewHoldsCursor) {
-    return gameViewHoldsCursor ? MouseCapturePolicy::Persistent : MouseCapturePolicy::WhileRightMouseDown;
+MouseCapturePolicy playMouseCapturePolicy(bool gameViewHoldsCursor, bool gamePointerReleased) {
+    if (!gameViewHoldsCursor) {
+        return MouseCapturePolicy::WhileRightMouseDown;
+    }
+    return gamePointerReleased ? MouseCapturePolicy::Released : MouseCapturePolicy::Persistent;
 }
 
 ThemeModeTint playModeTint(EditorMode mode, bool simulating) {

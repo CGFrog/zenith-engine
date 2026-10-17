@@ -263,7 +263,9 @@ const InputState& EditorPlayback::gameInput(const InputState& input) const {
 
 MouseCapturePolicy EditorPlayback::mouseCapturePolicy() const {
     const ViewportPanel* viewport = gameViewport();
-    return playMouseCapturePolicy(viewport != nullptr && viewport->gameViewHoldsCursor());
+    const GameServices* services = m_services.moduleHost.gameServices();
+    return playMouseCapturePolicy(viewport != nullptr && viewport->gameViewHoldsCursor(),
+                                  services != nullptr && services->outside().pointerReleased());
 }
 
 void EditorPlayback::publishMouseCapture() {

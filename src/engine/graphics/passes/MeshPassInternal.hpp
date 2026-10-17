@@ -45,6 +45,9 @@ constexpr uint32_t ambientOcclusionBinding = 13;
 constexpr uint32_t volumetricFogBinding = 18;
 // Camera-set binding of the transmission background (mesh.frag).
 constexpr uint32_t transmissionBackgroundBinding = 24;
+// Camera-set binding of the scene depth water reads (mesh.frag): the view's
+// depth pyramid, whose level 0 is the opaque depth.
+constexpr uint32_t sceneDepthBinding = 25;
 
 struct CameraData {
     glm::mat4 viewProjection{1.0f};
@@ -90,8 +93,13 @@ struct CameraData {
     // x: normal bias, y: view bias (world units); zw unused.
     glm::vec4 irradianceVolumeBias{0.0f};
     // Temporal resolve: NDC jitter of the current (xy) and previous (zw)
-    // projections, removed from motion vectors in mesh.frag. Keep last.
+    // projections, removed from motion vectors in mesh.frag. Shaders that
+    // declare only a prefix of the block end here; new members follow it.
     glm::vec4 temporalJitter{0.0f};
+    // x: seconds of surface animation (water waves; MeshPass::
+    // advanceSurfaceAnimation), y: 1 when the scene depth (binding 25) holds
+    // this frame's opaque depth, so water measures its real depth.
+    glm::vec4 surfaceAnimation{0.0f};
 };
 
 // Mirrors RenderObject in the mesh, shadow, outline, and selection shaders.
@@ -243,6 +251,11 @@ inline std::vector<VkDescriptorSetLayoutBinding> cameraLayoutBindings() {
              .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
             // Opaque scene copy refracted by transmissive surfaces.
             {.binding = transmissionBackgroundBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            // Opaque scene depth under water surfaces (the depth pyramid).
+            {.binding = sceneDepthBinding,
              .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
              .descriptorCount = 1,
              .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};

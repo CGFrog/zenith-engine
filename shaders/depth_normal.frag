@@ -31,6 +31,11 @@ struct MaterialRecord {
     vec4 volume;    // attenuation coefficient per world unit (rgb), thickness
     uvec4 lobeTextures;  // bindless slots: clearcoat, clearcoat roughness, clearcoat normal, sheen color
     uvec4 layerTextures; // bindless slots: sheen roughness, specular, specular color; w unused
+    vec4 water;          // wave length, steepness, speed, shore fade (LOBE_WATER)
+    uvec4 terrainAlbedo; // terrain layers' bindless slots (LOBE_TERRAIN)
+    uvec4 terrainNormal;
+    uvec4 terrainArm;
+    vec4 terrainTileSize; // metres per repeat of each layer
 };
 
 // Mirror the material_lobes bits in MaterialRecord.hpp.

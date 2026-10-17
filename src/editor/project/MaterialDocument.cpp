@@ -61,7 +61,31 @@ std::vector<FieldDescriptor> buildFields() {
                   {"blend", "Blend", static_cast<int64_t>(MaterialAlphaMode::Blend)}})
         .add("alpha_cutoff", &D::alphaCutoff)
         .slider(0.0, 1.0)
-        .add("double_sided", &D::doubleSided);
+        .add("double_sided", &D::doubleSided)
+        .structure("water", &D::water,
+                   std::move(Fields<MaterialWater>()
+                                 .add("enabled", &MaterialWater::enabled)
+                                 .tooltip("A water surface: waves, depth absorption, and a soft shore")
+                                 .add("wave_length", &MaterialWater::waveLength)
+                                 .drag(0.05f, 0.05, 100.0)
+                                 .format("%.2f m")
+                                 .add("wave_steepness", &MaterialWater::waveSteepness)
+                                 .slider(0.0, 1.0)
+                                 .add("wave_speed", &MaterialWater::waveSpeed)
+                                 .drag(0.01f, 0.0, 10.0)
+                                 .add("shore_fade", &MaterialWater::shoreFade)
+                                 .drag(0.01f, 0.0, 10.0)
+                                 .format("%.2f m")
+                                 .add("absorption_color", &MaterialWater::absorptionColor)
+                                 .color()
+                                 .tooltip("The color white light becomes after the absorption distance")
+                                 .add("absorption_distance", &MaterialWater::absorptionDistance)
+                                 .drag(0.05f, 0.01, 1000.0)
+                                 .format("%.2f m")
+                                 .add("fallback_depth", &MaterialWater::fallbackDepth)
+                                 .drag(0.05f, 0.0, 100.0)
+                                 .format("%.2f m")
+                                 .tooltip("Water depth assumed when the scene depth is unavailable")));
     return std::move(fields).build();
 }
 
@@ -98,7 +122,8 @@ MaterialFileResult loadMaterialDocument(const std::filesystem::path& file, const
                               .occlusionStrength = material.occlusionStrength,
                               .alphaMode = material.alphaMode,
                               .alphaCutoff = material.alphaCutoff,
-                              .doubleSided = material.doubleSided};
+                              .doubleSided = material.doubleSided,
+                              .water = material.water};
     const std::filesystem::path root = normalizedCatalogPath(location.assetRoot);
     for (size_t slot = 0; slot < materialTextureSlotCount; ++slot) {
         const MaterialTextureReference& reference = material.textures[slot];
@@ -123,7 +148,8 @@ MaterialFileResult saveMaterialDocument(const std::filesystem::path& file, const
                           .occlusionStrength = document.occlusionStrength,
                           .alphaMode = document.alphaMode,
                           .alphaCutoff = document.alphaCutoff,
-                          .doubleSided = document.doubleSided};
+                          .doubleSided = document.doubleSided,
+                          .water = document.water};
     const std::filesystem::path folder = normalizedCatalogPath(file).parent_path();
     for (size_t slot = 0; slot < materialTextureSlotCount; ++slot) {
         const std::string& value = document.*textureMembers[slot];

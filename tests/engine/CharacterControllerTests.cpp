@@ -180,6 +180,39 @@ TEST_CASE("CharacterController: jump") {
     CHECK_MESSAGE(positionOf(scene, character).y < standingHeight + 0.6f, "an airborne character cannot jump again");
 }
 
+TEST_CASE("CharacterController: free motion") {
+    PhysicsWorld physics;
+    CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");
+    Scene scene;
+    AssetManager assets;
+    addFloor(scene);
+    const float start = standingHeight + 2.0f;
+    const Entity character = addCharacter(scene, {0.0f, start, 0.0f});
+    CharacterControllerComponent& controller = controllerOf(scene, character);
+    controller.motion = CharacterMotion::Free;
+    step(physics, scene, assets, 60);
+    CHECK_MESSAGE(near(positionOf(scene, character).y, start, 0.02f), "a free character does not fall");
+
+    controller.desiredVerticalSpeed = 1.0f;
+    controller.jumpRequested = true;
+    step(physics, scene, assets, 60);
+    CHECK_MESSAGE((near(positionOf(scene, character).y, start + 1.0f, 0.15f) && !controller.jumpRequested),
+                  "a free character rises at its vertical speed, and a jump request is consumed without a jump");
+
+    controller.desiredVerticalSpeed = 0.0f;
+    controller.desiredVelocity = {2.0f, 0.0f, 0.0f};
+    step(physics, scene, assets, 60);
+    const glm::vec3 swum = positionOf(scene, character);
+    CHECK_MESSAGE((swum.x > 1.5f && near(swum.y, start + 1.0f, 0.15f)),
+                  "a free character moves horizontally without sinking");
+
+    controller.motion = CharacterMotion::Walking;
+    controller.desiredVelocity = glm::vec3(0.0f);
+    step(physics, scene, assets, 120);
+    CHECK_MESSAGE((controller.grounded && near(positionOf(scene, character).y, standingHeight, 0.1f)),
+                  "back to walking, the character falls to the floor");
+}
+
 TEST_CASE("CharacterController: ground probe and teleport") {
     PhysicsWorld physics;
     CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");

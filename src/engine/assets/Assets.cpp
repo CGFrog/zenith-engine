@@ -242,7 +242,12 @@ std::string runtimeMaterialError(const MaterialAsset& material, const AssetManag
     if (!finiteFactors) {
         return "its factors are not finite";
     }
-    const std::array<TextureHandle, 13> textures = material.textures();
+    if (material.terrain.enabled && std::ranges::any_of(material.terrain.layers, [](const MaterialTerrainLayer& layer) {
+            return !std::isfinite(layer.tileSize) || layer.tileSize <= 0.0f;
+        })) {
+        return "its terrain layers' tile sizes must be positive";
+    }
+    const std::array<TextureHandle, materialTextureCount> textures = material.textures();
     for (size_t slot = 0; slot < textures.size(); ++slot) {
         if (textures[slot] && assets.texture(textures[slot]) == nullptr) {
             return "texture slot " + std::to_string(slot) + " names no live texture of this asset manager";
@@ -488,7 +493,7 @@ TextureReloadResult AssetManager::reloadTexture(const std::filesystem::path& pat
         if (asset == nullptr || handle.index >= m_materialSources.size()) {
             continue;
         }
-        const std::array<TextureHandle, 13> used = asset->textures();
+        const std::array<TextureHandle, materialTextureCount> used = asset->textures();
         const bool samplesReplaced = std::ranges::any_of(result.replaced, [&used](const TextureReplacement& entry) {
             return std::ranges::find(used, entry.previous) != used.end();
         });
@@ -528,7 +533,12 @@ AssetLoadResult<MaterialHandle> AssetManager::importMaterial(const std::filesyst
                            .occlusionStrength = file.occlusionStrength,
                            .alphaMode = file.alphaMode,
                            .alphaCutoff = file.alphaCutoff,
-                           .doubleSided = file.doubleSided};
+                           .doubleSided = file.doubleSided,
+                           .water = file.water};
+    if (material.water.enabled) {
+        // Water's reflectance at normal incidence (2%).
+        material.ior = 1.333f;
+    }
     std::array<TextureHandle*, materialTextureSlotCount> slots{&material.baseColorTexture, &material.normalTexture,
                                                                &material.metallicRoughnessTexture,
                                                                &material.occlusionTexture, &material.emissiveTexture};

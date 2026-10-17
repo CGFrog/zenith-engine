@@ -159,6 +159,23 @@ void testMouseCapturePolicies(Window& window) {
         checks.check(!harness.update({}, MouseCapturePolicy::WhileRightMouseDown).mouseCaptured,
                      "capture: switching from persistent to while-right-down releases the mouse");
     }
+    {
+        Harness harness(window, false);
+        pushMouseButton(SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT);
+        checks.check(harness.update().mouseCaptured, "capture: a persistent click captures the mouse");
+        checks.check(!harness.update({}, MouseCapturePolicy::Released).mouseCaptured,
+                     "capture: switching to released frees a held mouse");
+
+        pushMouseButton(SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT);
+        pushMouseButton(SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_RIGHT);
+        const InputState& clicked = harness.update({}, MouseCapturePolicy::Released);
+        checks.check(!clicked.mouseCaptured && clicked.mouseButtonPressed(MouseButton::Left) &&
+                         clicked.mouseButtonPressed(MouseButton::Right),
+                     "capture: while released, no click captures and every click is reported");
+
+        checks.check(harness.update().mouseCaptured,
+                     "capture: switching from released back to persistent captures the mouse again");
+    }
 }
 
 void testWindowRequestsAndObserver(Window& window) {

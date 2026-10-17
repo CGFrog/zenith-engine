@@ -211,6 +211,14 @@ class OutsideServices {
     // frame renders.
     DebugDraw& debugDraw();
 
+    // Whether the game wants the mouse pointer free, for a menu it draws:
+    // while set, hosts release the mouse and show the pointer
+    // (MouseCapturePolicy::Released), so the menu's buttons can be clicked;
+    // when cleared, a host whose game held the mouse takes it back. Starts
+    // cleared; the game sets it each time its menus open or close.
+    void setPointerReleased(bool released);
+    bool pointerReleased() const;
+
   private:
     AssetManager& m_assets;
     SceneDocumentOptions m_documents;
@@ -227,4 +235,5 @@ class OutsideServices {
     bool m_reportedWaitingAgents{false};
     NavigationCrowd m_crowd;
     NavCrowdSettings m_crowdSettings;
+    bool m_pointerReleased{false};
 };

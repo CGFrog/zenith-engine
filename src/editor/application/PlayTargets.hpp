@@ -71,9 +71,11 @@ std::string_view gameViewBannerText(GameViewBanner banner);
 
 // The editor's mouse capture: a game view that may hold the cursor
 // (ViewportPanel::gameViewHoldsCursor) captures it on a click and keeps it
-// until Esc (Persistent); otherwise only while the right mouse button flies
-// an editor camera.
-MouseCapturePolicy playMouseCapturePolicy(bool gameViewHoldsCursor);
+// until Esc (Persistent), or leaves it free while the game asks for the
+// pointer for a menu (gamePointerReleased, OutsideServices::
+// setPointerReleased); otherwise only while the right mouse button flies an
+// editor camera.
+MouseCapturePolicy playMouseCapturePolicy(bool gameViewHoldsCursor, bool gamePointerReleased);
 
 // The theme wash for the editor's mode: Play (running or paused) is warm,
 // Simulate violet, Edit untinted.

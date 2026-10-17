@@ -52,6 +52,9 @@ layout(location = 4) out vec4 currentClipPosition;
 layout(location = 5) out vec4 previousClipPosition;
 // skin.z carries the object's material record index.
 layout(location = 6) flat out uint materialIndex;
+// The vertex's weights, unused by unskinned meshes, are a terrain material's
+// layer weights (MaterialTerrain).
+layout(location = 7) out vec4 surfaceWeights;
 
 // Mirrors vertex_packing::decodeOctahedral.
 vec3 decodeOctahedral(vec2 encoded) {
@@ -104,4 +107,5 @@ void main() {
     previousClipPosition = camera.previousViewProjection * object.previousModel * previousSkin * vec4(inPosition, 1.0);
     gl_Position = clipPosition;
     materialIndex = object.skin.z;
+    surfaceWeights = inWeights;
 }

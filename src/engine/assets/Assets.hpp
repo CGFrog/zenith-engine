@@ -218,6 +218,65 @@ struct MaterialTransmission {
     float attenuationDistance{std::numeric_limits<float>::infinity()};
 };
 
+// A water surface: the shader moves its normal with directional waves,
+// refracts and absorbs the scene below by the real depth of water in front of
+// it (the opaque depth behind the surface), fades its edge where the water
+// gets shallow, and colors deep water with the material's base color as the
+// light it scatters back. Water is translucent; it ignores the transmission
+// and volume settings and draws no shadows. Lengths are world units (metres).
+struct MaterialWater {
+    bool enabled{false};
+    // Length of the longest wave; shorter ones follow at fixed ratios.
+    float waveLength{3.0f};
+    // How far waves tilt the surface normal, 0 (flat) to 1 (choppy).
+    float waveSteepness{0.3f};
+    // Multiplies the deep-water speed of each wave length.
+    float waveSpeed{1.0f};
+    // Depth over which the edge fades in at the shore.
+    float shoreFade{0.15f};
+    // The color white light becomes after absorptionDistance of water.
+    glm::vec3 absorptionColor{0.45f, 0.75f, 0.78f};
+    float absorptionDistance{1.5f};
+    // Depth of water assumed when the scene depth is unavailable (no depth
+    // prepass this frame).
+    float fallbackDepth{1.0f};
+
+    bool operator==(const MaterialWater&) const = default;
+};
+
+// One texture layer of a terrain material: albedo (sRGB), tangent-space normal
+// (OpenGL convention, +Y up), and ARM (ambient occlusion, roughness,
+// metallic in r, g, b, as glTF's occlusion and metallic-roughness maps), tiled
+// in world space every tileSize metres.
+struct MaterialTerrainLayer {
+    TextureHandle albedo{};
+    TextureHandle normal{};
+    TextureHandle arm{};
+    float tileSize{4.0f};
+
+    bool operator==(const MaterialTerrainLayer&) const = default;
+};
+
+inline constexpr size_t materialTerrainLayerCount = 4;
+
+// A terrain surface: blends up to four texture layers by the mesh's vertex
+// weights (Vertex::weights, one weight per layer, normalized in the shader)
+// instead of the base textures, so a heightfield mesh needs no texture
+// coordinates and neighbouring meshes line up. Layers are projected from
+// above; the last layer (rock, cliffs) is projected from all three axes so
+// it does not stretch on steep ground. Each layer's texture detail sharpens
+// the transitions between layers. Meant for unskinned meshes: skinned ones
+// use the weights for their joints.
+struct MaterialTerrain {
+    bool enabled{false};
+    std::array<MaterialTerrainLayer, materialTerrainLayerCount> layers{};
+
+    bool operator==(const MaterialTerrain&) const = default;
+};
+
+// Every texture slot a MaterialAsset may reference (see MaterialAsset::textures).
+inline constexpr size_t materialTextureCount = 13 + materialTerrainLayerCount * 3;
+
 struct MaterialAsset {
     glm::vec4 baseColor{1.0f};
     glm::vec3 emissive{0.0f};
@@ -241,20 +300,34 @@ struct MaterialAsset {
     MaterialSheen sheen{};
     MaterialSpecular specular{};
     MaterialTransmission transmission{};
+    MaterialWater water{};
+    MaterialTerrain terrain{};
 
     // True when the surface reveals what is behind it, so renderers draw it
-    // after opaque geometry: alpha blending or transmission.
+    // after opaque geometry: alpha blending, transmission, or water.
     bool translucent() const {
-        return alphaMode == MaterialAlphaMode::Blend || transmission.factor > 0.0f;
+        return alphaMode == MaterialAlphaMode::Blend || transmission.factor > 0.0f || water.enabled;
+    }
+
+    // Whether drawing the surface needs a copy of the opaque scene behind it.
+    bool readsSceneBehind() const {
+        return transmission.factor > 0.0f || water.enabled;
     }
 
     // Every texture slot, absent ones included as empty handles; leases and
     // renderer uploads cover exactly this set.
-    std::array<TextureHandle, 13> textures() const {
-        return {baseColorTexture,    normalTexture,          metallicRoughnessTexture,   occlusionTexture,
-                emissiveTexture,     clearcoat.texture,      clearcoat.roughnessTexture, clearcoat.normalTexture,
-                sheen.colorTexture,  sheen.roughnessTexture, specular.texture,           specular.colorTexture,
-                transmission.texture};
+    std::array<TextureHandle, materialTextureCount> textures() const {
+        std::array<TextureHandle, materialTextureCount> all{
+            baseColorTexture,    normalTexture,          metallicRoughnessTexture,   occlusionTexture,
+            emissiveTexture,     clearcoat.texture,      clearcoat.roughnessTexture, clearcoat.normalTexture,
+            sheen.colorTexture,  sheen.roughnessTexture, specular.texture,           specular.colorTexture,
+            transmission.texture};
+        for (size_t layer = 0; layer < materialTerrainLayerCount; ++layer) {
+            all[13 + layer * 3] = terrain.layers[layer].albedo;
+            all[14 + layer * 3] = terrain.layers[layer].normal;
+            all[15 + layer * 3] = terrain.layers[layer].arm;
+        }
+        return all;
     }
 };
 

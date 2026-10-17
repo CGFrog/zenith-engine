@@ -31,6 +31,7 @@ struct MaterialDocument {
     std::string metallicRoughnessTexture;
     std::string occlusionTexture;
     std::string emissiveTexture;
+    MaterialWater water;
 
     bool operator==(const MaterialDocument&) const = default;
 };

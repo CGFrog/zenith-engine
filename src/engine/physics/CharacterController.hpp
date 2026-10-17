@@ -4,8 +4,15 @@
 
 #include "PhysicsComponents.hpp"
 
+#include <cstdint>
 #include <glm/glm.hpp>
 #include <string>
+
+// How a character controller moves (CharacterControllerComponent::motion).
+enum class CharacterMotion : uint8_t {
+    Walking,
+    Free,
+};
 
 // A walking character that PhysicsWorld moves with a kinematic character
 // controller instead of a rigid body: it climbs steps, refuses slopes steeper
@@ -55,6 +62,14 @@ struct CharacterControllerComponent {
     // the next step, whether or not the character could jump.
     glm::vec3 desiredVelocity{0.0f};
     bool jumpRequested{false};
+    // Walking falls under gravity, sticks to the ground, and jumps. Free
+    // (swimming, flying, climbing) ignores gravity and jumps: the character
+    // approaches desiredVelocity horizontally and desiredVerticalSpeed
+    // vertically at its full acceleration, still colliding and stepping up.
+    CharacterMotion motion{CharacterMotion::Walking};
+    // Metres per second upward; used only in Free motion. Kept apart from
+    // desiredVelocity, which zenith.character_input rewrites every frame.
+    float desiredVerticalSpeed{0.0f};
 
     // State, written by each PhysicsWorld::step and not serialized.
     bool grounded{false};

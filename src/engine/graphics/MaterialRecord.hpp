@@ -4,6 +4,7 @@
 
 #include "engine/assets/Assets.hpp"
 
+#include <array>
 #include <cstdint>
 #include <glm/glm.hpp>
 
@@ -27,9 +28,19 @@ struct MaterialRecord {
     glm::vec4 volume{0.0f};
     glm::uvec4 lobeTextures{0u};  // bindless slots: clearcoat, clearcoat roughness, clearcoat normal, sheen color
     glm::uvec4 layerTextures{0u}; // bindless slots: sheen roughness, specular, specular color; w unused
+    // Water (material_lobes::water): longest wave length, steepness, speed
+    // multiplier, shore fade depth. Its absorption coefficient and fallback
+    // depth travel in volume.
+    glm::vec4 water{0.0f};
+    // Terrain (material_lobes::terrain): bindless slots of each layer's
+    // albedo, normal, and ARM textures, and each layer's tile size in metres.
+    glm::uvec4 terrainAlbedo{0u};
+    glm::uvec4 terrainNormal{0u};
+    glm::uvec4 terrainArm{0u};
+    glm::vec4 terrainTileSize{1.0f};
 };
 
-static_assert(sizeof(MaterialRecord) == 192, "MaterialRecord must match the std430 layout in the shaders");
+static_assert(sizeof(MaterialRecord) == 272, "MaterialRecord must match the std430 layout in the shaders");
 
 // Bits of MaterialRecord::extraTextures.y. A shader evaluates a lobe (and
 // samples its textures) only when its bit is set, so materials without the
@@ -42,6 +53,11 @@ inline constexpr uint32_t transmission = 1u << 2;
 inline constexpr uint32_t specularTextures = 1u << 3;
 // KHR_materials_volume thickness: transmission refracts through a medium.
 inline constexpr uint32_t volume = 1u << 4;
+// MaterialWater: waves, depth absorption and the shore fade replace the
+// transmission and volume lobes.
+inline constexpr uint32_t water = 1u << 5;
+// MaterialTerrain: layers blended by vertex weight replace the base textures.
+inline constexpr uint32_t terrain = 1u << 6;
 } // namespace material_lobes
 
 // Bindless slots of every texture a record references. The renderer resolves
@@ -61,6 +77,10 @@ struct MaterialTextureSlots {
     uint32_t specular{0};
     uint32_t specularColor{0};
     uint32_t transmission{0};
+    // Terrain layers' albedo, normal, and ARM slots.
+    std::array<uint32_t, materialTerrainLayerCount> terrainAlbedo{};
+    std::array<uint32_t, materialTerrainLayerCount> terrainNormal{};
+    std::array<uint32_t, materialTerrainLayerCount> terrainArm{};
 };
 
 uint32_t materialLobeFlags(const MaterialAsset& material);

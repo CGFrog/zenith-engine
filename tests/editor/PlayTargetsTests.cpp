@@ -50,9 +50,12 @@ TEST_CASE("PlayTargets: targets and policies") {
     CHECK_MESSAGE((gameViewBannerText(GameViewBanner::EscReleasesCursor).find("Esc") != std::string_view::npos &&
                    gameViewBannerText(GameViewBanner::None).empty()),
                   "the capture banner names Esc");
-    CHECK_MESSAGE((playMouseCapturePolicy(true) == MouseCapturePolicy::Persistent &&
-                   playMouseCapturePolicy(false) == MouseCapturePolicy::WhileRightMouseDown),
+    CHECK_MESSAGE((playMouseCapturePolicy(true, false) == MouseCapturePolicy::Persistent &&
+                   playMouseCapturePolicy(false, false) == MouseCapturePolicy::WhileRightMouseDown),
                   "only a focused game view captures the mouse persistently");
+    CHECK_MESSAGE((playMouseCapturePolicy(true, true) == MouseCapturePolicy::Released &&
+                   playMouseCapturePolicy(false, true) == MouseCapturePolicy::WhileRightMouseDown),
+                  "a focused game view frees the pointer while the game asks for it");
 
     CHECK_MESSAGE((playModeTint(EditorMode::Edit, false) == ThemeModeTint::None &&
                    playModeTint(EditorMode::Play, false) == ThemeModeTint::Play &&

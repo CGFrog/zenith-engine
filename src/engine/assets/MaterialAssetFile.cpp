@@ -71,7 +71,17 @@ std::string validate(const MaterialFile& material) {
     const bool validFactors = finiteNonNegative(material.emissiveStrength) && finiteNonNegative(material.metallic) &&
                               finiteNonNegative(material.roughness) && finiteNonNegative(material.normalScale) &&
                               finiteNonNegative(material.occlusionStrength) && finiteNonNegative(material.alphaCutoff);
-    return finiteColors && validFactors ? std::string{} : "material factors must be finite and not negative";
+    if (!finiteColors || !validFactors) {
+        return "material factors must be finite and not negative";
+    }
+    const MaterialWater& water = material.water;
+    const bool validWater = std::isfinite(water.waveLength) && water.waveLength > 0.0f &&
+                            finiteNonNegative(water.waveSteepness) && finiteNonNegative(water.waveSpeed) &&
+                            finiteNonNegative(water.shoreFade) && finiteNonNegative(water.absorptionColor.r) &&
+                            finiteNonNegative(water.absorptionColor.g) && finiteNonNegative(water.absorptionColor.b) &&
+                            std::isfinite(water.absorptionDistance) && water.absorptionDistance > 0.0f &&
+                            finiteNonNegative(water.fallbackDepth);
+    return validWater ? std::string{} : "water lengths must be positive and its factors finite and not negative";
 }
 } // namespace
 
@@ -128,6 +138,20 @@ MaterialFileResult parseMaterialFile(std::string_view text, MaterialFile& output
                 material.textures[slot] = readTexture(*reference, textureKeys[slot]);
             }
         }
+        if (const auto water = document.find("water"); water != document.end()) {
+            if (!water->is_object()) {
+                return {.error = "A material's water must be an object"};
+            }
+            MaterialWater& surface = material.water;
+            surface.enabled = true;
+            readFloat(*water, "wave_length", surface.waveLength);
+            readFloat(*water, "wave_steepness", surface.waveSteepness);
+            readFloat(*water, "wave_speed", surface.waveSpeed);
+            readFloat(*water, "shore_fade", surface.shoreFade);
+            readFloats<3>(*water, "absorption_color", &surface.absorptionColor.x);
+            readFloat(*water, "absorption_distance", surface.absorptionDistance);
+            readFloat(*water, "fallback_depth", surface.fallbackDepth);
+        }
     } catch (const std::exception& error) {
         return {.error = std::string("Invalid material file: ") + error.what()};
     }
@@ -168,6 +192,17 @@ std::string serializeMaterialFile(const MaterialFile& material) {
             reference["guid"] = texture.guid.toString();
         }
         document[textureKeys[slot]] = std::move(reference);
+    }
+    if (const MaterialWater& water = material.water; water.enabled) {
+        document["water"] = {
+            {"wave_length", water.waveLength},
+            {"wave_steepness", water.waveSteepness},
+            {"wave_speed", water.waveSpeed},
+            {"shore_fade", water.shoreFade},
+            {"absorption_color", {water.absorptionColor.r, water.absorptionColor.g, water.absorptionColor.b}},
+            {"absorption_distance", water.absorptionDistance},
+            {"fallback_depth", water.fallbackDepth},
+        };
     }
     return document.dump(2) + '\n';
 }

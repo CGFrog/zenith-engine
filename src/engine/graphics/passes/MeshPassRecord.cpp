@@ -99,6 +99,26 @@ EnvironmentFrameRequest environmentRequest(const Scene& scene, const AssetManage
 }
 } // namespace
 
+void MeshPass::advanceSurfaceAnimation() {
+    // Long hitches advance the waves at most this far, like particles.
+    constexpr double maximumStepSeconds = 0.1;
+    // Waves are not periodic, so the clock wraps rarely; float seconds keep
+    // millisecond precision well past this.
+    constexpr double wrapSeconds = 4096.0;
+    double step = 0.0;
+    if (m_fixedFrameSeconds) {
+        step = *m_fixedFrameSeconds;
+    } else {
+        const auto now = std::chrono::steady_clock::now();
+        if (m_previousAnimationTime) {
+            step = std::chrono::duration<double>(now - *m_previousAnimationTime).count();
+        }
+        m_previousAnimationTime = now;
+    }
+    m_surfaceAnimationSeconds =
+        std::fmod(m_surfaceAnimationSeconds + std::clamp(step, 0.0, maximumStepSeconds), wrapSeconds);
+}
+
 MeshPass::ViewFrame MeshPass::prepareViewFrame(ViewState& view, const MeshPassViewRequest& request, const Scene& scene,
                                                double previousGpuFrameMilliseconds) const {
     const RenderSettings& settings = *request.settings;
@@ -219,6 +239,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
     // The caller waited for this frame slot's fence, so every frame at least
     // one full ring older than this one has completed on the GPU.
     ++m_frameSerial;
+    advanceSurfaceAnimation();
     if (m_frameSerial > m_cameras.size()) {
         const uint64_t completedSerial = m_frameSerial - m_cameras.size();
         m_releaseQueue.collect(completedSerial);

@@ -487,8 +487,56 @@ the shaders mirror the 192-byte std430 layout.
 A mip-chained copy of the opaque scene (with sky and screen-space reflections)
 that transmissive materials sample through camera binding 24. `MeshPass`
 captures it between opaque and blended surfaces, ending and resuming the scene
-pass, only on frames that draw a transmissive surface; the copy stretches the
-render extent over the whole image so every mip is valid.
+pass, only on frames that draw a transmissive surface or water; the copy
+stretches the render extent over the whole image so every mip is valid.
+
+## Water
+
+A material with `MaterialWater` enabled packs the `material_lobes::water` bit
+and its wave settings in `MaterialRecord::water` (its absorption coefficient
+and fallback depth travel in `volume`). Water is drawn with the blended
+surfaces and shaded in `mesh.frag` (`waterNormal`, `waterTransmitted`):
+
+- Six directional waves, each moving at the deep-water speed of its length,
+  tilt the normal of upward faces; waves shorter than a few pixels fade out so
+  distant water stays calm. The waves run on `CameraData::surfaceAnimation.x`,
+  which `MeshPass::advanceSurfaceAnimation` advances once per frame by
+  wall-clock time (or by the fixed frame step, so captures stay deterministic).
+- The opaque depth behind the surface gives the path through the water: camera
+  binding 25 is the view's depth pyramid, whose level 0 is the opaque depth
+  after the prepass. `surfaceAnimation.y` says whether this frame has one;
+  without a prepass the material's fallback depth applies.
+- The transmission background shows the bed, shifted by the waves (never onto
+  something in front of the water), absorbed by Beer-Lambert over the path,
+  and filled with the base color lit by the sky and sun as it deepens. The
+  edge fades in over `shore_fade` metres of depth, and the surface reflects
+  the sky and sun through the usual specular terms.
+- Water reflects the opaque scene around it (`waterScreenReflection`): the
+  reflected ray marches in world space with growing steps, projecting each
+  onto the scene depth, and a hit takes the transmission background's color,
+  fading toward the screen edges and the end of the march, where the
+  environment's reflection remains. The engine's own screen-space reflections
+  trace opaque surfaces only, so they never reach water. Water casts no
+  shadow.
+
+## Terrain
+
+A material with `MaterialTerrain` enabled packs the `material_lobes::terrain`
+bit and four layers (albedo, normal, ARM slots and a tile size in metres) in
+`MaterialRecord::terrainAlbedo`/`terrainNormal`/`terrainArm`/`terrainTileSize`.
+`mesh.frag` (`terrainSurface`) replaces the base textures with a blend of the
+layers:
+
+- The mesh's vertex weights (`Vertex::weights`, passed as `surfaceWeights`)
+  give each layer's share; they are normalized in the shader. Terrain meshes
+  are meant to be unskinned, since skinned meshes use the weights for joints.
+- Layers 0-2 are projected from above (world xz over the tile size), so
+  neighbouring meshes line up with no texture coordinates; layer 3 (rock) is
+  projected from all three axes and blended by the normal, so cliffs do not
+  stretch.
+- Each sampled layer's brightness raises its weight, and only layers within a
+  narrow band of the strongest survive, so transitions follow the texture
+  detail (sand between stones, grass in cracks) instead of a smooth fade.
 
 ## Ground-truth ambient occlusion
 

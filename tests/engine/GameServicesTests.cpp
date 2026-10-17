@@ -303,7 +303,8 @@ TEST_CASE("GameServices: timers") {
 
     const Entity owner = scene.createEntity("Owner");
     bool ownerFired = false;
-    timers.start(1.0f, TimerRepeat::Once, [&ownerFired](TimerContext&) { ownerFired = true; }, scene.id(owner));
+    timers.start(
+        1.0f, TimerRepeat::Once, [&ownerFired](TimerContext&) { ownerFired = true; }, scene.id(owner));
     scene.destroyEntity(owner);
     timers.advance(scene, 2.0f, log);
     CHECK_MESSAGE((!ownerFired && timers.size() == 0), "a timer whose owner is gone is dropped without firing");
@@ -487,6 +488,34 @@ TEST_CASE("GameServices: session resources") {
     CHECK_MESSAGE((destroyed == std::vector<std::string>{"score board", "run state 7"}),
                   "destroying the services destroys their resources, newest first");
     destroyedResources = nullptr;
+}
+
+// A game frees the pointer for its menus; the runner turns the request into
+// the policy its host hands to input.
+TEST_CASE("GameServices: the game's pointer request") {
+    Logger logger;
+    AssetManager assets(&logger);
+    Scene scene;
+    PhysicsWorld physics;
+    AudioSystem audio;
+    ApplicationControl control;
+    RenderRuntime rendering;
+    GameUiContext gameUi;
+    ApplicationContext application{scene, assets, physics, audio, control, rendering, gameUi, logger};
+    GameplayRunner runner(builtInGameplay());
+    CHECK_MESSAGE(runner.mouseCapturePolicy(MouseCapturePolicy::Persistent) == MouseCapturePolicy::Persistent,
+                  "before gameplay starts the host's policy applies");
+    runner.start(application, {});
+    CHECK_MESSAGE((!runner.services()->outside().pointerReleased() &&
+                   runner.mouseCapturePolicy(MouseCapturePolicy::Persistent) == MouseCapturePolicy::Persistent),
+                  "a session starts with the mouse left to the host");
+    runner.services()->outside().setPointerReleased(true);
+    CHECK_MESSAGE(runner.mouseCapturePolicy(MouseCapturePolicy::Persistent) == MouseCapturePolicy::Released,
+                  "a game asking for the pointer frees it");
+    runner.services()->outside().setPointerReleased(false);
+    CHECK_MESSAGE(runner.mouseCapturePolicy(MouseCapturePolicy::Persistent) == MouseCapturePolicy::Persistent,
+                  "clearing the request gives the mouse back to the host");
+    runner.stop(application);
 }
 
 // The session's resources end with the session: stopping gameplay destroys

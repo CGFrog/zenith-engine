@@ -261,6 +261,10 @@ registrar.addSystem({.name = "my_game.hud", .phase = SystemPhase::Ui, .run = dra
   `pixelText` for labels that follow world positions.
 - Keyboard and gamepad navigation are built in (`setNavigation`), along with
   accessibility text scaling.
+- For mouse-driven menus, free the pointer while the menu is open:
+  `services->outside().setPointerReleased(menuOpen)`. The game takes the
+  mouse back when you clear it, in the editor's game view and in the shipped
+  game alike.
 - Ready-made screens (`engine/ui/GameMenus.hpp`): `drawPauseMenu` returns
   `Resume`, `OpenSettings`, or `Quit`; `drawSettingsMenu` draws toggles,
   choices, and sliders from `SettingsEntry` values you supply and returns

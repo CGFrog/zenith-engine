@@ -52,6 +52,10 @@ SimulationClock GameplayRunner::simulationClock() const {
     return m_services ? m_services->time().simulationClock() : SimulationClock{};
 }
 
+MouseCapturePolicy GameplayRunner::mouseCapturePolicy(MouseCapturePolicy host) const {
+    return m_services && m_services->outside().pointerReleased() ? MouseCapturePolicy::Released : host;
+}
+
 void GameplayRunner::update(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     m_frameInput = input;
     m_frameActions = m_actionMap.evaluate(input);

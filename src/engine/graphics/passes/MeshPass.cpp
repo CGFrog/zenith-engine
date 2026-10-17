@@ -78,7 +78,7 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         return false;
     }
     writeAmbientOcclusionDescriptors(defaultView);
-    writeTransmissionBackgroundDescriptors(defaultView);
+    writeTransmissionDescriptors(defaultView);
     if (!m_irradianceVolume.init(context, frameCount)) {
         return false;
     }

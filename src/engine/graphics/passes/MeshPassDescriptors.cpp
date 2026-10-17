@@ -187,12 +187,17 @@ void MeshPass::writeAmbientOcclusionDescriptors(const ViewState& view) {
     }
 }
 
-void MeshPass::writeTransmissionBackgroundDescriptors(const ViewState& view) {
+void MeshPass::writeTransmissionDescriptors(const ViewState& view) {
     const VkDescriptorImageInfo background{.sampler = view.transmissionBackground.sampler(),
                                            .imageView = view.transmissionBackground.view(),
                                            .imageLayout = TransmissionBackground::readLayout};
+    // The pyramid stays in GENERAL (DepthPyramid's reader contract); water
+    // reads level 0 with texelFetch.
+    const VkDescriptorImageInfo depth{.sampler = view.depthPyramid.sampler(),
+                                      .imageView = view.depthPyramid.view(),
+                                      .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
     for (uint32_t frame = 0; frame < m_cameras.size(); ++frame) {
-        std::array<VkWriteDescriptorSet, 2> writes{};
+        std::array<VkWriteDescriptorSet, 4> writes{};
         uint32_t writeCount = 0;
         for (VkDescriptorSet set : viewCameraSets(view, frame)) {
             if (set == VK_NULL_HANDLE) {
@@ -204,6 +209,12 @@ void MeshPass::writeTransmissionBackgroundDescriptors(const ViewState& view) {
                                     .descriptorCount = 1,
                                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                     .pImageInfo = &background};
+            writes[writeCount++] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                    .dstSet = set,
+                                    .dstBinding = sceneDepthBinding,
+                                    .descriptorCount = 1,
+                                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                    .pImageInfo = &depth};
         }
         vkUpdateDescriptorSets(m_device, writeCount, writes.data(), 0, nullptr);
     }

@@ -48,7 +48,8 @@ clearing its view override, ignores editor navigation, picking, and the
 gizmo, and shows a banner about game input. Module systems get the frame's
 `InputState` only while the game view has focus (`EditorPlayback::gameInput`;
 a neutral state otherwise), and `EditorPlayback::mouseCapturePolicy()` is
-`Persistent` exactly then, published to `EditorApplication` each frame.
+`Persistent` exactly then (`Released` while the game asks for its pointer for
+a menu), published to `EditorApplication` each frame.
 `play.focus_game_view` (a click on the view) and `play.release_game_input`
 (Esc or a click elsewhere) move the focus. `standalone` writes the document
 to a temporary scene and runs `zenith [--project <file>] --scene <scene>`

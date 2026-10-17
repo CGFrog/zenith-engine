@@ -333,6 +333,16 @@ void InputManager::update(const Window& window, const EventObserver& eventObserv
         mouseCapturePolicy == MouseCapturePolicy::WhileRightMouseDown) {
         setMouseCaptured(window, false);
     }
+    // Released frees the pointer for a game's menu; when the menu closes and
+    // the policy is Persistent again, the game takes the mouse back without
+    // waiting for a click.
+    if (m_mouseCaptured && mouseCapturePolicy == MouseCapturePolicy::Released) {
+        setMouseCaptured(window, false);
+    }
+    if (!m_mouseCaptured && m_mouseCapturePolicy == MouseCapturePolicy::Released &&
+        mouseCapturePolicy == MouseCapturePolicy::Persistent) {
+        setMouseCaptured(window, true);
+    }
     m_mouseCapturePolicy = mouseCapturePolicy;
 
     SDL_Event event;
@@ -408,8 +418,9 @@ void InputManager::handleEvent(const Window& window, const SDL_Event& event, Inp
 
     if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
         if (!m_mouseCaptured) {
-            const bool shouldCapture =
-                mouseCapturePolicy == MouseCapturePolicy::Persistent || event.button.button == SDL_BUTTON_RIGHT;
+            const bool shouldCapture = mouseCapturePolicy == MouseCapturePolicy::Persistent ||
+                                       (mouseCapturePolicy == MouseCapturePolicy::WhileRightMouseDown &&
+                                        event.button.button == SDL_BUTTON_RIGHT);
             if (!capture.mouse && shouldCapture) {
                 setMouseCaptured(window, true);
                 return;

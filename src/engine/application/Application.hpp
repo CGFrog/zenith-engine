@@ -87,6 +87,10 @@ class ApplicationScene {
     virtual void requestQuit(ApplicationContext& context);
     virtual void drawUi(ApplicationContext& context);
     virtual void unload(ApplicationContext& context) = 0;
+    // The mouse capture while this scene is active, given the application's
+    // (Application::mouseCapturePolicy); for example Released while a game's
+    // menu wants the pointer. The default keeps the application's.
+    virtual MouseCapturePolicy mouseCapturePolicy(MouseCapturePolicy application) const;
 };
 
 class Application {
@@ -134,6 +138,9 @@ class ApplicationSession {
     bool beginFixedUpdate();
     // The active scene's clock, or the default one without a scene.
     SimulationClock simulationClock() const;
+    // The application's mouse capture policy as the active scene adjusts it
+    // (ApplicationScene::mouseCapturePolicy); the host hands it to input.
+    MouseCapturePolicy mouseCapturePolicy() const;
     // Shares the host's frame timings with the scenes (see
     // ApplicationContext::frameTimings); timings must outlive the session.
     void setFrameTimings(const EngineFrameTimings* timings);

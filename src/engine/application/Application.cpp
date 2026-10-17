@@ -38,6 +38,10 @@ MouseCapturePolicy Application::mouseCapturePolicy() const {
     return MouseCapturePolicy::Persistent;
 }
 
+MouseCapturePolicy ApplicationScene::mouseCapturePolicy(MouseCapturePolicy application) const {
+    return application;
+}
+
 void Application::onStop(ApplicationContext&) {}
 
 void ApplicationScene::drawUi(ApplicationContext&) {}
@@ -140,6 +144,11 @@ bool ApplicationSession::beginFixedUpdate() {
 
 SimulationClock ApplicationSession::simulationClock() const {
     return m_activeScene ? m_activeScene->simulationClock() : SimulationClock{};
+}
+
+MouseCapturePolicy ApplicationSession::mouseCapturePolicy() const {
+    const MouseCapturePolicy application = m_application.mouseCapturePolicy();
+    return m_activeScene ? m_activeScene->mouseCapturePolicy(application) : application;
 }
 
 void ApplicationSession::setFrameTimings(const EngineFrameTimings* timings) {

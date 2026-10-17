@@ -23,6 +23,12 @@
 //    "alpha_cutoff": 0.5, "double_sided": false,
 //    "base_color_texture": {"guid": "0f8e...", "path": "stone.png"}}
 //
+// An optional "water" object makes the material a water surface
+// (MaterialWater): {"wave_length": 3, "wave_steepness": 0.3, "wave_speed": 1,
+// "shore_fade": 0.15, "absorption_color": [0.45, 0.75, 0.78],
+// "absorption_distance": 1.5, "fallback_depth": 1}; missing keys keep the
+// defaults, and its base color is the color deep water scatters back.
+//
 // Factors are linear. Each texture slot is optional and names an image by its
 // path relative to the material file's folder (forward slashes, like a glTF
 // URI), so a folder holding a material and its textures can move as a whole.
@@ -64,6 +70,8 @@ struct MaterialFile {
     bool doubleSided{false};
     // Indexed by MaterialTextureSlot.
     std::array<MaterialTextureReference, materialTextureSlotCount> textures;
+    // Enabled when the file has a "water" object.
+    MaterialWater water;
 
     bool operator==(const MaterialFile&) const = default;
 };

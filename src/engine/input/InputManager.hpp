@@ -24,6 +24,9 @@ struct InputCapture {
 enum class MouseCapturePolicy : uint8_t {
     Persistent,
     WhileRightMouseDown,
+    // The pointer is free, for a game's menu: a held capture is released and
+    // no click captures. Returning to Persistent captures the mouse again.
+    Released,
 };
 
 enum class Key : uint8_t {
@@ -176,8 +179,10 @@ class InputManager {
     using EventObserver = std::function<void(const SDL_Event&)>;
 
     // Persistent captures the mouse on any click (outside UI capture) until
-    // Escape; WhileRightMouseDown only while the right button is held. A
-    // change from Persistent to WhileRightMouseDown releases a held capture.
+    // Escape; WhileRightMouseDown only while the right button is held;
+    // Released never captures. A change from Persistent to
+    // WhileRightMouseDown, or to Released, releases a held capture, and a
+    // change from Released to Persistent captures the mouse again.
 
     void update(const Window& window, const EventObserver& eventObserver = {}, InputCapture capture = {},
                 MouseCapturePolicy mouseCapturePolicy = MouseCapturePolicy::Persistent);

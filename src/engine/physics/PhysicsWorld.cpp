@@ -1085,26 +1085,35 @@ void PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
 
         const glm::vec3 desired = fromJolt(character.CancelVelocityTowardsSteepSlopes(
             JPH::Vec3(controller.desiredVelocity.x, 0.0f, controller.desiredVelocity.z)));
-        const float control = onGround ? 1.0f : std::clamp(controller.airControl, 0.0f, 1.0f);
+        // Free motion (swimming, flying) has full control in every direction
+        // and no gravity, jumping, or sticking to the floor.
+        const bool free = controller.motion == CharacterMotion::Free;
+        const float control = onGround || free ? 1.0f : std::clamp(controller.airControl, 0.0f, 1.0f);
         const float blend = std::min(1.0f, std::max(controller.acceleration, 0.0f) * control * deltaSeconds);
         state.horizontalVelocity = glm::mix(state.horizontalVelocity, glm::vec3(desired.x, 0.0f, desired.z), blend);
 
         glm::vec3 velocity(0.0f, verticalSpeed, 0.0f);
-        if (onGround && movingTowardGround) {
+        if (free) {
+            velocity.y = glm::mix(verticalSpeed, controller.desiredVerticalSpeed, blend);
+        } else if (onGround && movingTowardGround) {
             velocity = groundVelocity;
             if (controller.jumpRequested) {
                 velocity.y += controller.jumpSpeed;
             }
         }
         controller.jumpRequested = false;
-        velocity += impl.config.gravity * deltaSeconds + state.horizontalVelocity;
+        if (!free) {
+            velocity += impl.config.gravity * deltaSeconds;
+        }
+        velocity += state.horizontalVelocity;
         character.SetLinearVelocity(toJolt(velocity));
 
         const JPH::ObjectLayer characterLayer = objectLayer(layer, true);
         JPH::CharacterVirtual::ExtendedUpdateSettings update;
-        update.mStickToFloorStepDown = JPH::Vec3(0.0f, -std::max(controller.groundProbeDistance, 0.0f), 0.0f);
+        update.mStickToFloorStepDown =
+            free ? JPH::Vec3::sZero() : JPH::Vec3(0.0f, -std::max(controller.groundProbeDistance, 0.0f), 0.0f);
         update.mWalkStairsStepUp = JPH::Vec3(0.0f, std::max(controller.stepHeight, 0.0f), 0.0f);
-        character.ExtendedUpdate(deltaSeconds, gravity, update,
+        character.ExtendedUpdate(deltaSeconds, free ? JPH::Vec3::sZero() : gravity, update,
                                  impl.system->GetDefaultBroadPhaseLayerFilter(characterLayer),
                                  impl.system->GetDefaultLayerFilter(characterLayer), JPH::BodyFilter{},
                                  JPH::ShapeFilter{}, *impl.tempAllocator);

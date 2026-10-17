@@ -38,6 +38,7 @@
 #include "engine/diagnostics/OverflowEpisode.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"
 #include <array>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <optional>
@@ -552,8 +553,14 @@ class MeshPass {
     // Binds the fog pass's integrated volume to camera binding 18 of the frame
     // slot's sets when the volume changed since they were last written.
     void writeVolumetricFogDescriptors(ViewState& view, uint32_t frameIndex);
-    // Binds the transmission background to camera binding 24 of every set.
-    void writeTransmissionBackgroundDescriptors(const ViewState& view);
+    // Binds what translucent surfaces read behind them to every camera set of
+    // the view: the transmission background (binding 24) and the scene depth
+    // (the depth pyramid, binding 25). Rewritten when the view resizes.
+    void writeTransmissionDescriptors(const ViewState& view);
+    // Advances the surface animation clock (CameraData::surfaceAnimation)
+    // once per recorded frame: by wall-clock time, or by the fixed frame step
+    // when set, so captures stay deterministic.
+    void advanceSurfaceAnimation();
     bool ensureGeometryPage(uint32_t page);
     void destroyGeometryPage(const GeometryPage& page);
     void bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t page) const;
@@ -1026,6 +1033,9 @@ class MeshPass {
     std::vector<std::unique_ptr<ViewState>> m_views;
     VkFormat m_outputFormat{VK_FORMAT_UNDEFINED};
     std::optional<float> m_fixedFrameSeconds;
+    // Surface animation clock (water waves), advanced once per recorded frame.
+    double m_surfaceAnimationSeconds{0.0};
+    std::optional<std::chrono::steady_clock::time_point> m_previousAnimationTime;
     // GPU-driven submission and its occlusion history belong to the default
     // view and bind its depth pyramid.
     GpuDrivenPass m_gpuDrivenPass;

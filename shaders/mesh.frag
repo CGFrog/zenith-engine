@@ -45,8 +45,12 @@ layout(set = 0, binding = 0) uniform CameraData {
     uvec4 irradianceVolumeCounts;  // xyz: probes per axis, w: 1 when a volume is bound
     vec4 irradianceVolumeBias;     // x: normal bias, y: view bias
     // Temporal resolve: NDC jitter applied to the current (xy) and previous (zw)
-    // projections, removed from motion vectors. Keep last in the block.
+    // projections, removed from motion vectors. Shaders declaring a prefix of
+    // the block end here.
     vec4 temporalJitter;
+    // x: seconds of surface animation, y: 1 when sceneDepth holds this
+    // frame's opaque depth.
+    vec4 surfaceAnimation;
 } camera;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -83,6 +87,9 @@ layout(set = 0, binding = 18) uniform sampler3D volumetricFog;
 // Opaque scene behind transmissive surfaces (TransmissionBackground): render
 // pixel p maps to uv p * camera.fogScreen.xy; mips are box-filtered.
 layout(set = 0, binding = 24) uniform sampler2D transmissionBackground;
+// The view's depth pyramid (DepthPyramid.hpp): level 0 is the opaque scene
+// depth, reversed Z, read with texelFetch at render pixels.
+layout(set = 0, binding = 25) uniform sampler2D sceneDepth;
 
 // Mirrors MaterialRecord in engine/graphics/MaterialRecord.hpp (std430).
 struct MaterialRecord {
@@ -98,6 +105,11 @@ struct MaterialRecord {
     vec4 volume;    // attenuation coefficient per world unit (rgb), thickness
     uvec4 lobeTextures;  // bindless slots: clearcoat, clearcoat roughness, clearcoat normal, sheen color
     uvec4 layerTextures; // bindless slots: sheen roughness, specular, specular color; w unused
+    vec4 water;          // wave length, steepness, speed, shore fade (LOBE_WATER)
+    uvec4 terrainAlbedo; // terrain layers' bindless slots (LOBE_TERRAIN)
+    uvec4 terrainNormal;
+    uvec4 terrainArm;
+    vec4 terrainTileSize; // metres per repeat of each layer
 };
 
 // Mirror the material_lobes bits in MaterialRecord.hpp.
@@ -106,6 +118,8 @@ const uint LOBE_SHEEN = 2u;
 const uint LOBE_TRANSMISSION = 4u;
 const uint LOBE_SPECULAR_TEXTURES = 8u;
 const uint LOBE_VOLUME = 16u;
+const uint LOBE_WATER = 32u;
+const uint LOBE_TERRAIN = 64u;
 
 layout(std430, set = 0, binding = 4) readonly buffer Materials {
     MaterialRecord values[];
@@ -223,8 +237,94 @@ layout(location = 3) in vec4 worldTangent;
 layout(location = 4) in vec4 currentClipPosition;
 layout(location = 5) in vec4 previousClipPosition;
 layout(location = 6) flat in uint materialIndex;
+layout(location = 7) in vec4 surfaceWeights;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outMotionReactive;
+
+// Terrain (LOBE_TERRAIN) ---------------------------------------------------
+// Layers blended by vertex weight, tiled in world space. The last layer is
+// projected from three axes (reoriented UDN normals) so it does not stretch on
+// cliffs; the others are projected from above.
+struct TerrainSample {
+    vec3 albedo;
+    vec3 normal;
+    vec3 arm; // ambient occlusion, roughness, metallic
+};
+
+vec3 terrainTangentNormal(uint slot, vec2 uv) {
+    vec2 xy = sampleMaterialTexture(slot, uv).xy * 2.0 - 1.0;
+    return vec3(xy, sqrt(clamp(1.0 - dot(xy, xy), 0.0, 1.0)));
+}
+
+// Seen from above: u runs along +X and the image's up (+Y of an OpenGL normal
+// map) along -Z, around the geometric normal.
+TerrainSample terrainFromAbove(MaterialRecord material, int layer, vec3 geometricNormal) {
+    vec2 uv = worldPosition.xz / material.terrainTileSize[layer];
+    vec3 mapped = terrainTangentNormal(material.terrainNormal[layer], uv);
+    TerrainSample result;
+    result.albedo = sampleMaterialTexture(material.terrainAlbedo[layer], uv).rgb;
+    result.arm = sampleMaterialTexture(material.terrainArm[layer], uv).rgb;
+    result.normal = normalize(geometricNormal + vec3(mapped.x, 0.0, -mapped.y));
+    return result;
+}
+
+TerrainSample terrainTriplanar(MaterialRecord material, int layer, vec3 geometricNormal) {
+    vec3 blend = pow(abs(geometricNormal), vec3(4.0));
+    blend /= max(blend.x + blend.y + blend.z, 1.0e-5);
+    float tile = material.terrainTileSize[layer];
+    vec2 uvX = worldPosition.zy / tile;
+    vec2 uvY = worldPosition.xz / tile;
+    vec2 uvZ = worldPosition.xy / tile;
+    uint albedoSlot = material.terrainAlbedo[layer];
+    uint armSlot = material.terrainArm[layer];
+    uint normalSlot = material.terrainNormal[layer];
+    TerrainSample result;
+    result.albedo = sampleMaterialTexture(albedoSlot, uvX).rgb * blend.x +
+                    sampleMaterialTexture(albedoSlot, uvY).rgb * blend.y +
+                    sampleMaterialTexture(albedoSlot, uvZ).rgb * blend.z;
+    result.arm = sampleMaterialTexture(armSlot, uvX).rgb * blend.x + sampleMaterialTexture(armSlot, uvY).rgb * blend.y +
+                 sampleMaterialTexture(armSlot, uvZ).rgb * blend.z;
+    vec3 tangentX = terrainTangentNormal(normalSlot, uvX);
+    vec3 tangentY = terrainTangentNormal(normalSlot, uvY);
+    vec3 tangentZ = terrainTangentNormal(normalSlot, uvZ);
+    vec3 normalX = vec3(tangentX.xy + geometricNormal.zy, abs(tangentX.z) * geometricNormal.x);
+    vec3 normalY = vec3(tangentY.xy + geometricNormal.xz, abs(tangentY.z) * geometricNormal.y);
+    vec3 normalZ = vec3(tangentZ.xy + geometricNormal.xy, abs(tangentZ.z) * geometricNormal.z);
+    result.normal = normalize(normalX.zyx * blend.x + normalY.xzy * blend.y + normalZ.xyz * blend.z);
+    return result;
+}
+
+// The blended surface. Each layer's brightness acts as its height, so where
+// layers meet the higher detail (stones, grass tufts) shows through first
+// instead of a soft cross-fade.
+TerrainSample terrainSurface(MaterialRecord material, vec3 geometricNormal) {
+    vec4 weights = max(surfaceWeights, vec4(0.0));
+    weights /= max(weights.x + weights.y + weights.z + weights.w, 1.0e-4);
+    TerrainSample layers[4];
+    vec4 heights = vec4(0.0);
+    for (int layer = 0; layer < 4; ++layer) {
+        if (weights[layer] <= 0.001) {
+            layers[layer] = TerrainSample(vec3(0.0), geometricNormal, vec3(1.0, 1.0, 0.0));
+            continue;
+        }
+        layers[layer] = layer == 3 ? terrainTriplanar(material, layer, geometricNormal)
+                                   : terrainFromAbove(material, layer, geometricNormal);
+        heights[layer] = dot(layers[layer].albedo, vec3(0.333));
+    }
+    const float transition = 0.2;
+    vec4 raised = weights + heights * 0.6 * step(vec4(0.001), weights);
+    float top = max(max(raised.x, raised.y), max(raised.z, raised.w));
+    vec4 blend = max(raised - (top - transition), vec4(0.0)) * step(vec4(0.001), weights);
+    blend /= max(blend.x + blend.y + blend.z + blend.w, 1.0e-4);
+    TerrainSample result = TerrainSample(vec3(0.0), vec3(0.0), vec3(0.0));
+    for (int layer = 0; layer < 4; ++layer) {
+        result.albedo += layers[layer].albedo * blend[layer];
+        result.normal += layers[layer].normal * blend[layer];
+        result.arm += layers[layer].arm * blend[layer];
+    }
+    result.normal = normalize(result.normal);
+    return result;
+}
 
 float distributionGGX(vec3 normal, vec3 halfVector, float roughness) {
     float alpha = roughness * roughness;
@@ -267,7 +367,11 @@ float sampleShadowCascade(vec3 position, vec3 normal, vec3 lightDirection, int c
         vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
         vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
         vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790));
-    float angle = fract(sin(dot(position.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.28318530718;
+    // Interleaved gradient noise (Jimenez 2014) over screen pixels rotates the
+    // kernel differently at every pixel. A hash of the world position's xz
+    // was constant along walls and lost precision far from the origin, which
+    // drew the filter's error as stripes; TAA averages this pattern out.
+    float angle = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) * 6.28318530718;
     mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
     const int sampleCount = SHADOW_CASCADE_COUNT > 2 ? 16 : SHADOW_CASCADE_COUNT > 1 ? 8 : 4;
     float visibility = 0.0;
@@ -886,7 +990,7 @@ SurfaceLobes surfaceLobes(MaterialRecord material, vec2 uv, mat3 tangentFrame, v
     SurfaceLobes lobes;
     // The fast lighting variant keeps only transmission, so glass stays
     // see-through; sheen and the coat need the physically based model.
-    const uint fastLobes = LOBE_TRANSMISSION | LOBE_VOLUME;
+    const uint fastLobes = LOBE_TRANSMISSION | LOBE_VOLUME | LOBE_WATER;
     lobes.flags = material.extraTextures.y & (PHYSICALLY_BASED_LIGHTING ? 0xffffffffu : fastLobes);
     lobes.clearcoat = 0.0;
     lobes.clearcoatRoughness = 1.0;
@@ -1031,6 +1135,146 @@ vec3 transmittedRadiance(MaterialRecord material, SurfaceLobes lobes, vec3 norma
     return lobes.transmission * (1.0 - metallic) * (vec3(1.0) - reflected) * albedo * absorption * background;
 }
 
+// Water (LOBE_WATER) ------------------------------------------------------
+// The surface is a sum of directional waves, each moving at the deep-water
+// speed of its length (omega = sqrt(g k)). Only their slopes are needed: the
+// waves tilt the normal, which bends the reflections, the sun's glints, and
+// the refracted view of the bed.
+const int WATER_WAVES = 6;
+
+// Surface slope (dh/dx, dh/dz) at world xz. Waves much shorter than a pixel
+// fade out, so distant water stays calm instead of shimmering.
+vec2 waterSlope(vec2 position, vec4 water, float time, float pixelSize) {
+    const vec2 directions[WATER_WAVES] =
+        vec2[WATER_WAVES](vec2(1.0, 0.0), vec2(0.62, 0.78), vec2(-0.35, 0.94), vec2(0.89, -0.45),
+                          vec2(-0.83, -0.56), vec2(0.21, -0.98));
+    const float lengths[WATER_WAVES] = float[WATER_WAVES](1.0, 0.61, 0.37, 0.23, 0.14, 0.085);
+    vec2 slope = vec2(0.0);
+    for (int wave = 0; wave < WATER_WAVES; ++wave) {
+        float waveLength = water.x * lengths[wave];
+        float k = 6.28318530718 / waveLength;
+        float omega = sqrt(9.81 * k) * water.z;
+        float phase = k * dot(directions[wave], position) - omega * time + float(wave) * 1.7;
+        // Steepness is the slope amplitude; shorter waves are gentler.
+        float amplitude = water.y * 0.45 / (1.0 + float(wave) * 0.35);
+        float detail = clamp(waveLength / (pixelSize * 6.0) - 0.5, 0.0, 1.0);
+        slope += directions[wave] * (amplitude * detail * cos(phase));
+    }
+    return slope;
+}
+
+// The wavy normal of an upward-facing water surface; other faces (the sides
+// of a water volume) keep their geometric normal.
+vec3 waterNormal(vec4 water, vec3 geometricNormal) {
+    if (geometricNormal.y < 0.5) {
+        return geometricNormal;
+    }
+    float pixelSize = max(length(fwidth(worldPosition)), 1.0e-4);
+    vec2 slope = waterSlope(worldPosition.xz, water, camera.surfaceAnimation.x, pixelSize);
+    return normalize(vec3(-slope.x, 1.0, -slope.y));
+}
+
+// View-space depth of a reversed-Z depth value (see clusterDepth).
+float viewDepthOf(float depth) {
+    return camera.clusterDepth.z / (depth + camera.clusterDepth.w);
+}
+
+float opaqueViewDepth(vec2 pixel) {
+    vec2 extent = 1.0 / camera.fogScreen.xy;
+    ivec2 texel = ivec2(clamp(pixel, vec2(0.0), extent - 1.0));
+    return viewDepthOf(texelFetch(sceneDepth, texel, 0).r);
+}
+
+// Light reaching the eye up through the water, and the surface's coverage,
+// which fades its edge where the water is shallow. The opaque depth behind
+// the surface gives the path length through the water: the bed shows through
+// shallow water and absorbs into the scattered water color with depth.
+vec3 waterTransmitted(MaterialRecord material, vec3 normal, vec3 geometricNormal, vec3 viewDirection, float nDotV,
+                      float roughness, vec3 reflectance, float specularWeight, out float coverage) {
+    vec2 pixel = gl_FragCoord.xy;
+    float surfaceDepth = viewDepthOf(gl_FragCoord.z);
+    float distanceToSurface = length(camera.cameraPosition.xyz - worldPosition);
+    // Along the view ray, then straight down.
+    float pathLength = material.volume.w;
+    float waterDepth = material.volume.w;
+    bool measured = camera.surfaceAnimation.y > 0.5;
+    if (measured) {
+        float behind = max(opaqueViewDepth(pixel) - surfaceDepth, 0.0);
+        pathLength = behind * distanceToSurface / max(surfaceDepth, 1.0e-4);
+        waterDepth = pathLength * abs(viewDirection.y);
+    }
+    // Refraction: the waves shift the view of the bed, more through deeper
+    // water and less far away. A shifted sample that lands on something in
+    // front of the water would smear it onto the surface, so it falls back.
+    // In pixels: up to 4% of the render height for full-depth water nearby.
+    float shiftPixels = clamp(waterDepth * 4.0, 0.0, 1.0) * 0.04 /
+                        (camera.fogScreen.y * max(distanceToSurface * 0.3, 1.0));
+    vec2 refractedPixel = pixel + (normal.xz - geometricNormal.xz) * shiftPixels;
+    if (measured && opaqueViewDepth(refractedPixel) < surfaceDepth) {
+        refractedPixel = pixel;
+    }
+    vec2 uv = refractedPixel * camera.fogScreen.xy;
+    vec3 background = textureLod(transmissionBackground, uv, 0.0).rgb;
+    vec3 absorption = exp(-material.volume.rgb * pathLength);
+    // In-scattering: the water's own color, lit by the sky and the sun
+    // (which reaches into the water along its depth).
+    vec3 lightDirection = normalize(camera.lightDirection.xyz);
+    vec3 skyLight = camera.environmentSky.rgb * camera.environmentSky.w;
+    vec3 sunLight = camera.lightColor.rgb * camera.lightDirection.w * max(lightDirection.y, 0.0) * 0.06;
+    vec3 scattered = material.baseColor.rgb * (skyLight + sunLight) * (vec3(1.0) - absorption);
+    vec3 reflected = vec3(0.0);
+    if (PHYSICALLY_BASED_LIGHTING) {
+        vec2 brdf = textureLod(environmentBrdf, vec2(nDotV, roughness), 0.0).rg;
+        reflected = specularWeight * (reflectance * brdf.x + brdf.y);
+    }
+    coverage = measured && material.water.w > 0.0 ? smoothstep(0.0, material.water.w, waterDepth) : 1.0;
+    return (vec3(1.0) - reflected) * (background * absorption + scattered);
+}
+
+// Reflections of the opaque scene on water: the reflected ray marches in
+// world space with growing steps; each step projects to the screen and is
+// compared with the opaque depth there, and the first step that passes
+// behind it takes the opaque scene's color. rgb is that color, a its weight,
+// which fades toward the screen edges and the end of the march (where the
+// sky reflection takes over). The engine's screen-space reflections trace
+// opaque surfaces only, before blended surfaces draw.
+vec4 waterScreenReflection(vec3 normal, vec3 viewDirection) {
+    if (camera.surfaceAnimation.y < 0.5) {
+        return vec4(0.0);
+    }
+    const int steps = 40;
+    vec3 direction = reflect(-viewDirection, normal);
+    // Waves can tip a grazing reflection below the horizon; keep it above
+    // the surface so it never marches into the water.
+    direction = normalize(vec3(direction.x, max(direction.y, 0.02), direction.z));
+    float distanceToSurface = length(camera.cameraPosition.xyz - worldPosition);
+    float stepLength = clamp(distanceToSurface * 0.03, 0.03, 0.5);
+    vec3 position = worldPosition;
+    vec2 extent = 1.0 / camera.fogScreen.xy;
+    for (int index = 0; index < steps; ++index) {
+        position += direction * stepLength;
+        stepLength *= 1.12;
+        vec4 clip = camera.viewProjection * vec4(position, 1.0);
+        if (clip.w <= 0.0) {
+            break;
+        }
+        vec3 projected = clip.xyz / clip.w;
+        vec2 uv = projected.xy * 0.5 + 0.5;
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+            break;
+        }
+        float behind = viewDepthOf(projected.z) - opaqueViewDepth(uv * extent);
+        // Passing just behind a surface is a hit; far behind is a ray
+        // slipping past the back of something closer.
+        if (behind > 0.0 && behind < stepLength * 3.0 + 0.2) {
+            vec2 edges = smoothstep(vec2(0.0), vec2(0.1), uv) * smoothstep(vec2(0.0), vec2(0.1), 1.0 - uv);
+            float weight = edges.x * edges.y * (1.0 - smoothstep(0.6, 1.0, float(index) / float(steps)));
+            return vec4(textureLod(transmissionBackground, uv, 0.0).rgb, weight);
+        }
+    }
+    return vec4(0.0);
+}
+
 // Screen-space motion (xy), reactive mask (z) and depth (w) for the temporal
 // resolve.
 vec4 motionReactive(float reactive) {
@@ -1086,7 +1330,8 @@ void main() {
     float occlusion = mix(1.0, sampleMaterialTexture(material.textures.w, texCoord).r, material.factors.w);
     // Screen-space occlusion describes the opaque depth; blended surfaces in
     // front of it keep only their material occlusion.
-    bool transmissive = (material.extraTextures.y & LOBE_TRANSMISSION) != 0u;
+    bool water = (material.extraTextures.y & LOBE_WATER) != 0u;
+    bool transmissive = (material.extraTextures.y & LOBE_TRANSMISSION) != 0u || water;
     if (material.surface.y < 1.5 && !transmissive) {
         occlusion = min(occlusion, screenSpaceAmbientOcclusion());
     }
@@ -1107,6 +1352,17 @@ void main() {
     vec3 mappedNormal = vec3(mappedNormalXY, sqrt(clamp(1.0 - dot(mappedNormalXY, mappedNormalXY), 0.0, 1.0)));
     mappedNormal.xy *= material.factors.z;
     normal = normalize(tangentFrame * mappedNormal);
+    if (water) {
+        normal = waterNormal(material.water, geometricNormal);
+    }
+    if ((material.extraTextures.y & LOBE_TERRAIN) != 0u) {
+        TerrainSample ground = terrainSurface(material, geometricNormal);
+        albedo = ground.albedo * material.baseColor.rgb;
+        normal = ground.normal;
+        roughness = clamp(ground.arm.g * material.factors.y, 0.045, 1.0);
+        metallic = clamp(ground.arm.b * material.factors.x, 0.0, 1.0);
+        occlusion = min(occlusion, mix(1.0, ground.arm.r, material.factors.w));
+    }
     // Decals paint opaque and masked surfaces; blended surfaces keep their own.
     if (material.surface.y < 1.5) {
         applyDecals(worldPosition, geometricNormal, albedo, normal, roughness, metallic);
@@ -1120,8 +1376,9 @@ void main() {
     vec4 dielectric = dielectricSpecular(material, texCoord);
     vec3 reflectance = mix(dielectric.rgb, albedo, metallic);
     float specularWeight = mix(dielectric.a, 1.0, metallic);
-    // Transmission replaces part of the diffuse base (transmittedRadiance).
-    vec3 diffuseAlbedo = albedo * (1.0 - lobes.transmission);
+    // Transmission replaces part of the diffuse base (transmittedRadiance);
+    // water has no diffuse base, only what it scatters (waterTransmitted).
+    vec3 diffuseAlbedo = water ? vec3(0.0) : albedo * (1.0 - lobes.transmission);
     // The view half of the Smith geometry term is shared by every light.
     float viewGeometry = geometrySchlickGGX(nDotV, roughness);
     float shadow = shadowVisibility(worldPosition, geometricNormal, lightDirection);
@@ -1168,6 +1425,14 @@ void main() {
                                       reflectance, specularWeight, occlusion);
     }
     lobeLight += lobeIndirectResponse(lobes, worldPosition, normal, viewDirection, nDotV, occlusion);
+    // Water mirrors the scene around it where the screen shows it, and the
+    // sky (the environment) elsewhere.
+    if (water && PHYSICALLY_BASED_LIGHTING) {
+        vec4 screenReflection = waterScreenReflection(normal, viewDirection);
+        vec2 brdf = textureLod(environmentBrdf, vec2(nDotV, roughness), 0.0).rg;
+        vec3 specular = specularWeight * (reflectance * brdf.x + brdf.y);
+        indirect = mix(indirect, specular * screenReflection.rgb, screenReflection.a);
+    }
     vec3 emissive = sampleMaterialTexture(material.extraTextures.x, texCoord).rgb * material.emissive.rgb;
     // Base and emission sit below the sheen, which sits below the coat.
     float baseScale = lobes.sheenAlbedoScaling * lobes.clearcoatAttenuation;
@@ -1175,7 +1440,13 @@ void main() {
     // The background already carries the fog in front of it, so transmitted
     // light joins after this surface's own fog.
     vec3 transmitted = vec3(0.0);
-    if ((lobes.flags & LOBE_TRANSMISSION) != 0u) {
+    if (water) {
+        float coverage = 1.0;
+        transmitted = waterTransmitted(material, normal, geometricNormal, viewDirection, nDotV, roughness,
+                                       reflectance, specularWeight, coverage) *
+                      baseScale;
+        alpha = coverage;
+    } else if ((lobes.flags & LOBE_TRANSMISSION) != 0u) {
         transmitted = transmittedRadiance(material, lobes, normal, viewDirection, nDotV, albedo, metallic, roughness,
                                           reflectance, specularWeight) *
                       baseScale;
@@ -1188,5 +1459,9 @@ void main() {
     outColor = vec4(applyVolumetricFog(color) + transmitted, alpha);
     float reactive = max(material.surface.y > 1.5 ? alpha : 0.0,
                          smoothstep(1.0, 4.0, dot(emissive, vec3(0.2126, 0.7152, 0.0722))));
+    // Moving waves have no motion vectors; less history keeps them sharp.
+    if (water) {
+        reactive = max(reactive, 0.5);
+    }
     outMotionReactive = motionReactive(reactive);
 }

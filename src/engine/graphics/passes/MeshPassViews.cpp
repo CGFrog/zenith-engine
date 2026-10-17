@@ -40,7 +40,7 @@ bool MeshPass::initViewPasses(const VulkanContext& context, ViewState& view, VkE
         writeVolumetricFogDescriptors(view, frame);
     }
     writeAmbientOcclusionDescriptors(view);
-    writeTransmissionBackgroundDescriptors(view);
+    writeTransmissionDescriptors(view);
     return true;
 }
 
@@ -75,7 +75,7 @@ bool MeshPass::resizeView(const VulkanContext& context, uint32_t view, VkExtent2
         return false;
     }
     writeAmbientOcclusionDescriptors(state);
-    writeTransmissionBackgroundDescriptors(state);
+    writeTransmissionDescriptors(state);
     if (view == 0 && m_gpuDrivenSupported) {
         m_gpuDrivenPass.bindDepthPyramid(state.depthPyramid);
     }

@@ -395,6 +395,13 @@ void MeshPass::writeMaterialRecords(uint32_t frameIndex, const AssetManager& ass
         return srgb ? texture->srgbSlot : texture->linearSlot;
     };
     const auto pack = [&](const MaterialAsset& material) {
+        MaterialTextureSlots terrain;
+        for (size_t layer = 0; layer < materialTerrainLayerCount; ++layer) {
+            const MaterialTerrainLayer& source = material.terrain.layers[layer];
+            terrain.terrainAlbedo[layer] = slotFor(source.albedo, true, m_whiteSrgbSlot);
+            terrain.terrainNormal[layer] = slotFor(source.normal, false, m_normalSlot);
+            terrain.terrainArm[layer] = slotFor(source.arm, false, m_whiteSlot);
+        }
         return packMaterialRecord(
             material, {.baseColor = slotFor(material.baseColorTexture, true, m_whiteSrgbSlot),
                        .normal = slotFor(material.normalTexture, false, m_normalSlot),
@@ -408,7 +415,10 @@ void MeshPass::writeMaterialRecords(uint32_t frameIndex, const AssetManager& ass
                        .sheenRoughness = slotFor(material.sheen.roughnessTexture, false, m_whiteSlot),
                        .specular = slotFor(material.specular.texture, false, m_whiteSlot),
                        .specularColor = slotFor(material.specular.colorTexture, true, m_whiteSrgbSlot),
-                       .transmission = slotFor(material.transmission.texture, false, m_whiteSlot)});
+                       .transmission = slotFor(material.transmission.texture, false, m_whiteSlot),
+                       .terrainAlbedo = terrain.terrainAlbedo,
+                       .terrainNormal = terrain.terrainNormal,
+                       .terrainArm = terrain.terrainArm});
     };
     uint32_t highestIndex = 0;
     for (const auto& [key, gpu] : m_materials) {

@@ -180,7 +180,7 @@ bool Engine::run(Application& application) {
         const auto inputBegin = std::chrono::steady_clock::now();
         m_input.update(
             m_window, [this](const SDL_Event& event) { m_renderer.processUiEvent(event); }, m_renderer.uiInputCapture(),
-            application.mouseCapturePolicy());
+            applicationSession.mouseCapturePolicy());
         const double inputMilliseconds = elapsedMilliseconds(inputBegin);
 
         if (m_input.resizeRequested()) {

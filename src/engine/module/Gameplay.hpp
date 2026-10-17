@@ -87,6 +87,10 @@ class GameplayRunner {
     // reports as its ApplicationScene::simulationClock so the engine steps
     // physics, animation, and audio by it; the default clock unless started.
     SimulationClock simulationClock() const;
+    // host with the game's pointer request applied: Released while the
+    // game's services ask for the pointer (OutsideServices::
+    // setPointerReleased), host otherwise and before the game starts.
+    MouseCapturePolicy mouseCapturePolicy(MouseCapturePolicy host) const;
 
     // deltaSeconds is the frame's wall-clock time. Update and LateUpdate
     // systems and the timers get it on simulationClock(); Ui systems and

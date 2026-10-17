@@ -143,6 +143,18 @@ so a folder of a material and its images moves as a whole; the GUID is for
 editors. Missing values keep `MaterialFile`'s defaults, a newer version or
 negative factor is rejected, and `writeMaterialFile` writes atomically.
 
+An optional `water` object (`wave_length`, `wave_steepness`, `wave_speed`,
+`shore_fade`, `absorption_color`, `absorption_distance`, `fallback_depth`)
+makes the material a water surface (`MaterialWater`): translucent, with an
+index of refraction of 1.333, and its base color the color deep water
+scatters back. The renderer animates and shades it (see [Graphics
+passes](graphics-passes.md#water)).
+
+A terrain material (`MaterialAsset::terrain`, `MaterialTerrain`) blends four
+texture layers by the mesh's vertex weights instead of the base textures; it
+is built at runtime with `AssetManager::createMaterial` (there is no `.zmat`
+form yet) and shaded as described in [Graphics passes](graphics-passes.md#terrain).
+
 `AssetManager::loadMaterial(path)` loads one, caching by path like models:
 base color and emissive images load as color, normal maps with
 `TextureUsage::Normal`, and metallic-roughness and occlusion maps as linear

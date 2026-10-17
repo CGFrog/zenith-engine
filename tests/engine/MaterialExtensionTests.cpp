@@ -317,6 +317,61 @@ TEST_CASE("MaterialExtension: record packing") {
                   "thin-walled transmission has no volume");
 }
 
+TEST_CASE("MaterialExtension: terrain packing") {
+    CHECK_MESSAGE((offsetof(MaterialRecord, terrainAlbedo) == 208 && offsetof(MaterialRecord, terrainTileSize) == 256),
+                  "the terrain lanes follow the water lane");
+    CHECK_MESSAGE((packMaterialRecord(MaterialAsset{}, {}).extraTextures.y & material_lobes::terrain) == 0u,
+                  "a material that is not terrain packs no terrain flag");
+
+    MaterialAsset ground;
+    ground.terrain.enabled = true;
+    for (size_t layer = 0; layer < materialTerrainLayerCount; ++layer) {
+        ground.terrain.layers[layer].tileSize = 2.0f + static_cast<float>(layer);
+        ground.terrain.layers[layer].albedo = TextureHandle{static_cast<uint32_t>(layer), 1};
+    }
+    MaterialTextureSlots slots;
+    slots.terrainAlbedo = {21, 22, 23, 24};
+    slots.terrainNormal = {31, 32, 33, 34};
+    slots.terrainArm = {41, 42, 43, 44};
+    const MaterialRecord record = packMaterialRecord(ground, slots);
+    CHECK_MESSAGE((record.extraTextures.y & material_lobes::terrain) != 0u, "terrain sets its flag");
+    CHECK_MESSAGE((record.terrainAlbedo == glm::uvec4(21, 22, 23, 24) &&
+                   record.terrainNormal == glm::uvec4(31, 32, 33, 34) &&
+                   record.terrainArm == glm::uvec4(41, 42, 43, 44)),
+                  "each layer's texture slots land in their lanes");
+    CHECK_MESSAGE(record.terrainTileSize == glm::vec4(2.0f, 3.0f, 4.0f, 5.0f), "each layer's tile size packs in order");
+    const std::array<TextureHandle, materialTextureCount> textures = ground.textures();
+    CHECK_MESSAGE((textures[13] == ground.terrain.layers[0].albedo && textures[22] == ground.terrain.layers[3].albedo),
+                  "the terrain layers' textures are leased and uploaded with the material");
+}
+
+TEST_CASE("MaterialExtension: water packing") {
+    CHECK_MESSAGE(offsetof(MaterialRecord, water) == 192, "the water lane follows the layer textures");
+    CHECK_MESSAGE(packMaterialRecord(MaterialAsset{}, {}).water == glm::vec4(0.0f),
+                  "a material that is not water packs no waves");
+
+    MaterialAsset pond;
+    pond.water = {.enabled = true,
+                  .waveLength = 4.0f,
+                  .waveSteepness = 0.25f,
+                  .waveSpeed = 0.8f,
+                  .shoreFade = 0.2f,
+                  .absorptionColor = {0.5f, 1.0f, 0.25f},
+                  .absorptionDistance = 2.0f,
+                  .fallbackDepth = 1.5f};
+    // Transmission settings are the water's to replace.
+    pond.transmission.factor = 1.0f;
+    pond.transmission.thickness = 3.0f;
+    CHECK_MESSAGE((pond.translucent() && pond.readsSceneBehind() && MaterialAsset{}.readsSceneBehind() == false),
+                  "water draws after opaque geometry and needs the scene behind it");
+    const MaterialRecord record = packMaterialRecord(pond, {});
+    CHECK_MESSAGE(record.extraTextures.y == material_lobes::water, "water replaces the other lobes");
+    CHECK_MESSAGE(record.water == glm::vec4(4.0f, 0.25f, 0.8f, 0.2f), "the wave settings pack in order");
+    CHECK_MESSAGE((near(record.volume.x, -std::log(0.5f) / 2.0f, 1e-5f) && record.volume.y == 0.0f &&
+                   near(record.volume.z, -std::log(0.25f) / 2.0f, 1e-5f) && record.volume.w == 1.5f),
+                  "water absorption packs as a per-unit coefficient with the fallback depth");
+}
+
 TEST_CASE("MaterialExtension: sheen albedo") {
     using environment_lighting::integrateSheenAlbedo;
     bool bounded = true;

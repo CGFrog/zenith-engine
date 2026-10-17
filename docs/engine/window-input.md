@@ -18,6 +18,15 @@ changes release held controls rather than leaving stuck state. It also reports
 quit and resize requests. Escape releases relative mouse mode; clicking the
 window captures it.
 
+The host chooses the capture each frame with a `MouseCapturePolicy`
+(`ApplicationSession::mouseCapturePolicy`: the application's, as the active
+scene adjusts it). `Persistent` captures on any click until Escape;
+`WhileRightMouseDown` only while the right button is held (the editor's
+camera); `Released` frees a held capture and never captures, for a game's
+menu (`OutsideServices::setPointerReleased`). Going from `Released` back to
+`Persistent` captures the mouse again, so play resumes without an extra
+click.
+
 Files and folders dropped onto the window from the operating system
 (`SDL_EVENT_DROP_FILE`) arrive in `InputState::droppedFiles` for one frame,
 in drop order, each a `DroppedFile` with its path (decoded from SDL's UTF-8)

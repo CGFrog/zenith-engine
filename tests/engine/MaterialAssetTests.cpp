@@ -82,6 +82,35 @@ TEST_CASE("MaterialAsset: file format") {
     CHECK_MESSAGE(!parseMaterialFile("[1, 2]", rejected), "a document that is not an object should be rejected");
 }
 
+TEST_CASE("MaterialAsset: water") {
+    MaterialFile pond;
+    pond.baseColor = {0.05f, 0.2f, 0.25f, 1.0f};
+    pond.roughness = 0.05f;
+    pond.water = {.enabled = true,
+                  .waveLength = 2.5f,
+                  .waveSteepness = 0.4f,
+                  .waveSpeed = 0.7f,
+                  .shoreFade = 0.1f,
+                  .absorptionColor = {0.3f, 0.7f, 0.75f},
+                  .absorptionDistance = 1.2f,
+                  .fallbackDepth = 0.5f};
+    MaterialFile read;
+    const MaterialFileResult parsed = parseMaterialFile(serializeMaterialFile(pond), read);
+    CHECK_MESSAGE((parsed.success && read == pond), ("a water material should round trip: " + parsed.error));
+    CHECK_MESSAGE(serializeMaterialFile(MaterialFile{}).find("water") == std::string::npos,
+                  "a material that is not water writes no water");
+
+    MaterialFile defaults;
+    CHECK_MESSAGE((parseMaterialFile(R"({"water": {}})", defaults).success && defaults.water.enabled &&
+                   defaults.water.waveLength == MaterialWater{}.waveLength),
+                  "an empty water object makes water with the default settings");
+    MaterialFile rejected;
+    CHECK_MESSAGE(!parseMaterialFile(R"({"water": true})", rejected), "water must be an object");
+    CHECK_MESSAGE(!parseMaterialFile(R"({"water": {"wave_length": 0}})", rejected), "a wave length must be positive");
+    CHECK_MESSAGE(!parseMaterialFile(R"({"water": {"absorption_distance": -1}})", rejected),
+                  "an absorption distance must be positive");
+}
+
 TEST_CASE("MaterialAsset: load reload and collect") {
     const MaterialProject project("zenith_material_asset_load");
     CHECK_MESSAGE(writeMaterialFile(project.material(), stoneMaterial()).success, "writing a material should succeed");

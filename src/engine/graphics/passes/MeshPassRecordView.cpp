@@ -88,6 +88,9 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
     cameraData.viewProjection = projection * viewMatrix;
     cameraData.previousViewProjection = view.previousViewProjection;
     cameraData.temporalJitter = {temporal.jitterNdc, view.previousJitterNdc};
+    // The prepass leaves this frame's opaque depth in the pyramid's level 0.
+    cameraData.surfaceAnimation = {static_cast<float>(m_surfaceAnimationSeconds), depthPrepass ? 1.0f : 0.0f, 0.0f,
+                                   0.0f};
     cameraData.cameraPosition = {cameraPosition, 1.0f};
     // View shading: every mode but Rendered replaces the scene's lights.
     if (usesStudioLighting(settings.viewShading)) {
@@ -375,8 +378,11 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
     view.depthPrepassFrame = depthPrepass ? std::optional<uint32_t>(frameIndex) : std::nullopt;
     recordAmbientOcclusion(draw, ambientOcclusion, projection, settings.antialiasing == AntialiasingMode::Taa);
     view.postProcess.prepareScene(commandBuffer, frameIndex);
-    // Shading pipelines statically reference the transmission background.
+    // Shading pipelines statically reference the transmission background...
     view.transmissionBackground.prepareFirstUse(commandBuffer);
+    // ...and the depth pyramid (the scene depth water reads), which a frame
+    // without a prepass or GPU-driven culling never built.
+    view.depthPyramid.prepareFirstUse(commandBuffer);
     // ...and the shadow map, which a session that starts without shadows
     // (shadows Off, or a view shading mode other than Rendered) never drew.
     prepareShadowMapForSampling(commandBuffer, m_shadowMap);

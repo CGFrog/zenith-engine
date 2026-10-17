@@ -196,3 +196,11 @@ SaveGameResult OutsideServices::saveGame(const Scene& scene, std::string_view sl
 DebugDraw& OutsideServices::debugDraw() {
     return m_debugDraw;
 }
+
+void OutsideServices::setPointerReleased(bool released) {
+    m_pointerReleased = released;
+}
+
+bool OutsideServices::pointerReleased() const {
+    return m_pointerReleased;
+}

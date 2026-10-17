@@ -97,6 +97,10 @@ class ProjectPlayScene final : public ApplicationScene {
         return m_gameplay.simulationClock();
     }
 
+    MouseCapturePolicy mouseCapturePolicy(MouseCapturePolicy application) const override {
+        return m_gameplay.mouseCapturePolicy(application);
+    }
+
     void unload(ApplicationContext& context) override {
         m_gameplay.stop(context);
     }

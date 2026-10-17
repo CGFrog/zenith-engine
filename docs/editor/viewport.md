@@ -277,7 +277,8 @@ the game's camera systems move), and turns its view input on only while the
 game view has focus. The editor application answers
 `Application::mouseCapturePolicy()` from the session each frame: `Persistent`
 while a game view holds game input (the engine's input releases the cursor on
-Esc), `WhileRightMouseDown` otherwise. The standalone target crosses a process
+Esc), `Released` instead while the game asks for its pointer for a menu
+(`OutsideServices::setPointerReleased`), `WhileRightMouseDown` otherwise. The standalone target crosses a process
 boundary instead of a library one: the game's `src/main.cpp` owns the
 `--project <file> --scene <scene>` argument contract, and the editor only
 reads the process's output (see [Play mode](play-mode.md)).
