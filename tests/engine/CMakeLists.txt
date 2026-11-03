@@ -18,6 +18,7 @@ endif()
 # here from the standalone registrations below as they are converted.
 zenith_add_test_suite(engine
     SOURCES
+        AdditiveSceneTests.cpp
         AmbientOcclusionTests.cpp
         AnimationTests.cpp
         AnimatorTests.cpp
