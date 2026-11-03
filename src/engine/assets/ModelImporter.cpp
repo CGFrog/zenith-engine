@@ -1,6 +1,8 @@
 #define CGLTF_IMPLEMENTATION
 #include "ModelImporter.hpp"
 #include "CompressedTexture.hpp"
+#include "ContentHash.hpp"
+#include "CookedMesh.hpp"
 #include "ImageDecoder.hpp"
 #include "MeshBuilder.hpp"
 #include "MeshOptimization.hpp"
@@ -13,6 +15,8 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string_view>
 
 namespace {
@@ -220,9 +224,143 @@ void importMaterialExtensions(const cgltf_material& source, const cgltf_data& da
             absorbs ? volume.attenuation_distance : std::numeric_limits<float>::infinity();
     }
 }
-} // namespace
 
-AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& path) {
+// Converts one glTF mesh's triangle primitives into unoptimized geometry,
+// recording each primitive's glTF index. Returns an error for content past
+// the safety limits; skipped primitives add a warning.
+std::string importMeshGeometry(const cgltf_mesh& sourceMesh, const std::filesystem::path& path, CookedMesh& cooked,
+                               std::vector<std::string>& warnings) {
+    MeshAsset& mesh = cooked.mesh;
+    for (cgltf_size primitiveIndex = 0; primitiveIndex < sourceMesh.primitives_count; ++primitiveIndex) {
+        const cgltf_primitive& primitive = sourceMesh.primitives[primitiveIndex];
+        if (primitive.type != cgltf_primitive_type_triangles) {
+            warnings.push_back("Skipping non-triangle primitive in " + path.string());
+            continue;
+        }
+
+        const cgltf_accessor* positions = findAttribute(primitive, cgltf_attribute_type_position);
+        const cgltf_accessor* normals = findAttribute(primitive, cgltf_attribute_type_normal);
+        const cgltf_accessor* texCoords = findAttribute(primitive, cgltf_attribute_type_texcoord);
+        const cgltf_accessor* sourceTangents = findAttribute(primitive, cgltf_attribute_type_tangent);
+        const cgltf_accessor* sourceJoints = findAttribute(primitive, cgltf_attribute_type_joints);
+        const cgltf_accessor* sourceWeights = findAttribute(primitive, cgltf_attribute_type_weights);
+
+        if (!positions || positions->type != cgltf_type_vec3) {
+            warnings.push_back("Skipping primitive without POSITION vec3 in " + path.string());
+            continue;
+        }
+        if (positions->count > maximumVertices || primitive.targets_count > maximumMorphTargets) {
+            return "glTF primitive exceeds vertex or morph-target safety limits: " + path.string();
+        }
+
+        const uint32_t firstVertex = static_cast<uint32_t>(mesh.vertices.size());
+        const uint32_t vertexCount = static_cast<uint32_t>(positions->count);
+        const uint32_t firstIndex = static_cast<uint32_t>(mesh.indices.size());
+        mesh.vertices.resize(mesh.vertices.size() + vertexCount);
+
+        for (cgltf_size vertexIndex = 0; vertexIndex < positions->count; ++vertexIndex) {
+            float value[3]{};
+            cgltf_accessor_read_float(positions, vertexIndex, value, 3);
+            mesh.vertices[firstVertex + vertexIndex].position = {value[0], value[1], value[2]};
+
+            if (normals && normals->type == cgltf_type_vec3 && vertexIndex < normals->count) {
+                cgltf_accessor_read_float(normals, vertexIndex, value, 3);
+                glm::vec3 normal{value[0], value[1], value[2]};
+                mesh.vertices[firstVertex + vertexIndex].normal =
+                    glm::dot(normal, normal) > 0.0f ? glm::normalize(normal) : glm::vec3(0, 1, 0);
+            }
+            if (texCoords && texCoords->type == cgltf_type_vec2 && vertexIndex < texCoords->count) {
+                float uv[2]{};
+                cgltf_accessor_read_float(texCoords, vertexIndex, uv, 2);
+                mesh.vertices[firstVertex + vertexIndex].texCoord = {uv[0], uv[1]};
+            }
+            if (sourceTangents && sourceTangents->type == cgltf_type_vec4 && vertexIndex < sourceTangents->count) {
+                float tangent[4]{};
+                cgltf_accessor_read_float(sourceTangents, vertexIndex, tangent, 4);
+                mesh.vertices[firstVertex + vertexIndex].tangent = {tangent[0], tangent[1], tangent[2], tangent[3]};
+            }
+            if (sourceJoints && sourceJoints->type == cgltf_type_vec4 && vertexIndex < sourceJoints->count) {
+                cgltf_uint joints[4]{};
+                cgltf_accessor_read_uint(sourceJoints, vertexIndex, joints, 4);
+                mesh.vertices[firstVertex + vertexIndex].joints = {joints[0], joints[1], joints[2], joints[3]};
+            }
+            if (sourceWeights && sourceWeights->type == cgltf_type_vec4 && vertexIndex < sourceWeights->count) {
+                float weights[4]{};
+                cgltf_accessor_read_float(sourceWeights, vertexIndex, weights, 4);
+                glm::vec4 normalized{weights[0], weights[1], weights[2], weights[3]};
+                const float total = normalized.x + normalized.y + normalized.z + normalized.w;
+                mesh.vertices[firstVertex + vertexIndex].weights = total > 0.0f ? normalized / total : glm::vec4(0.0f);
+            }
+        }
+
+        const cgltf_size count = primitive.indices ? primitive.indices->count : positions->count;
+        if (count > maximumIndices) {
+            return "glTF primitive exceeds the index safety limit: " + path.string();
+        }
+
+        for (cgltf_size i = 0; i < count; ++i) {
+            const cgltf_size localIndex = primitive.indices ? cgltf_accessor_read_index(primitive.indices, i) : i;
+
+            if (localIndex >= positions->count) {
+                return "Out-of-range index in " + path.string();
+            }
+
+            mesh.indices.push_back(firstVertex + static_cast<uint32_t>(localIndex));
+        }
+
+        if (!normals) {
+            generateMeshNormals(mesh, firstVertex, vertexCount, firstIndex);
+        }
+        if (texCoords && !sourceTangents) {
+            generateMeshTangents(mesh, firstVertex, vertexCount, firstIndex);
+        }
+
+        if (mesh.morphTargets.size() < primitive.targets_count) {
+            mesh.morphTargets.resize(primitive.targets_count);
+        }
+        for (cgltf_size targetIndex = 0; targetIndex < primitive.targets_count; ++targetIndex) {
+            MorphTarget& target = mesh.morphTargets[targetIndex];
+            target.name = targetIndex < sourceMesh.target_names_count && sourceMesh.target_names[targetIndex]
+                              ? sourceMesh.target_names[targetIndex]
+                              : "Morph " + std::to_string(targetIndex);
+            target.positionDeltas.resize(mesh.vertices.size());
+            target.normalDeltas.resize(mesh.vertices.size());
+            target.tangentDeltas.resize(mesh.vertices.size());
+            const cgltf_morph_target& sourceTarget = primitive.targets[targetIndex];
+            const cgltf_accessor* positionDeltas = findAttribute(sourceTarget, cgltf_attribute_type_position);
+            const cgltf_accessor* normalDeltas = findAttribute(sourceTarget, cgltf_attribute_type_normal);
+            const cgltf_accessor* tangentDeltas = findAttribute(sourceTarget, cgltf_attribute_type_tangent);
+            for (cgltf_size vertexIndex = 0; vertexIndex < positions->count; ++vertexIndex) {
+                float value[3]{};
+                if (positionDeltas && vertexIndex < positionDeltas->count) {
+                    cgltf_accessor_read_float(positionDeltas, vertexIndex, value, 3);
+                    target.positionDeltas[firstVertex + vertexIndex] = {value[0], value[1], value[2]};
+                }
+                if (normalDeltas && vertexIndex < normalDeltas->count) {
+                    cgltf_accessor_read_float(normalDeltas, vertexIndex, value, 3);
+                    target.normalDeltas[firstVertex + vertexIndex] = {value[0], value[1], value[2]};
+                }
+                if (tangentDeltas && vertexIndex < tangentDeltas->count) {
+                    cgltf_accessor_read_float(tangentDeltas, vertexIndex, value, 3);
+                    target.tangentDeltas[firstVertex + vertexIndex] = {value[0], value[1], value[2]};
+                }
+            }
+        }
+
+        mesh.primitives.push_back({.firstIndex = firstIndex, .indexCount = static_cast<uint32_t>(count)});
+        cooked.sourcePrimitives.push_back(static_cast<uint32_t>(primitiveIndex));
+    }
+    return {};
+}
+
+// A parsed glTF document with its buffers loaded and validated; images are
+// not decoded.
+struct GltfDocument {
+    std::unique_ptr<cgltf_data, CgltfDeleter> data;
+    std::string error;
+};
+
+GltfDocument loadGltfDocument(const std::filesystem::path& path) {
     cgltf_options options{};
     cgltf_data* raw = nullptr;
     cgltf_result result = cgltf_parse_file(&options, path.string().c_str(), &raw);
@@ -255,6 +393,136 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
     if (result != cgltf_result_success) {
         return {.error = "Invalid glTF " + path.string() + ": " + resultMessage(result)};
     }
+    return {.data = std::move(data)};
+}
+
+// Identifies the content of the model's external buffer files, which the
+// cache key's hash of the model file does not cover. Embedded (data URI and
+// GLB) buffers are part of the model file already.
+std::string externalBufferFingerprint(const cgltf_data& data) {
+    ContentHasher hasher;
+    for (cgltf_size index = 0; index < data.buffers_count; ++index) {
+        const cgltf_buffer& buffer = data.buffers[index];
+        if (!buffer.uri || std::strncmp(buffer.uri, "data:", 5) == 0 || !buffer.data) {
+            continue;
+        }
+        hasher.append(std::to_string(index) + ":" + std::to_string(buffer.size) + ";");
+        hasher.append(std::span(static_cast<const uint8_t*>(buffer.data), buffer.size));
+    }
+    return hasher.hex();
+}
+
+// A cooked entry belongs to this document when it has one slot per glTF mesh
+// and every primitive names a triangle primitive of its mesh. The key makes a
+// mismatch unlikely; the check keeps a colliding entry from indexing past the
+// document.
+bool cookedMeshesMatch(const CookedModelMeshes& cooked, const cgltf_data& data) {
+    if (cooked.meshes.size() != data.meshes_count) {
+        return false;
+    }
+    for (cgltf_size meshIndex = 0; meshIndex < data.meshes_count; ++meshIndex) {
+        const std::optional<CookedMesh>& mesh = cooked.meshes[meshIndex];
+        if (!mesh) {
+            continue;
+        }
+        if (mesh->sourcePrimitives.size() != mesh->mesh.primitives.size()) {
+            return false;
+        }
+        for (const uint32_t source : mesh->sourcePrimitives) {
+            if (source >= data.meshes[meshIndex].primitives_count ||
+                data.meshes[meshIndex].primitives[source].type != cgltf_primitive_type_triangles) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// A model's optimized meshes and how they were obtained.
+struct ModelGeometry {
+    CookedModelMeshes meshes;
+    MeshCookOutcome outcome{MeshCookOutcome::Cooked};
+    // Meshes run through optimizeMesh (zero on a cache hit).
+    uint32_t optimizedMeshes{0};
+    bool entryWritten{false};
+    bool entryRejected{false};
+    std::vector<std::string> warnings;
+    std::string error;
+};
+
+// Imports and optimizes every mesh of the document.
+void cookModelGeometry(const cgltf_data& data, const std::filesystem::path& path,
+                       const MeshOptimizationSettings& settings, ModelGeometry& geometry) {
+    geometry.meshes.meshes.resize(data.meshes_count);
+    for (cgltf_size meshIndex = 0; meshIndex < data.meshes_count; ++meshIndex) {
+        CookedMesh cooked;
+        if (std::string error = importMeshGeometry(data.meshes[meshIndex], path, cooked, geometry.warnings);
+            !error.empty()) {
+            geometry.error = std::move(error);
+            return;
+        }
+        if (cooked.mesh.primitives.empty()) {
+            continue;
+        }
+        optimizeMesh(cooked.mesh, settings);
+        ++geometry.optimizedMeshes;
+        geometry.meshes.meshes[meshIndex] = std::move(cooked);
+    }
+}
+
+// Reads the document's cooked meshes from derivedRoot, or cooks them and
+// writes the entry. An empty root cooks without caching. An unusable entry,
+// or one that cannot be written, adds a warning and never fails the import.
+ModelGeometry obtainModelGeometry(const cgltf_data& data, const std::filesystem::path& path,
+                                  const std::filesystem::path& derivedRoot, const MeshOptimizationSettings& settings) {
+    ModelGeometry geometry;
+    std::optional<DerivedAssetRequest> request;
+    if (!derivedRoot.empty()) {
+        request = cookedMeshRequest(path, settings, externalBufferFingerprint(data));
+        CookedMeshLookup lookup = loadCookedModelMeshes(derivedRoot, *request);
+        if (lookup.model && cookedMeshesMatch(*lookup.model, data)) {
+            geometry.meshes = std::move(*lookup.model);
+            geometry.outcome = MeshCookOutcome::Cached;
+            return geometry;
+        }
+        if (lookup.model) {
+            lookup.error = "Cooked meshes for " + path.string() + " do not match the model";
+        }
+        if (!lookup.error.empty()) {
+            geometry.entryRejected = true;
+            geometry.warnings.push_back(lookup.error + "; cooking the source instead");
+        }
+    }
+    cookModelGeometry(data, path, settings, geometry);
+    if (!geometry.error.empty() || !request) {
+        return geometry;
+    }
+    if (const AssetPipelineResult stored = storeCookedModelMeshes(derivedRoot, *request, geometry.meshes); !stored) {
+        geometry.warnings.push_back("Cannot cache cooked meshes for " + path.string() + ": " + stored.error);
+    } else {
+        geometry.entryWritten = true;
+    }
+    return geometry;
+}
+
+MaterialHandle primitiveMaterial(const cgltf_primitive& primitive, const cgltf_data& data,
+                                 const std::vector<MaterialHandle>& materials, MaterialHandle defaultMaterial) {
+    if (!primitive.material) {
+        return defaultMaterial;
+    }
+    const cgltf_size index = static_cast<cgltf_size>(primitive.material - data.materials);
+    return index < materials.size() ? materials[index] : defaultMaterial;
+}
+} // namespace
+
+AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& path) {
+    GltfDocument document = loadGltfDocument(path);
+    if (!document.data) {
+        return {.error = document.error};
+    }
+    const std::unique_ptr<cgltf_data, CgltfDeleter> data = std::move(document.data);
+    // Data URI images decode through cgltf with default options.
+    cgltf_options options{};
 
     const std::vector<ImageUsage> usages = imageUsages(*data);
     std::vector<TextureHandle> images(data->images_count);
@@ -325,146 +593,33 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
     }
     const MaterialHandle defaultMaterial = m_assets.addMaterial({});
 
+    ModelGeometry geometry = obtainModelGeometry(*data, path, m_assets.cookedMeshRoot(), {});
+    for (const std::string& warning : geometry.warnings) {
+        m_assets.log().warning(warning);
+    }
+    MeshCookStatistics& statistics = m_assets.m_meshCookStatistics;
+    statistics.optimizedMeshes += geometry.optimizedMeshes;
+    ++(geometry.outcome == MeshCookOutcome::Cached ? statistics.cachedModels : statistics.cookedModels);
+    statistics.entriesWritten += geometry.entryWritten ? 1u : 0u;
+    statistics.rejectedEntries += geometry.entryRejected ? 1u : 0u;
+    if (!geometry.error.empty()) {
+        return {.error = geometry.error};
+    }
+
     std::vector<MeshHandle> meshes(data->meshes_count);
     for (cgltf_size meshIndex = 0; meshIndex < data->meshes_count; ++meshIndex) {
-        MeshAsset mesh;
+        std::optional<CookedMesh>& cooked = geometry.meshes.meshes[meshIndex];
+        if (!cooked) {
+            continue;
+        }
+        MeshAsset mesh = std::move(cooked->mesh);
         const cgltf_mesh& sourceMesh = data->meshes[meshIndex];
-
-        for (cgltf_size primitiveIndex = 0; primitiveIndex < sourceMesh.primitives_count; ++primitiveIndex) {
-            const cgltf_primitive& primitive = sourceMesh.primitives[primitiveIndex];
-            if (primitive.type != cgltf_primitive_type_triangles) {
-                m_assets.log().warning("Skipping non-triangle primitive in " + path.string());
-                continue;
-            }
-
-            const cgltf_accessor* positions = findAttribute(primitive, cgltf_attribute_type_position);
-            const cgltf_accessor* normals = findAttribute(primitive, cgltf_attribute_type_normal);
-            const cgltf_accessor* texCoords = findAttribute(primitive, cgltf_attribute_type_texcoord);
-            const cgltf_accessor* sourceTangents = findAttribute(primitive, cgltf_attribute_type_tangent);
-            const cgltf_accessor* sourceJoints = findAttribute(primitive, cgltf_attribute_type_joints);
-            const cgltf_accessor* sourceWeights = findAttribute(primitive, cgltf_attribute_type_weights);
-
-            if (!positions || positions->type != cgltf_type_vec3) {
-                m_assets.log().warning("Skipping primitive without POSITION vec3 in " + path.string());
-                continue;
-            }
-            if (positions->count > maximumVertices || primitive.targets_count > maximumMorphTargets) {
-                return {.error = "glTF primitive exceeds vertex or morph-target safety limits: " + path.string()};
-            }
-
-            const uint32_t firstVertex = static_cast<uint32_t>(mesh.vertices.size());
-            const uint32_t vertexCount = static_cast<uint32_t>(positions->count);
-            const uint32_t firstIndex = static_cast<uint32_t>(mesh.indices.size());
-            mesh.vertices.resize(mesh.vertices.size() + vertexCount);
-
-            for (cgltf_size vertexIndex = 0; vertexIndex < positions->count; ++vertexIndex) {
-                float value[3]{};
-                cgltf_accessor_read_float(positions, vertexIndex, value, 3);
-                mesh.vertices[firstVertex + vertexIndex].position = {value[0], value[1], value[2]};
-
-                if (normals && normals->type == cgltf_type_vec3 && vertexIndex < normals->count) {
-                    cgltf_accessor_read_float(normals, vertexIndex, value, 3);
-                    glm::vec3 normal{value[0], value[1], value[2]};
-                    mesh.vertices[firstVertex + vertexIndex].normal =
-                        glm::dot(normal, normal) > 0.0f ? glm::normalize(normal) : glm::vec3(0, 1, 0);
-                }
-                if (texCoords && texCoords->type == cgltf_type_vec2 && vertexIndex < texCoords->count) {
-                    float uv[2]{};
-                    cgltf_accessor_read_float(texCoords, vertexIndex, uv, 2);
-                    mesh.vertices[firstVertex + vertexIndex].texCoord = {uv[0], uv[1]};
-                }
-                if (sourceTangents && sourceTangents->type == cgltf_type_vec4 && vertexIndex < sourceTangents->count) {
-                    float tangent[4]{};
-                    cgltf_accessor_read_float(sourceTangents, vertexIndex, tangent, 4);
-                    mesh.vertices[firstVertex + vertexIndex].tangent = {tangent[0], tangent[1], tangent[2], tangent[3]};
-                }
-                if (sourceJoints && sourceJoints->type == cgltf_type_vec4 && vertexIndex < sourceJoints->count) {
-                    cgltf_uint joints[4]{};
-                    cgltf_accessor_read_uint(sourceJoints, vertexIndex, joints, 4);
-                    mesh.vertices[firstVertex + vertexIndex].joints = {joints[0], joints[1], joints[2], joints[3]};
-                }
-                if (sourceWeights && sourceWeights->type == cgltf_type_vec4 && vertexIndex < sourceWeights->count) {
-                    float weights[4]{};
-                    cgltf_accessor_read_float(sourceWeights, vertexIndex, weights, 4);
-                    glm::vec4 normalized{weights[0], weights[1], weights[2], weights[3]};
-                    const float total = normalized.x + normalized.y + normalized.z + normalized.w;
-                    mesh.vertices[firstVertex + vertexIndex].weights =
-                        total > 0.0f ? normalized / total : glm::vec4(0.0f);
-                }
-            }
-
-            const cgltf_size count = primitive.indices ? primitive.indices->count : positions->count;
-            if (count > maximumIndices) {
-                return {.error = "glTF primitive exceeds the index safety limit: " + path.string()};
-            }
-
-            for (cgltf_size i = 0; i < count; ++i) {
-                const cgltf_size localIndex = primitive.indices ? cgltf_accessor_read_index(primitive.indices, i) : i;
-
-                if (localIndex >= positions->count) {
-                    return {.error = "Out-of-range index in " + path.string()};
-                }
-
-                mesh.indices.push_back(firstVertex + static_cast<uint32_t>(localIndex));
-            }
-
-            if (!normals) {
-                generateMeshNormals(mesh, firstVertex, vertexCount, firstIndex);
-            }
-            if (texCoords && !sourceTangents) {
-                generateMeshTangents(mesh, firstVertex, vertexCount, firstIndex);
-            }
-
-            if (mesh.morphTargets.size() < primitive.targets_count) {
-                mesh.morphTargets.resize(primitive.targets_count);
-            }
-            for (cgltf_size targetIndex = 0; targetIndex < primitive.targets_count; ++targetIndex) {
-                MorphTarget& target = mesh.morphTargets[targetIndex];
-                target.name = targetIndex < sourceMesh.target_names_count && sourceMesh.target_names[targetIndex]
-                                  ? sourceMesh.target_names[targetIndex]
-                                  : "Morph " + std::to_string(targetIndex);
-                target.positionDeltas.resize(mesh.vertices.size());
-                target.normalDeltas.resize(mesh.vertices.size());
-                target.tangentDeltas.resize(mesh.vertices.size());
-                const cgltf_morph_target& sourceTarget = primitive.targets[targetIndex];
-                const cgltf_accessor* positionDeltas = findAttribute(sourceTarget, cgltf_attribute_type_position);
-                const cgltf_accessor* normalDeltas = findAttribute(sourceTarget, cgltf_attribute_type_normal);
-                const cgltf_accessor* tangentDeltas = findAttribute(sourceTarget, cgltf_attribute_type_tangent);
-                for (cgltf_size vertexIndex = 0; vertexIndex < positions->count; ++vertexIndex) {
-                    float value[3]{};
-                    if (positionDeltas && vertexIndex < positionDeltas->count) {
-                        cgltf_accessor_read_float(positionDeltas, vertexIndex, value, 3);
-                        target.positionDeltas[firstVertex + vertexIndex] = {value[0], value[1], value[2]};
-                    }
-                    if (normalDeltas && vertexIndex < normalDeltas->count) {
-                        cgltf_accessor_read_float(normalDeltas, vertexIndex, value, 3);
-                        target.normalDeltas[firstVertex + vertexIndex] = {value[0], value[1], value[2]};
-                    }
-                    if (tangentDeltas && vertexIndex < tangentDeltas->count) {
-                        cgltf_accessor_read_float(tangentDeltas, vertexIndex, value, 3);
-                        target.tangentDeltas[firstVertex + vertexIndex] = {value[0], value[1], value[2]};
-                    }
-                }
-            }
-
-            MaterialHandle material = defaultMaterial;
-
-            if (primitive.material) {
-                const cgltf_size i = static_cast<cgltf_size>(primitive.material - data->materials);
-
-                if (i < materials.size()) {
-                    material = materials[i];
-                }
-            }
-
-            mesh.primitives.push_back({firstIndex, static_cast<uint32_t>(count), material});
+        for (size_t primitiveIndex = 0; primitiveIndex < mesh.primitives.size(); ++primitiveIndex) {
+            mesh.primitives[primitiveIndex].material = primitiveMaterial(
+                sourceMesh.primitives[cooked->sourcePrimitives[primitiveIndex]], *data, materials, defaultMaterial);
         }
-
-        if (!mesh.primitives.empty()) {
-            optimizeMesh(mesh);
-            mesh.bounds = calculateBoundingSphere(mesh.vertices);
-            meshes[meshIndex] = m_assets.addMesh(std::move(mesh), path, static_cast<uint32_t>(meshIndex));
-        }
+        mesh.bounds = calculateBoundingSphere(mesh.vertices);
+        meshes[meshIndex] = m_assets.addMesh(std::move(mesh), path, static_cast<uint32_t>(meshIndex));
     }
 
     ModelAsset model;
@@ -631,6 +786,19 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
     }
 
     return {.handle = m_assets.addModel(std::move(model), path)};
+}
+
+ModelMeshCookResult cookModelMeshes(const std::filesystem::path& modelPath, const std::filesystem::path& derivedRoot,
+                                    const MeshOptimizationSettings& settings) {
+    const GltfDocument document = loadGltfDocument(modelPath);
+    if (!document.data) {
+        return {.error = document.error};
+    }
+    ModelGeometry geometry = obtainModelGeometry(*document.data, modelPath, derivedRoot, settings);
+    return {.outcome = geometry.outcome,
+            .entryWritten = geometry.entryWritten,
+            .warnings = std::move(geometry.warnings),
+            .error = std::move(geometry.error)};
 }
 
 ModelTextureSourcesResult collectModelTextureSources(const std::filesystem::path& modelPath) {

@@ -714,6 +714,10 @@ void AssetManager::setCookedTextureRoot(std::filesystem::path root) {
     m_cookedTextureRoot = std::move(root);
 }
 
+void AssetManager::setCookedMeshRoot(std::filesystem::path root) {
+    m_cookedMeshRoot = std::move(root);
+}
+
 void AssetManager::setTextureFormatCapabilities(TextureFormatCapabilities capabilities) {
     m_textureCapabilities = capabilities;
 }

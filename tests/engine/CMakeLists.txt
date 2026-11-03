@@ -35,6 +35,7 @@ zenith_add_test_suite(engine
         ColorGradingTests.cpp
         ComponentTypesTests.cpp
         CompressedTextureTests.cpp
+        CookedMeshTests.cpp
         CrashHandlerTests.cpp
         DebugDrawTests.cpp
         DecalTests.cpp

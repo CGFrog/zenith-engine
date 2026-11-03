@@ -85,8 +85,10 @@ int runApplication(int argc, char** argv) {
         engine.shutdown();
         return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
-    // Cooked textures produced by zenith_asset_build live beside the packaged assets.
+    // Cooked textures and meshes produced by zenith_asset_build live beside the
+    // packaged assets; a mesh missing there is cooked on load and written back.
     engine.assets().setCookedTextureRoot(resourceRoot() / "derived");
+    engine.assets().setCookedMeshRoot(resourceRoot() / "derived");
 
     std::unique_ptr<Application> application;
     if (runtime.presentation == GamePresentation::Demo) {

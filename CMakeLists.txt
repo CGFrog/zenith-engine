@@ -172,6 +172,30 @@ add_custom_command(
 )
 add_custom_target(zenith_cooked_textures ALL DEPENDS "${ZENITH_DERIVED_BINARY_DIR}/cooked-textures.stamp")
 
+# Cook the same models' optimized meshes and LOD chains (CookedMesh.hpp) into
+# that cache, so imports skip meshoptimizer. Entries are keyed by the model and
+# buffer bytes; a model the build did not cook is cooked on first load.
+set(ZENITH_COOKED_MODEL_BUFFERS)
+foreach(cooked_asset_dir IN LISTS ZENITH_COOKED_ASSET_DIRS)
+    file(GLOB_RECURSE cooked_buffers CONFIGURE_DEPENDS "${cooked_asset_dir}/*.bin")
+    list(APPEND ZENITH_COOKED_MODEL_BUFFERS ${cooked_buffers})
+endforeach()
+set(ZENITH_MESH_COOK_COMMANDS)
+foreach(cooked_model IN LISTS ZENITH_COOKED_MODELS)
+    list(APPEND ZENITH_MESH_COOK_COMMANDS
+        COMMAND $<TARGET_FILE:zenith_asset_build> cook-model-meshes "${cooked_model}" "${ZENITH_DERIVED_BINARY_DIR}")
+endforeach()
+add_custom_command(
+    OUTPUT "${ZENITH_DERIVED_BINARY_DIR}/cooked-meshes.stamp"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${ZENITH_DERIVED_BINARY_DIR}"
+    ${ZENITH_MESH_COOK_COMMANDS}
+    COMMAND "${CMAKE_COMMAND}" -E touch "${ZENITH_DERIVED_BINARY_DIR}/cooked-meshes.stamp"
+    DEPENDS zenith_asset_build ${ZENITH_COOKED_MODELS} ${ZENITH_COOKED_MODEL_BUFFERS}
+    COMMENT "Cooking optimized meshes"
+    VERBATIM
+)
+add_custom_target(zenith_cooked_meshes ALL DEPENDS "${ZENITH_DERIVED_BINARY_DIR}/cooked-meshes.stamp")
+
 target_include_directories(zenith_engine PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )

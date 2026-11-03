@@ -107,6 +107,7 @@ create these targets (`tests/*/CMakeLists.txt` add the test executables):
 | `zenith_shaders` | Custom target | Recursively finds recognized GLSL stages in `shaders/` and compiles each file with glslang for Vulkan 1.4. |
 | `zenith_assets` | Custom target | Copies `assets/` to `build/assets/` so runtime paths do not depend on the process working directory. |
 | `zenith_cooked_textures` | Custom target | Runs `zenith_asset_build cook-model-textures` on every `assets/*.gltf`, writing BC7/BC5 KTX2 entries to `build/derived/`. |
+| `zenith_cooked_meshes` | Custom target | Runs `zenith_asset_build cook-model-meshes` on every `assets/*.gltf`, writing optimized mesh and LOD entries to `build/derived/`. |
 | `zenith_bc7enc` | Static library | The bc7enc_rdo BC7/BC5 block encoders and decoders, linked privately into the engine for texture cooking. |
 | `zenith_recast` | Static library | The Recast and Detour sources, linked privately into the engine for navigation. |
 | `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |

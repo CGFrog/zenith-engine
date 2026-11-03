@@ -3,6 +3,7 @@
 // glTF 2.0 import (cgltf) into CPU models, meshes, and materials; model outlines for tools.
 
 #include "Assets.hpp"
+#include "MeshOptimization.hpp"
 
 class ModelImporter {
   public:
@@ -14,6 +15,36 @@ class ModelImporter {
   private:
     AssetManager& m_assets;
 };
+
+// How a model's optimized meshes were obtained.
+enum class MeshCookOutcome : uint8_t {
+    // Read from a current cooked entry; meshoptimizer did not run.
+    Cached,
+    // Imported from the source and optimized (and, with a derived root,
+    // written to the cache).
+    Cooked,
+};
+
+struct ModelMeshCookResult {
+    MeshCookOutcome outcome{MeshCookOutcome::Cooked};
+    bool entryWritten{false};
+    // Diagnostics that did not fail the cook: skipped primitives, a rejected
+    // (stale or damaged) entry that was replaced, or an entry that could not
+    // be written.
+    std::vector<std::string> warnings;
+    std::string error;
+
+    explicit operator bool() const {
+        return error.empty();
+    }
+};
+
+// Cooks a glTF model's optimized meshes and LOD chains into the derived-asset
+// cache at derivedRoot (see CookedMesh.hpp) unless a current entry exists, as
+// a model import with AssetManager::setCookedMeshRoot would. Loads buffers
+// but no images; zenith_asset_build uses it to cook at build time.
+ModelMeshCookResult cookModelMeshes(const std::filesystem::path& modelPath, const std::filesystem::path& derivedRoot,
+                                    const MeshOptimizationSettings& settings = {});
 
 struct ModelTextureSource {
     std::filesystem::path path;
