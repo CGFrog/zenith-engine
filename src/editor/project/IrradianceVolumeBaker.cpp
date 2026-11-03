@@ -316,7 +316,7 @@ class Baker {
             if (nDotL <= 0.0f) {
                 continue;
             }
-            // Mirrors the local-light attenuation in mesh.frag.
+            // Mirrors localLightRadiance in shaders/mesh/local_light_radiance.glsl.
             const float falloff = std::max(1.0f - distance / light.range, 0.0f);
             float attenuation = falloff * falloff / std::max(distance * distance, 0.01f);
             if (light.type == LocalLightType::Spot) {

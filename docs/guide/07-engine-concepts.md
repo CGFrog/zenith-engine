@@ -212,7 +212,7 @@ two-phase occlusion test against a depth pyramid).
 ### The shading model
 
 Surfaces use the glTF **metallic-roughness** PBR model with a Cook–Torrance
-microfacet BRDF (`shaders/mesh.frag`). For light direction **l**, view
+microfacet BRDF (`shaders/mesh/brdf.glsl`, part of `mesh.frag`). For light direction **l**, view
 direction **v**, normal **n**, and half vector **h** = normalize(**l** + **v**):
 
 $$f(\mathbf{l},\mathbf{v}) = \underbrace{(1-F)(1-m)\frac{\mathbf{c}}{\pi}}_{\text{diffuse}}

@@ -702,8 +702,8 @@ transmission), which shade exactly like plain metallic-roughness. Texture
 slots are classified for cooking like the core ones: coat normals are normal
 maps, sheen and specular colors are sRGB color, the rest linear data.
 
-`MaterialRecord` (`engine/graphics/MaterialRecord.hpp`, 192 bytes, mirrored in
-`mesh.frag`, `shadow.frag` and `depth_normal.frag`) carries a lobe bit mask;
+`MaterialRecord` (`engine/graphics/MaterialRecord.hpp`, 272 bytes, mirrored in
+`shaders/include/material.glsl`) carries a lobe bit mask;
 `mesh.frag` evaluates and samples a lobe only when its bit is set, so a
 material without extensions pays a few uniform branches. Shading follows the
 glTF specifications and the Khronos sample viewer:

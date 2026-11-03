@@ -5,7 +5,7 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 | File | Stage and job |
 | --- | --- |
 | `shaders/mesh.vert` | Transforms mesh vertices and supplies world-space attributes. |
-| `shaders/mesh.frag` | Samples glTF materials, evaluates GGX lighting, shadows, occlusion, and emission; its `SOLID_SURFACES` variant draws Solid view shading's clay. |
+| `shaders/mesh.frag` | Samples glTF materials, evaluates GGX lighting, shadows, occlusion, and emission; its `SOLID_SURFACES` variant draws Solid view shading's clay. Its shading is split by concern into `shaders/mesh/*.glsl` (see [mesh.frag parts](#meshfrag-parts)). |
 | `shaders/mesh_wireframe.frag` | Colours the polygon-mode LINE edges of Wireframe view shading. |
 | `shaders/shadow.vert` | Transforms geometry into directional-light depth space. |
 | `shaders/local_shadow.vert` | Transforms shadow casters into one local-light shadow atlas tile. |
@@ -107,3 +107,26 @@ Rules:
 | `motion_blur.glsl` | Motion blur push constants, `velocityAndDistance` | `MotionBlurSettings` |
 | `debug_line.glsl` | Debug line push constants | `DebugLinePushConstants` |
 | `id_draw.glsl` | Object-ID push constants | `IdBufferDraw` |
+
+## mesh.frag parts
+
+`mesh.frag` declares the scene pass's bindings, stage inputs and
+specialization constants, the screen-space helpers that read per-frame
+buffers (cluster index, ambient occlusion, fog, motion), and `main()`. The
+shading it calls lives in `shaders/mesh/`, one concern per file, included in
+dependency order. The parts are not shared includes: each reads `mesh.frag`'s
+declarations and the parts before it, and is compiled only as part of
+`mesh.frag`.
+
+| Part | Contents |
+| --- | --- |
+| `terrain.glsl` | Terrain layer blending (`LOBE_TERRAIN`) |
+| `brdf.glsl` | GGX distribution, Smith geometry, Schlick Fresnel, `directResponse` |
+| `shadows.glsl` | Cascaded sun shadows and local-light atlas shadows |
+| `local_light_radiance.glsl` | One clustered local light's radiance at the fragment |
+| `irradiance.glsl` | SH irradiance and the irradiance volume |
+| `reflection_probes.glsl` | Per-pixel probe blending and probe-weighted environment lookups |
+| `ambient_lighting.glsl` | Specular occlusion, image-based lighting and the hemisphere fallback |
+| `decals.glsl` | Clustered decals applied before lighting |
+| `surface_lobes.glsl` | KHR specular, sheen, clearcoat and transmission lobes |
+| `water.glsl` | Water waves, transmission and screen-space reflections (`LOBE_WATER`) |

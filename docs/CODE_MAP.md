@@ -129,7 +129,7 @@ capability. `--check` fails when the generated index is stale.
 | Recording a frame | `src/engine/graphics/Renderer.*` | `Renderer::drawFrame`, `updateRenderGraphPlan`, `RenderGraphShape` | `engine.RenderGraph` | [Graphics › Render flow](engine/graphics.md#render-flow) |
 | Render graph model | `src/engine/graphics/graph/RenderGraph.*` | `RenderGraph` | `engine.RenderGraph` | [Graphics](engine/graphics.md) |
 | Main scene pass | `src/engine/graphics/passes/MeshPass*.cpp`, `MeshPassInternal.hpp`, `src/engine/graphics/MeshPassFramePlan.*` | `MeshPass::{planFrame,record}`, `MeshPassFramePlan` | `engine.MeshPassFramePlan` | [Scene passes](engine/graphics-passes.md) |
-| PBR shading (BRDF) | `shaders/mesh.frag` | `distributionGGX`, `geometrySchlickGGX`, `fresnelSchlick`, `directResponse` | `engine.RenderRegression` | [Shaders](engine/shaders.md) |
+| PBR shading (BRDF) | `shaders/mesh.frag`, `shaders/mesh/brdf.glsl` | `distributionGGX`, `geometrySchlickGGX`, `fresnelSchlick`, `directResponse` | `engine.RenderRegression` | [Shaders](engine/shaders.md) |
 | Clustered lights | `src/engine/graphics/Lighting.*`, `passes/ClusteredLightingPass.*`, `shaders/light_clusters.comp` | `ClusterGrid`, `ClusterGridConfiguration` | `engine.ClusteredLighting` | [Scene passes](engine/graphics-passes.md) |
 | Shadows | `passes/MeshPassShadows.cpp`, `LocalShadows.*`, `passes/LocalShadowPass.*` | `LocalShadowCache` | `engine.LocalShadow` | [Scene passes](engine/graphics-passes.md) |
 | GPU-driven culling | `GpuCullLayout.*`, `passes/GpuDrivenPass.*`, `passes/MeshPassGpuDriven.cpp`, `shaders/gpu_visibility.comp` | `GpuCullLayout` | `engine.GpuCullLayout` | [Scene passes](engine/graphics-passes.md) |
