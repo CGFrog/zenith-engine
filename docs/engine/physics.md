@@ -169,7 +169,10 @@ each character, then:
   (scaled by `airControl` in the air), cancelling movement into slopes
   steeper than `slopeLimitRadians`;
 - on the ground, adds the ground's velocity (so a character rides a moving
-  platform) and a requested jump, then gravity;
+  platform) and a requested jump, then gravity; in the air it keeps the
+  ground's horizontal velocity from when it last stood there, so a character
+  jumping or walking off a moving platform keeps the platform's speed until
+  it lands (a teleport or `Free` motion drops it);
 - runs `ExtendedUpdate`: walks onto steps up to `stepHeight`, and sticks to
   ground within `groundProbeDistance` going down;
 - writes the new position into the entity's transform (keeping its rotation

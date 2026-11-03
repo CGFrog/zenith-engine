@@ -208,6 +208,10 @@ class PhysicsWorld::Impl {
         // Horizontal velocity relative to the ground, approaching the
         // desired velocity at the component's acceleration.
         glm::vec3 horizontalVelocity{0.0f};
+        // The ground's horizontal velocity when the character last stood on
+        // it, kept in the air so a character leaving a moving platform keeps
+        // the platform's speed until it lands.
+        glm::vec3 carriedVelocity{0.0f};
         glm::vec3 previousPosition{0.0f};
         glm::vec3 currentPosition{0.0f};
         // The position last written to the entity's transform; any other
@@ -1081,6 +1085,7 @@ void PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
             existing->second.character->SetPosition(JPH::RVec3(position.x, position.y, position.z));
             existing->second.previousPosition = position;
             existing->second.currentPosition = position;
+            existing->second.carriedVelocity = glm::vec3(0.0f);
         }
 
         Impl::CharacterState& state = existing->second;
@@ -1104,11 +1109,16 @@ void PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
         glm::vec3 velocity(0.0f, verticalSpeed, 0.0f);
         if (free) {
             velocity.y = glm::mix(verticalSpeed, controller.desiredVerticalSpeed, blend);
+            state.carriedVelocity = glm::vec3(0.0f);
         } else if (onGround && movingTowardGround) {
             velocity = groundVelocity;
+            state.carriedVelocity = glm::vec3(groundVelocity.x, 0.0f, groundVelocity.z);
             if (controller.jumpRequested) {
                 velocity.y += controller.jumpSpeed;
             }
+        } else {
+            // Leaving the ground (a jump, a ledge) keeps the ground's motion.
+            velocity += state.carriedVelocity;
         }
         controller.jumpRequested = false;
         if (!free) {
