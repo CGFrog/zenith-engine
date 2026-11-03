@@ -16,7 +16,7 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
 endif()
 
-# The offline asset tool; the build runs it to cook textures (root
-# CMakeLists.txt, zenith_cooked_textures).
+# The offline asset tool; the build runs it to cook textures and meshes (root
+# CMakeLists.txt, zenith_cooked_textures and zenith_cooked_meshes).
 add_executable(zenith_asset_build asset_build_main.cpp)
 target_link_libraries(zenith_asset_build PRIVATE zenith_engine)

@@ -23,6 +23,7 @@ add_library(zenith_engine SHARED
     assets/ImageDecoder.cpp
     assets/ProductionAssetPipeline.cpp
     assets/CompressedTexture.cpp
+    assets/CookedMesh.cpp
     assets/TextureCooker.cpp
     assets/AssetStreaming.cpp
     assets/TextureMipStreaming.cpp

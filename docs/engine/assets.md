@@ -9,7 +9,8 @@ path passed to AssetManager::loadModel
   -> canonicalized cache key
   -> cgltf parse, buffers load, validation
   -> images decoded to RGBA8 by ImageDecoder
-  -> meshes reordered and simplified into LODs by MeshOptimization
+  -> meshes read from the cooked-mesh cache, or reordered and simplified
+     into LODs by MeshOptimization and written to it
   -> materials, meshes, and model nodes committed to generational asset slots
   -> typed handles returned to scene components
   -> MeshPass sees a handle on first use
@@ -66,6 +67,39 @@ backlog, and UI images are completed before their view is handed out because
 UI descriptor sets keep it. BC7 images get UNORM and sRGB views; BC5 has a
 single linear view, and shaders reconstruct normal Z from X and Y for every
 normal map.
+
+### Cooked meshes
+
+Model meshes are cooked like textures, into the same `DerivedAssetCache`. With
+`AssetManager::setCookedMeshRoot` set (the executables use
+`<resource root>/derived`), a model import first looks for an entry holding the
+model's meshes after import and `optimizeMesh`: the reordered vertices
+(every stream, morph deltas included), the indices with their appended LOD
+ranges, each primitive's ranges, LODs, and geometric errors, and the glTF
+primitive each came from (materials are reassigned from the document; bounds
+are recomputed). A hit skips meshoptimizer entirely, and its data is
+identical, byte for byte, to a fresh cook.
+
+The key follows the texture convention: the model file's bytes, a settings
+string (`cookedMeshRequest`: the four `MeshOptimizationSettings` values as exact
+bits plus a fingerprint of the model's external buffer files, which the model
+file's hash does not cover), the tool version
+`zenith-mesh-cook-<format>-meshopt-<version>`, and the target `cpu`. Editing
+the `.gltf` or a `.bin`, changing the settings, bumping
+`cookedMeshFormatVersion`, or upgrading meshoptimizer therefore names a new
+entry. The entry is CPU data with a versioned header (magic, format version,
+mesh count, payload size, and an FNV-1a checksum of the payload); the reader
+rejects a wrong version, a checksum mismatch, truncation, or index and LOD
+ranges outside their buffers. A missing entry cooks and writes one; a stale,
+damaged, or mismatched entry logs a warning, cooks from the source, and
+rewrites it. Failing to write only logs a warning, so a read-only install
+still loads. `AssetManager::meshCookStatistics` counts cached and cooked
+models, meshes optimized, entries written, and entries rejected. The build
+cooks every shipped model's meshes (`zenith_cooked_meshes`, running
+`zenith_asset_build cook-model-meshes`), so packaged games load them as hits;
+a model the build did not see is cooked on its first load. Runtime-built
+meshes (`MeshBuilder`, `createMesh`) have no source file and are optimized
+every time.
 
 ## `src/engine/assets/Assets.*`
 
@@ -264,7 +298,18 @@ vertex-fetch reordering that moves every per-vertex stream (including morph
 deltas) together, and up to three simplified LOD index ranges per primitive.
 LODs reuse the full-detail vertices, keep primitive borders locked, and record
 an object-space geometric error. Skinned and morphed primitives keep full
-detail only.
+detail only. Model imports run it only when no cooked entry exists (see
+[Cooked meshes](#cooked-meshes)).
+
+## `src/engine/assets/CookedMesh.*`
+
+The cooked-mesh format and its cache convention: `CookedMesh` (an optimized
+`MeshAsset` without materials, plus the glTF primitive index of each
+primitive), `cookedMeshRequest`, `writeCookedModelMeshes` and
+`readCookedModelMeshes`, and `loadCookedModelMeshes`/`storeCookedModelMeshes`
+over `DerivedAssetCache`. It knows nothing about glTF; `ModelImporter` builds
+the meshes and `cookModelMeshes` (in `ModelImporter.hpp`) cooks a model
+without decoding its images, for `zenith_asset_build`.
 
 ## `src/engine/assets/ImageDecoder.*`
 
@@ -298,8 +343,8 @@ BC7, ASTC, ETC2, or RGBA8 from renderer capabilities, and provides the RGBA8
 CPU fallback. `DerivedAssetCache` stores its output under the project's
 `.zenith/derived` directory. Editor inspection and the
 `zenith_asset_build` command share this implementation; the command also cooks
-single textures (`cook-texture`) or a model's external textures
-(`cook-model-textures`).
+single textures (`cook-texture`), a model's external textures
+(`cook-model-textures`), or a model's optimized meshes (`cook-model-meshes`).
 
 ## `src/engine/assets/ColorLut.*`
 

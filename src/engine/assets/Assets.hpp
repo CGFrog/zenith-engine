@@ -528,6 +528,21 @@ struct TextureReloadResult {
     }
 };
 
+// How model imports obtained their optimized meshes (AssetManager::
+// meshCookStatistics). A cache hit leaves optimizedMeshes unchanged.
+struct MeshCookStatistics {
+    // Meshes run through optimizeMesh during import.
+    uint32_t optimizedMeshes{0};
+    // Models whose meshes came from a cooked entry.
+    uint32_t cachedModels{0};
+    // Models whose meshes were imported and optimized from the source.
+    uint32_t cookedModels{0};
+    // Cooked entries written after a miss.
+    uint32_t entriesWritten{0};
+    // Entries that existed but were stale or damaged, and were cooked again.
+    uint32_t rejectedEntries{0};
+};
+
 template <typename Handle> struct AssetLoadResult {
     Handle handle{};
     std::string error;
@@ -638,6 +653,21 @@ class AssetManager {
         return m_cookedTextureRoot;
     }
 
+    // Model imports read their optimized meshes and LOD chains from this
+    // derived-data root instead of running meshoptimizer, and write the entry
+    // when it is missing, stale, or damaged (see CookedMesh.hpp). An empty
+    // root optimizes every import without caching.
+    void setCookedMeshRoot(std::filesystem::path root);
+
+    const std::filesystem::path& cookedMeshRoot() const {
+        return m_cookedMeshRoot;
+    }
+
+    // Counts of how model imports obtained their meshes since construction.
+    const MeshCookStatistics& meshCookStatistics() const {
+        return m_meshCookStatistics;
+    }
+
     const TextureFormatCapabilities& textureFormatCapabilities() const {
         return m_textureCapabilities;
     }
@@ -700,6 +730,8 @@ class AssetManager {
     AssetMemoryBudget m_budget;
     DerivedAssetResidencyManager m_streaming;
     std::filesystem::path m_cookedTextureRoot;
+    std::filesystem::path m_cookedMeshRoot;
+    MeshCookStatistics m_meshCookStatistics;
     TextureFormatCapabilities m_textureCapabilities;
     LogChannel m_log;
 };

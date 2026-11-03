@@ -1,4 +1,4 @@
-// zenith_asset_build: offline texture cooking and derived-data builds.
+// zenith_asset_build: offline texture and mesh cooking and derived-data builds.
 
 #include "engine/assets/CompressedTexture.hpp"
 #include "engine/assets/ImageDecoder.hpp"
@@ -16,7 +16,8 @@ void printUsage() {
     std::cerr << "usage:\n"
                  "  zenith_asset_build <source> <derived-root> <settings> <tool-version> <platform>\n"
                  "  zenith_asset_build cook-texture <image> <derived-root> <color|normal|data>\n"
-                 "  zenith_asset_build cook-model-textures <model.gltf> <derived-root>\n";
+                 "  zenith_asset_build cook-model-textures <model.gltf> <derived-root>\n"
+                 "  zenith_asset_build cook-model-meshes <model.gltf> <derived-root>\n";
 }
 
 std::optional<TextureUsage> parseUsage(std::string_view name) {
@@ -98,6 +99,22 @@ int cookModelTextures(const std::filesystem::path& model, const std::filesystem:
     }
     return success ? 0 : 1;
 }
+
+// Cooks a model's optimized meshes and LOD chains unless a current entry
+// exists.
+int cookMeshes(const std::filesystem::path& model, const std::filesystem::path& derivedRoot) {
+    const ModelMeshCookResult cooked = cookModelMeshes(model, derivedRoot);
+    for (const std::string& warning : cooked.warnings) {
+        std::cerr << warning << '\n';
+    }
+    if (!cooked) {
+        std::cerr << cooked.error << '\n';
+        return 1;
+    }
+    std::cout << model.generic_string() << " meshes "
+              << (cooked.outcome == MeshCookOutcome::Cached ? "cached" : "cooked") << '\n';
+    return 0;
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -113,6 +130,9 @@ int main(int argc, char** argv) {
     }
     if (command == "cook-model-textures" && argc == 4) {
         return cookModelTextures(argv[2], argv[3]);
+    }
+    if (command == "cook-model-meshes" && argc == 4) {
+        return cookMeshes(argv[2], argv[3]);
     }
     if (argc == 6) {
         return storeDerivedCopy(argv);

@@ -111,8 +111,10 @@ int main(int argc, char** argv) {
         engine.shutdown();
         return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
-    // Cooked textures produced by zenith_asset_build live beside the packaged assets.
+    // Cooked textures and meshes produced by zenith_asset_build live beside the
+    // packaged assets; a mesh missing there is cooked on load and written back.
     engine.assets().setCookedTextureRoot(resourceRoot() / "derived");
+    engine.assets().setCookedMeshRoot(resourceRoot() / "derived");
 
     // Image-based lighting draws the environment's procedural sky behind the
     // default scene; capability checks fall back to hemisphere lighting.

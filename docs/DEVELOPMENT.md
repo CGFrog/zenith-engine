@@ -384,9 +384,11 @@ Block-compressed textures use the same cache. The build already cooks every
 ```powershell
 .\build\Debug\zenith_asset_build.exe cook-model-textures assets\model.gltf build\derived
 .\build\Debug\zenith_asset_build.exe cook-texture assets\textures\foo.png build\derived normal
+.\build\Debug\zenith_asset_build.exe cook-model-meshes assets\model.gltf build\derived
 ```
 
-Delete `build/derived` to exercise the RGBA8 fallback path.
+Delete `build/derived` to exercise the RGBA8 fallback path (meshes are then
+cooked again on their first load).
 
 Never place derived files beside source assets. Importers must
 validate `AssetImportLimits` before allocating decoded buffers; optional
