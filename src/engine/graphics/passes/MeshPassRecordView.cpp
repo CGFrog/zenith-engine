@@ -73,7 +73,8 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
     RenderStats& frameStats = rendering.m_stats;
     // Opaque and masked surfaces go through GPU culling; blended surfaces and
     // editor outlines keep CPU submission within the same frame.
-    const bool gpuDrivenActive = view.sharesFrameSets && m_gpuDrivenSupported && plan.gpuDrivenSubmission;
+    const bool gpuDrivenActive =
+        view.sharesFrameSets && m_gpuDrivenSupported && plan.gpuDrivenSubmission && !frame.gpuDrivenFallback;
     const bool depthPrepass = plan.depthPrepass;
     const MeshPipelineSet* shadingPipelines =
         meshPipelines({.physicallyBased = settings.lighting == LightingQuality::PhysicallyBased,

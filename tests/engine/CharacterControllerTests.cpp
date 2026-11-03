@@ -145,6 +145,36 @@ TEST_CASE("CharacterController: moving platform") {
                   "a character on a moving platform reports the platform's velocity");
 }
 
+TEST_CASE("CharacterController: leaving a moving platform keeps its velocity") {
+    PhysicsWorld physics;
+    CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");
+    Scene scene;
+    AssetManager assets;
+    // A wide platform moving along +x at 1 m/s, with nothing else around.
+    const Entity platform = addBox(scene, {0.0f, -0.25f, 0.0f}, {6.0f, 0.25f, 2.0f}, PhysicsMotionType::Kinematic);
+    const Entity character = addCharacter(scene, {0.0f, standingHeight + 0.05f, 0.0f});
+    step(physics, scene, assets, 30);
+    const float dt = physics.config().fixedTimeStep;
+    int frame = 0;
+    const auto ride = [&](int steps) {
+        for (int index = 0; index < steps; ++index) {
+            ++frame;
+            scene.registry().get<TransformComponent>(platform).local =
+                glm::translate(glm::mat4(1.0f), {static_cast<float>(frame) * dt, -0.25f, 0.0f});
+            scene.markTransformDirty(platform);
+            step(physics, scene, assets);
+        }
+    };
+    ride(60);
+    CHECK_MESSAGE(controllerOf(scene, character).grounded, "the character rides the platform");
+
+    controllerOf(scene, character).jumpRequested = true;
+    ride(15);
+    const CharacterControllerComponent& controller = controllerOf(scene, character);
+    CHECK_MESSAGE((!controller.grounded && near(controller.velocity.x, 1.0f, 0.15f)),
+                  "a character jumping off a moving platform keeps the platform's horizontal velocity");
+}
+
 TEST_CASE("CharacterController: jump") {
     PhysicsWorld physics;
     CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");

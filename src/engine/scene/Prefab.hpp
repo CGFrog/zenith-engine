@@ -154,6 +154,9 @@ struct PrefabResult {
 // `prefab_instance` component: {"entity", "component", "field", "value"}.
 nlohmann::json prefabOverrideToJson(const PrefabOverride& value);
 PrefabResult prefabOverrideFromJson(const nlohmann::json& json, PrefabOverride& output);
+// Sorts overrides into the order PrefabSystem::overrides reports them in:
+// by nested record, then entity, component, and field.
+void sortPrefabOverrides(std::vector<PrefabOverride>& overrides);
 
 // The scene document entity form of a prefab entity ({id, name, parent,
 // local_transform, components}), with prefab-local ids.
@@ -401,8 +404,11 @@ class PrefabSystem {
                           std::vector<std::filesystem::path>& stack);
     // Runs change and, when it fails, puts the scene back as it was. change
     // may rebuild root's subtree (none for a new instance) and create
-    // entities, and must change nothing else.
-    PrefabInstanceResult transact(Scene& scene, Entity root, const std::function<PrefabInstanceResult()>& change);
+    // entities, and must change nothing else. When root's subtree cannot be
+    // saved first, so a failure could not be undone, validate (when given)
+    // runs before change and its failure is returned instead.
+    PrefabInstanceResult transact(Scene& scene, Entity root, const std::function<PrefabInstanceResult()>& validate,
+                                  const std::function<PrefabInstanceResult()>& change);
     PrefabInstanceResult build(const std::filesystem::path& reference, Scene& scene, Entity existingRoot, Entity parent,
                                std::span<const PrefabOverride> overrides, uint64_t nestedId, PrefabRefreshMode mode,
                                std::vector<std::filesystem::path>& stack);

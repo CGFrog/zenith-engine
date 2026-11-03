@@ -208,6 +208,10 @@ class PhysicsWorld::Impl {
         // Horizontal velocity relative to the ground, approaching the
         // desired velocity at the component's acceleration.
         glm::vec3 horizontalVelocity{0.0f};
+        // The ground's horizontal velocity when the character last stood on
+        // it, kept in the air so a character leaving a moving platform keeps
+        // the platform's speed until it lands.
+        glm::vec3 carriedVelocity{0.0f};
         glm::vec3 previousPosition{0.0f};
         glm::vec3 currentPosition{0.0f};
         // The position last written to the entity's transform; any other
@@ -282,6 +286,9 @@ class PhysicsWorld::Impl {
     struct SensorPair {
         uint32_t contacts{0};
         bool dormant{false};
+        // Both bodies are sensors, so each event is also reported the other
+        // way round.
+        bool mutual{false};
         uint32_t sensorBody{0};
         uint32_t otherBody{0};
         Entity sensor{entt::null};
@@ -414,7 +421,7 @@ class PhysicsWorld::Impl {
     void endSensorPairs(uint32_t key) {
         for (auto pair = sensorPairs.begin(); pair != sensorPairs.end();) {
             if (pair->second.sensorBody == key || pair->second.otherBody == key) {
-                pendingTriggerEvents.push_back(exited(pair->second));
+                report(TriggerEventType::Exited, pair->second);
                 pair = sensorPairs.erase(pair);
             } else {
                 ++pair;
@@ -444,12 +451,21 @@ class PhysicsWorld::Impl {
         return false;
     }
 
-    static TriggerEvent exited(const SensorPair& pair) {
-        return {.type = TriggerEventType::Exited,
-                .sensor = pair.sensor,
-                .other = pair.other,
-                .sensorId = pair.sensorId,
-                .otherId = pair.otherId};
+    // Queues the pair's event, and for two sensors the same event seen from
+    // the other sensor.
+    void report(TriggerEventType type, const SensorPair& pair) {
+        pendingTriggerEvents.push_back({.type = type,
+                                        .sensor = pair.sensor,
+                                        .other = pair.other,
+                                        .sensorId = pair.sensorId,
+                                        .otherId = pair.otherId});
+        if (pair.mutual) {
+            pendingTriggerEvents.push_back({.type = type,
+                                            .sensor = pair.other,
+                                            .other = pair.sensor,
+                                            .sensorId = pair.otherId,
+                                            .otherId = pair.sensorId});
+        }
     }
 
     // Turns the step's sensor contacts (in orderPendingContacts order, so a
@@ -473,7 +489,7 @@ class PhysicsWorld::Impl {
                 if (eitherAsleep(firstKey, secondKey)) {
                     pair->second.dormant = true;
                 } else {
-                    pendingTriggerEvents.push_back(exited(pair->second));
+                    report(TriggerEventType::Exited, pair->second);
                     sensorPairs.erase(pair);
                 }
                 continue;
@@ -505,11 +521,8 @@ class PhysicsWorld::Impl {
             pair.other = other.second;
             pair.sensorId = sceneIdOf(sensor.second);
             pair.otherId = sceneIdOf(other.second);
-            pendingTriggerEvents.push_back({.type = TriggerEventType::Entered,
-                                            .sensor = pair.sensor,
-                                            .other = pair.other,
-                                            .sensorId = pair.sensorId,
-                                            .otherId = pair.otherId});
+            pair.mutual = firstIsSensor && isSensor(second->second);
+            report(TriggerEventType::Entered, pair);
         }
         std::sort(pendingTriggerEvents.begin() + removalExits, pendingTriggerEvents.end(), triggerEventPrecedes);
         triggerEvents.swap(pendingTriggerEvents);
@@ -1072,6 +1085,7 @@ void PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
             existing->second.character->SetPosition(JPH::RVec3(position.x, position.y, position.z));
             existing->second.previousPosition = position;
             existing->second.currentPosition = position;
+            existing->second.carriedVelocity = glm::vec3(0.0f);
         }
 
         Impl::CharacterState& state = existing->second;
@@ -1095,11 +1109,16 @@ void PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
         glm::vec3 velocity(0.0f, verticalSpeed, 0.0f);
         if (free) {
             velocity.y = glm::mix(verticalSpeed, controller.desiredVerticalSpeed, blend);
+            state.carriedVelocity = glm::vec3(0.0f);
         } else if (onGround && movingTowardGround) {
             velocity = groundVelocity;
+            state.carriedVelocity = glm::vec3(groundVelocity.x, 0.0f, groundVelocity.z);
             if (controller.jumpRequested) {
                 velocity.y += controller.jumpSpeed;
             }
+        } else {
+            // Leaving the ground (a jump, a ledge) keeps the ground's motion.
+            velocity += state.carriedVelocity;
         }
         controller.jumpRequested = false;
         if (!free) {

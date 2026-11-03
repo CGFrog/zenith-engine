@@ -4,7 +4,6 @@
 #include <span>
 #include <string_view>
 #include <system_error>
-#include <tuple>
 #include <utility>
 
 namespace {
@@ -352,13 +351,6 @@ void describeOverrides(const Scene& scene, Entity entity, const PrefabDocument& 
     }
     // Overrides arrive sorted by component, then field.
 }
-
-// The order PrefabSystem::overrides reports overrides in.
-void sortOverrides(std::vector<PrefabOverride>& overrides) {
-    std::ranges::sort(overrides, {}, [](const PrefabOverride& value) {
-        return std::tie(value.nested, value.entity.value, value.component, value.field);
-    });
-}
 } // namespace
 
 PrefabResult PrefabAuthoring::overrides(const Scene& scene, Entity entity, PrefabEntityOverrides& output) const {
@@ -512,7 +504,7 @@ bool PrefabOverrideCache::update(const PrefabAuthoring& authoring, const Scene& 
             std::erase_if(m_instanceOverrides,
                           [local](const PrefabOverride& value) { return value.nested == 0 && value.entity == local; });
             m_instanceOverrides.insert(m_instanceOverrides.end(), entityOverrides.begin(), entityOverrides.end());
-            sortOverrides(m_instanceOverrides);
+            sortPrefabOverrides(m_instanceOverrides);
         }
         m_instanceKey = key;
         m_partial = true;

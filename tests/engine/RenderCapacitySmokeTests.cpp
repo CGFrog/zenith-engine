@@ -1,6 +1,7 @@
 // Bounded Vulkan smoke test of the renderer's per-frame capacities: a scene
-// with more renderables than the per-frame object capacity and more particle
-// emitters than particles::maximumEmitters must keep rendering, draw the
+// with more renderables than the per-frame object capacity, more particle
+// emitters than particles::maximumEmitters, and more distinct material
+// overrides than there are override records must keep rendering, draw the
 // capacity's worth, count the excess in RenderStats, and log each overflow
 // once rather than every frame. Run with ZENITH_SMOKE_FRAMES (the
 // registration uses 20).
@@ -28,6 +29,11 @@ namespace {
 constexpr uint32_t objectCapacity = 16384;
 constexpr uint32_t extraCubes = 500;
 constexpr uint32_t extraEmitters = 6;
+// The renderer's distinct material override capacity (maximumMaterialOverrides).
+constexpr uint32_t materialOverrideCapacity = 1024;
+constexpr uint32_t extraMaterialOverrides = 40;
+// Distinct material override tints across the cubes.
+constexpr uint32_t distinctTints = materialOverrideCapacity + extraMaterialOverrides;
 
 struct SmokeResults {
     testsupport::StandaloneChecks checks;
@@ -56,6 +62,11 @@ class CapacityScene final : public ApplicationScene {
             registry.get<TransformComponent>(entity).local = glm::translate(glm::mat4(1.0f), position);
             scene.markTransformDirty(entity);
             scene.attachMesh(entity, cube.handle);
+            // Tints repeat every distinctTints cubes, so every tint is among
+            // the drawn cubes whichever ones the object capacity leaves out.
+            const float tint = static_cast<float>(index % distinctTints + 1) / static_cast<float>(distinctTints + 1);
+            registry.emplace<MaterialOverrideComponent>(
+                entity, MaterialOverrideComponent{.baseColorFactor = glm::vec4(tint, 1.0f, 1.0f, 1.0f)});
         }
         for (uint32_t index = 0; index < particles::maximumEmitters + extraEmitters; ++index) {
             const Entity emitter = scene.createEntity("Emitter");
@@ -90,6 +101,9 @@ class CapacityScene final : public ApplicationScene {
         m_results.checks.check(stats.droppedRenderItems >= extraCubes, frame,
                                "the renderables over the capacity are counted, not " +
                                    std::to_string(stats.droppedRenderItems));
+        m_results.checks.check(stats.droppedMaterialOverrides >= extraMaterialOverrides, frame,
+                               "the material overrides over the capacity are counted, not " +
+                                   std::to_string(stats.droppedMaterialOverrides));
         if (stats.particleEmitterCount == particles::maximumEmitters) {
             m_results.checks.check(stats.droppedParticleEmitters == extraEmitters, frame,
                                    "the emitters over the capacity are counted, not " +
@@ -148,11 +162,14 @@ int main(int, char** argv) {
     CapacityApplication application(results);
     const bool ran = engine.run(application);
     const size_t renderWarnings = warningsMentioning(engine.logger(), "Render items exceed");
+    const size_t overrideWarnings = warningsMentioning(engine.logger(), "Material overrides exceed");
     engine.shutdown();
     results.checks.check(ran, "the run ended early instead of rendering past the capacity");
     results.checks.check(results.checkedFrames != 0, "no frame was checked (is ZENITH_SMOKE_FRAMES at least 4?)");
     results.checks.check(renderWarnings == 1,
                          "the renderable overflow is logged once, not " + std::to_string(renderWarnings) + " times");
+    results.checks.check(overrideWarnings == 1, "the material override overflow is logged once, not " +
+                                                    std::to_string(overrideWarnings) + " times");
     const bool passed = results.checks.failures() == 0;
     if (passed) {
         std::cout << "Render capacity smoke test passed\n";

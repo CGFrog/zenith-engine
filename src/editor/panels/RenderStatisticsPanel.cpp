@@ -26,4 +26,10 @@ void RenderStatisticsPanel::draw(EditorContext& context) {
     if (stats.droppedParticleEmitters > 0) {
         ImGui::Text("Over capacity, emitters skipped: %u", stats.droppedParticleEmitters);
     }
+    if (stats.droppedMaterialOverrides > 0) {
+        ImGui::Text("Over capacity, plain material: %u", stats.droppedMaterialOverrides);
+    }
+    if (stats.excessGpuDrawGroups > 0) {
+        ImGui::Text("Over capacity, CPU submission: %u draw groups", stats.excessGpuDrawGroups);
+    }
 }

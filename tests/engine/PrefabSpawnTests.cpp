@@ -256,6 +256,61 @@ TEST_CASE("PrefabSpawn: failed instantiate leaves scene unchanged") {
     CHECK_MESSAGE(fixture.serialize(scene) == before, "a broken nested prefab leaves the scene unchanged");
 }
 
+// A refresh with a valid cached graph builds once, straight into the scene,
+// so a failure while rebuilding is undone rather than caught by a staging
+// build first.
+TEST_CASE("PrefabSpawn: failed refresh leaves scene unchanged") {
+    PrefabFixture fixture("refresh-failure");
+    writeRoom(fixture);
+    PrefabSystem prefabs(fixture.assets, fixture.options);
+    Scene scene;
+    scene.createEntity("Existing");
+    const PrefabInstanceResult room = prefabs.instantiate("room.prefab", scene);
+    CHECK_MESSAGE(room.success, "a room spawns");
+    // Changes a successful rebuild would undo: an edited name and an entity
+    // added to the instance.
+    const Entity door = scene.findDescendant(room.root, "Door");
+    CHECK_MESSAGE((door != entt::null), "the room has its door");
+    if (door != entt::null) {
+        scene.registry().get<NameComponent>(door).name = "Renamed door";
+    }
+    scene.setParent(scene.createEntity("Added"), room.root);
+    const std::string before = fixture.serialize(scene);
+
+    PrefabDocument document;
+    CHECK_MESSAGE(prefabs.load("room.prefab", document).success, "the room prefab loads");
+    const std::vector<PrefabOverride> invalid{{.entity = localNamed(document, "Room"),
+                                               .component = "point_light",
+                                               .field = "/intensity",
+                                               .jsonValue = R"("bright")"}};
+    const PrefabInstanceResult refreshed =
+        prefabs.refresh(scene, room.root, invalid, PrefabRefreshMode::RemoveAddedObjects);
+    CHECK_MESSAGE(
+        (!refreshed && !refreshed.error.empty() && refreshed.error.find("could not be restored") == std::string::npos),
+        "an invalid override fails the refresh");
+    CHECK_MESSAGE(fixture.serialize(scene) == before, "a refresh failing while rebuilding leaves the scene unchanged");
+
+    // A broken prefab fails the cached graph check, and the staging build
+    // names the file before anything changes.
+    {
+        std::ofstream broken(fixture.root / "lamp.prefab", std::ios::binary | std::ios::trunc);
+        broken << "{ not json";
+    }
+    prefabs.invalidate("lamp.prefab");
+    const PrefabInstanceResult nested = prefabs.refresh(scene, room.root, PrefabRefreshMode::RemoveAddedObjects);
+    CHECK_MESSAGE((!nested && nested.error.find("lamp.prefab") != std::string::npos),
+                  "a broken nested prefab fails the refresh and names the file");
+    CHECK_MESSAGE(fixture.serialize(scene) == before, "a broken nested prefab leaves the scene unchanged");
+
+    writeLamp(fixture);
+    prefabs.invalidate("lamp.prefab");
+    const PrefabInstanceResult repaired = prefabs.refresh(scene, room.root, PrefabRefreshMode::RemoveAddedObjects);
+    CHECK_MESSAGE(repaired.success, "the refresh succeeds once the nested prefab is repaired");
+    CHECK_MESSAGE((scene.findDescendant(room.root, "Door") != entt::null &&
+                   scene.findDescendant(room.root, "Added") == entt::null),
+                  "a successful refresh restores the prefab's names and removes added entities");
+}
+
 TEST_CASE("PrefabSpawn: command buffer overrides") {
     PrefabFixture fixture("commands");
     writeLamp(fixture);

@@ -7,6 +7,20 @@
 
 using namespace mesh_pass_detail;
 
+uint32_t MeshPass::excessGpuDrawGroups() {
+    // Every LOD level of an item shares its pipeline bucket and geometry
+    // page, so the items alone decide the groups, whatever the view.
+    m_gpuDrivenKeys.clear();
+    for (const RenderItem& item : m_renderItems) {
+        if (!item.material->translucent()) {
+            m_gpuDrivenKeys.push_back({.pipeline = item.material->doubleSided ? doubleSidedBucket : singleSidedBucket,
+                                       .geometryPage = item.gpuMesh->geometry.page});
+        }
+    }
+    const uint32_t groups = countIndirectDrawGroups(m_gpuDrivenKeys);
+    return groups > maximumGpuDrawGroups ? groups - maximumGpuDrawGroups : 0u;
+}
+
 bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lodView, uint32_t visibleInstanceCount) {
     m_gpuDrivenCandidates.clear();
     m_gpuDrivenKeys.clear();
@@ -37,6 +51,7 @@ bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lod
         return false;
     }
     buildIndirectDrawPlan(m_gpuDrivenKeys, m_drawPlan);
+    // excessGpuDrawGroups sent such a frame through CPU submission.
     if (m_drawPlan.groups.size() > maximumGpuDrawGroups) {
         m_log.error("GPU-driven draw groups exceed the renderer capacity");
         return false;

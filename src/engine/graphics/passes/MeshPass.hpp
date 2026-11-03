@@ -850,6 +850,9 @@ class MeshPass {
     void bindOpaquePipeline(const DrawContext& draw, const GraphicsPipeline& pipeline, OpaquePipelines pipelines,
                             VkDescriptorSet cameraSet) const;
     void selectRenderItemLods(const MeshLodView& view);
+    // The draw groups the frame scene's opaque render items need beyond
+    // maximumGpuDrawGroups; zero when they fit.
+    uint32_t excessGpuDrawGroups();
     // visibleInstanceCount: the default view's CPU-visible instances.
     bool prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lodView, uint32_t visibleInstanceCount);
     void recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase, OpaquePipelines pipelines);
@@ -932,7 +935,7 @@ class MeshPass {
     // so packets are rebuilt (and the upload retried) until every mesh lands.
     bool m_meshUploadsPending{false};
     // Capacity failures retried every frame are logged once per episode.
-    bool m_geometryArenaFullReported{false};
+    OverflowEpisode m_geometryArenaFull;
     // Per-frame capacities a large scene can exceed: the excess is left out,
     // counted in RenderStats, and logged once per episode.
     // Render items left out by the last packet build: objects beyond
@@ -943,8 +946,11 @@ class MeshPass {
     OverflowEpisode m_materialOverflow;
     OverflowEpisode m_skinPaletteOverflow;
     OverflowEpisode m_particleEmitterOverflow;
+    // Frames whose opaque surfaces need more GPU-driven draw groups than
+    // there are; the default view then draws through CPU submission.
+    OverflowEpisode m_gpuDrawGroupOverflow;
     LogChannel m_log;
-    bool m_textureTableFullReported{false};
+    OverflowEpisode m_textureTableFull;
     std::unordered_map<uint64_t, GpuMaterial> m_materials;
 
     // Material records derived for MaterialOverrideComponent factors, keyed

@@ -66,12 +66,6 @@ against the code when the roadmap was archived.
 
 ### Scene, prefabs, and reflection
 
-- `sortOverrides` is duplicated in `editor/document/PrefabAuthoring.cpp` and
-  `engine/scene/PrefabOverrides.cpp`; `matrixJson`
-  (`PrefabSystemInternal.hpp`) is duplicated as `matrix` in `Prefab.cpp`. [D1]
-- `PrefabSystem::refresh` still runs the full build twice, once in a staging
-  scene and once for real. (`instantiate` now validates the cached graph and
-  builds once; see [Scene](engine/scene.md#fast-spawning).) [D6]
 - About 1 ms of a recorded edit, and of a prefab spawn, still grows with the
   scene; the likely cause, not yet profiled, is that
   `SceneDocument::applyChanges` validates every collection reference of the
@@ -90,10 +84,15 @@ against the code when the roadmap was archived.
 
 ### Physics, navigation, and input
 
-- Sensor-vs-sensor overlaps are not reported. [A3] (unverified)
-- Characters do not push each other (Jolt's character-vs-character collision
-  is not set up), and a character leaving a moving platform loses the
-  platform's velocity. [B1] (unverified)
+- Characters do not push each other; they meet as each other's kinematic
+  inner bodies, which stand still. Jolt's `CharacterVsCharacterCollisionSimple`
+  (with the inner bodies filtered out of character movement) was tried and is
+  not enough on its own: Jolt keeps two characters `2 x mCharacterPadding`
+  (0.04 m) apart, and a character counts another's contact velocity only when
+  that character would close the gap within one step, so at 60 Hz only one
+  moving faster than about 2.4 m/s pushes. Pushing at walking speed needs a
+  `CharacterContactListener` (or a push pass after the characters move) and a
+  decision about mass. [B1]
 - Removing a physics layer from the middle of the table is not offered; it
   would need remapping every body's index. [C5] (unverified)
 - Navigation meshes are baked at runtime; save baked meshes (with the scene or

@@ -122,4 +122,22 @@ TEST_CASE("RenderSubmission: indirect draw plans merge instances into batches an
                   "an empty scene produces an empty plan");
 }
 
+// The renderer checks the GPU-driven group capacity with the count before
+// building a plan, and draws through CPU submission when it is exceeded.
+TEST_CASE("RenderSubmission: indirect draw group count matches the plan") {
+    std::vector<IndirectDrawKey> instances;
+    for (uint32_t page = 0; page < 40; ++page) {
+        for (uint32_t pipeline = 0; pipeline < 2; ++pipeline) {
+            // Two primitives per pair, listed out of order, share one group.
+            instances.push_back({.pipeline = pipeline, .geometryPage = 39 - page, .firstIndex = 36, .indexCount = 6});
+            instances.push_back({.pipeline = pipeline, .geometryPage = page, .firstIndex = 0, .indexCount = 36});
+        }
+    }
+    IndirectDrawPlan plan;
+    buildIndirectDrawPlan(instances, plan);
+    CHECK_MESSAGE((countIndirectDrawGroups(instances) == 80 && plan.groups.size() == 80),
+                  "each distinct pipeline and geometry page pair counts once, as the plan groups them");
+    CHECK_MESSAGE(countIndirectDrawGroups({}) == 0, "no instances need no groups");
+}
+
 TEST_SUITE_END();

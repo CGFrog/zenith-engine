@@ -89,6 +89,11 @@ per pair of bodies. They are derived on the main thread from Jolt's contacts.
   first. Each side carries its scene id, because the entity may already be
   gone.
 - A body that falls asleep inside stays inside.
+- Two sensors that overlap report each other: every event of the pair comes
+  twice, once with each as the sensor, so both sensors' trigger hooks run.
+  Jolt pairs bodies only when one of them moves, so two static sensors never
+  overlap; a kinematic or dynamic sensor (a moving hit volume) detects static
+  ones.
 - `GameServices::publishPhysicsEvents` turns them into `TriggerEntered` and
   `TriggerExited` events.
 
@@ -164,7 +169,10 @@ each character, then:
   (scaled by `airControl` in the air), cancelling movement into slopes
   steeper than `slopeLimitRadians`;
 - on the ground, adds the ground's velocity (so a character rides a moving
-  platform) and a requested jump, then gravity;
+  platform) and a requested jump, then gravity; in the air it keeps the
+  ground's horizontal velocity from when it last stood there, so a character
+  jumping or walking off a moving platform keeps the platform's speed until
+  it lands (a teleport or `Free` motion drops it);
 - runs `ExtendedUpdate`: walks onto steps up to `stepHeight`, and sticks to
   ground within `groundProbeDistance` going down;
 - writes the new position into the entity's transform (keeping its rotation

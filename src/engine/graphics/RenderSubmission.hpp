@@ -179,3 +179,7 @@ struct IndirectDrawPlan {
 // Sorts instances by key into batches and groups. The result is deterministic
 // for a given input, and existing vector capacity in `plan` is reused.
 void buildIndirectDrawPlan(std::span<const IndirectDrawKey> instances, IndirectDrawPlan& plan);
+// The number of groups buildIndirectDrawPlan makes for instances: their
+// distinct (pipeline, geometry page) pairs. Lets a caller check a group
+// capacity before building a plan.
+uint32_t countIndirectDrawGroups(std::span<const IndirectDrawKey> instances);

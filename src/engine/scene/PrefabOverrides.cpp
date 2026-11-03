@@ -574,13 +574,13 @@ PrefabResult PrefabSystem::overrides(const Scene& scene, Entity root, std::vecto
     return overrides(scene, root, source, output);
 }
 
-namespace {
-void sortOverrides(std::vector<PrefabOverride>& overrides) {
+void sortPrefabOverrides(std::vector<PrefabOverride>& overrides) {
     std::ranges::sort(overrides, {}, [](const PrefabOverride& value) {
         return std::tie(value.nested, value.entity.value, value.component, value.field);
     });
 }
 
+namespace {
 // The recorded removals that still hold: prefab entities and nested records
 // the source has and the instance lacks. A prefab entity the instance lacks
 // was deleted in the scene only when the deletion was recorded; otherwise the
@@ -640,7 +640,7 @@ PrefabResult compareInstance(const Scene& scene, Entity root, const PrefabDocume
     if (only == entt::null) {
         recordedRemovals(scene, root, source, instanceEntities, found);
     }
-    sortOverrides(found);
+    sortPrefabOverrides(found);
     output = std::move(found);
     return {.success = true};
 }

@@ -650,6 +650,14 @@ struct RenderStats {
     // Particle emitters not simulated because particles::maximumEmitters
     // emitters were already scheduled (the highest scene ids are left out).
     uint32_t droppedParticleEmitters{0};
+    // Render items with a material override drawn with their plain material
+    // because every override record (maximumMaterialOverrides distinct
+    // material and factor pairs) was taken.
+    uint32_t droppedMaterialOverrides{0};
+    // Draw groups (pipeline bucket and geometry page pairs) the frame scene's
+    // opaque surfaces needed beyond the GPU-driven capacity. While nonzero,
+    // the default view draws through CPU submission instead.
+    uint32_t excessGpuDrawGroups{0};
 };
 
 // A camera that replaces the scene's primary CameraComponent for one render
