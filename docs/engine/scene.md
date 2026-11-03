@@ -356,7 +356,9 @@ separate instances. `PrefabSystem` instantiates (checking the whole nested
 graph first and rejecting cycles), refreshes an instance from its prefab
 through `SceneDocument::applyChanges` (stable ids kept, added objects kept or
 removed), reports live overrides by diffing the instance's
-serialized entities against the prefab's normalized entities, and captures a
+serialized entities against the prefab's normalized entities (in
+`sortPrefabOverrides` order: nested record, entity, component, field; the
+editor sorts the overrides it lists the same way), and captures a
 scene subtree as a document. Capturing an instance of the same prefab (an
 apply) keeps its prefab-local ids, nested record ids, and display name, and
 the previous file's root transform, since an instance root's transform only

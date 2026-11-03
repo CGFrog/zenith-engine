@@ -154,6 +154,9 @@ struct PrefabResult {
 // `prefab_instance` component: {"entity", "component", "field", "value"}.
 nlohmann::json prefabOverrideToJson(const PrefabOverride& value);
 PrefabResult prefabOverrideFromJson(const nlohmann::json& json, PrefabOverride& output);
+// Sorts overrides into the order PrefabSystem::overrides reports them in:
+// by nested record, then entity, component, and field.
+void sortPrefabOverrides(std::vector<PrefabOverride>& overrides);
 
 // The scene document entity form of a prefab entity ({id, name, parent,
 // local_transform, components}), with prefab-local ids.

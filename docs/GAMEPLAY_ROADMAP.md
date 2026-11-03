@@ -66,9 +66,6 @@ against the code when the roadmap was archived.
 
 ### Scene, prefabs, and reflection
 
-- `sortOverrides` is duplicated in `editor/document/PrefabAuthoring.cpp` and
-  `engine/scene/PrefabOverrides.cpp`; `matrixJson`
-  (`PrefabSystemInternal.hpp`) is duplicated as `matrix` in `Prefab.cpp`. [D1]
 - `PrefabSystem::refresh` still runs the full build twice, once in a staging
   scene and once for real. (`instantiate` now validates the cached graph and
   builds once; see [Scene](engine/scene.md#fast-spawning).) [D6]

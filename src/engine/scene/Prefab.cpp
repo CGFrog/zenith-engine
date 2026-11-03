@@ -1,4 +1,5 @@
 #include "Prefab.hpp"
+#include "PrefabSystemInternal.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 #include <nlohmann/json.hpp>
@@ -19,14 +20,6 @@
 
 namespace {
 using Json = nlohmann::json;
-
-Json matrix(const glm::mat4& value) {
-    Json result = Json::array();
-    for (size_t index = 0; index < 16; ++index) {
-        result.push_back(glm::value_ptr(value)[index]);
-    }
-    return result;
-}
 
 bool readMatrix(const Json& value, glm::mat4& output) {
     if (!value.is_array() || value.size() != 16) {
@@ -345,7 +338,7 @@ PrefabResult prefabEntityToJson(const PrefabEntity& entity, Json& output) {
     output = {{"id", entity.id.value},
               {"name", entity.name},
               {"parent", entity.parent ? Json(entity.parent->value) : Json(nullptr)},
-              {"local_transform", matrix(entity.localTransform)},
+              {"local_transform", prefab_detail::matrixJson(entity.localTransform)},
               {"components", std::move(components)}};
     return {.success = true};
 }

@@ -1,10 +1,10 @@
 // Internal to the prefab system: what PrefabSystem.cpp and its domain files
-// (PrefabIdRemap, PrefabOverrides, PrefabNesting, PrefabQueries) share. Not
-// part of the public engine API.
+// (PrefabIdRemap, PrefabOverrides, PrefabNesting, PrefabQueries) and the
+// document codec (Prefab.cpp) share. Not part of the public engine API.
 #pragma once
 
 // Internal to the prefab system: what PrefabSystem.cpp and its domain files (PrefabIdRemap, PrefabOverrides,
-// PrefabNesting, PrefabQueries) share.
+// PrefabNesting, PrefabQueries) and the document codec (Prefab.cpp) share.
 
 #include "Prefab.hpp"
 
@@ -117,6 +117,8 @@ inline PrefabResult fromScene(const SceneDocumentResult& result) {
     return {.success = result.success, .error = result.error};
 }
 
+// A matrix as its 16 floats in column-major order, the form scene and prefab
+// documents store local transforms in.
 inline Json matrixJson(const glm::mat4& value) {
     Json result = Json::array();
     for (size_t index = 0; index < 16; ++index) {
