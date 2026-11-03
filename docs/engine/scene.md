@@ -375,11 +375,15 @@ then refreshes every other instance in the scene against the new content while
 keeping the overrides it had against the old content; overrides that no longer
 match anything (orphaned overrides) are reported as diagnostics.
 
-A refresh failing after its staging check (a nested instance that no longer
-matches its prefab) puts the scene back. Only the instance's own subtree is
-saved first, and the entities the change created are found through
-`Scene::nextEntityId`, so refreshing costs what the prefab costs, whatever the
-size of the scene.
+A refresh builds once, straight into the scene, when the cached graph is
+valid (see [Fast spawning](#fast-spawning)), and puts the scene back when the
+rebuild fails (an override holding an invalid value, a nested instance that no
+longer matches its prefab). Only the instance's own subtree is saved first,
+and the entities the change created are found through `Scene::nextEntityId`,
+so refreshing costs what the prefab costs, whatever the size of the scene.
+A staging build runs first only when the cached graph is not valid, so the
+error names what fails before anything changes, or when the instance's
+subtree cannot be saved, so a failure could not be undone.
 
 ### Fast spawning
 
@@ -410,7 +414,7 @@ so it avoids files, text, and staging scenes:
   sibling placement, preserved unknown components, and dirty marks as
   `applyChanges`. Overrides, stable id remapping, link components, nested
   instances, and nested references are computed as before. Refresh keeps the
-  `applyChanges` path.
+  `applyChanges` path, and validates the same way.
 - **Rollback.** A new instance only creates entities, so a failure while
   building (an override holding an invalid value, a model that will not
   instantiate) destroys every entity with an id from the call's first

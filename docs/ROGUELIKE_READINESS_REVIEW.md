@@ -375,7 +375,7 @@ Gaps the critical work left on purpose:
 - **Runtime content:**
   - A scene that holds a runtime mesh can't be saved, so regenerate floors from their seed.
   - Material-override overflow is logged but not counted in `RenderStats`.
-- **Spawning:** a prefab refresh still runs its staging validation build. The cache trusts an entry for 500 ms (`PrefabSystem::setFileCheckInterval`).
+- **Spawning:** the prefab cache trusts an entry for 500 ms (`PrefabSystem::setFileCheckInterval`).
 - **Transient previews:** a paste or a module reload drops the preview. Debug-draw channel visibility is global and isn't saved. `DemoApplication` draws no debug labels.
 - **Asset collection:** runtime collection skips decoded audio held by emitters, collecting it only down to the audio budget.
 

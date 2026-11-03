@@ -104,12 +104,13 @@ PrefabResult expandModels(const std::map<uint64_t, Json>& entities, const IdMap&
 } // namespace
 
 PrefabInstanceResult PrefabSystem::transact(Scene& scene, Entity root,
+                                            const std::function<PrefabInstanceResult()>& validate,
                                             const std::function<PrefabInstanceResult()>& change) {
-    // The staging validation catches nearly every failure; this restores the
-    // scene when a nested instance fails after its container was rebuilt.
-    // Only root's subtree is saved first, so the cost follows the instance,
-    // not the scene: everything else change touches it creates, with ids
-    // from nextEntityId on.
+    // This restores the scene after any failure while building: an override
+    // holding an invalid value, or a nested instance failing after its
+    // container was rebuilt. Only root's subtree is saved first, so the cost
+    // follows the instance, not the scene: everything else change touches it
+    // creates, with ids from nextEntityId on.
     std::vector<SceneEntityId> touched;
     if (root != entt::null) {
         for (const Entity entity : subtree(scene, root)) {
@@ -119,6 +120,11 @@ PrefabInstanceResult PrefabSystem::transact(Scene& scene, Entity root,
     const uint64_t firstCreated = scene.nextEntityId().value;
     std::vector<std::optional<std::string>> before;
     const bool restorable = SceneDocument::serializeEntities(scene, m_assets, m_options, touched, before).success;
+    if (!restorable && validate) {
+        if (PrefabInstanceResult checked = validate(); !checked) {
+            return checked;
+        }
+    }
     PrefabInstanceResult result = change();
     if (result || !restorable) {
         return result;
@@ -221,14 +227,25 @@ PrefabInstanceResult PrefabSystem::refresh(Scene& scene, Entity root, std::span<
     const std::filesystem::path reference = instance->prefab;
     const uint64_t nestedId = instance->nestedId;
     const std::vector<PrefabOverride> values(overrides.begin(), overrides.end());
-    Scene validation;
-    std::vector<std::filesystem::path> validationStack;
-    if (PrefabInstanceResult checked = build(reference, validation, entt::null, entt::null, values, nestedId,
-                                             PrefabRefreshMode::RemoveAddedObjects, validationStack);
-        !checked) {
-        return checked;
+    // A build into a staging scene, which reports exactly what fails.
+    const std::function<PrefabInstanceResult()> stagingBuild = [&] {
+        Scene validation;
+        std::vector<std::filesystem::path> validationStack;
+        return build(reference, validation, entt::null, entt::null, values, nestedId,
+                     PrefabRefreshMode::RemoveAddedObjects, validationStack);
+    };
+    // As for instantiate, a valid cached graph stands in for the staging
+    // build, and transact undoes a failure while rebuilding. The staging build
+    // runs only when the graph is not valid, or when the instance cannot be
+    // saved first, so a failure could not be undone.
+    std::vector<std::filesystem::path> graphStack;
+    const bool graphValid = cachedGraphValid(reference, values, graphStack);
+    if (!graphValid) {
+        if (PrefabInstanceResult checked = stagingBuild(); !checked) {
+            return checked;
+        }
     }
-    return transact(scene, root, [&] {
+    return transact(scene, root, graphValid ? stagingBuild : nullptr, [&] {
         std::vector<std::filesystem::path> stack;
         return build(reference, scene, root, entt::null, values, nestedId, mode, stack);
     });

@@ -66,9 +66,6 @@ against the code when the roadmap was archived.
 
 ### Scene, prefabs, and reflection
 
-- `PrefabSystem::refresh` still runs the full build twice, once in a staging
-  scene and once for real. (`instantiate` now validates the cached graph and
-  builds once; see [Scene](engine/scene.md#fast-spawning).) [D6]
 - About 1 ms of a recorded edit, and of a prefab spawn, still grows with the
   scene; the likely cause, not yet profiled, is that
   `SceneDocument::applyChanges` validates every collection reference of the
