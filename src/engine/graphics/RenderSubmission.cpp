@@ -221,6 +221,19 @@ std::vector<size_t> stableRenderOrder(std::span<const RenderOrderKey> keys) {
     return order;
 }
 
+uint32_t countIndirectDrawGroups(std::span<const IndirectDrawKey> instances) {
+    // Sorted; scenes use few groups, so inserting stays cheap.
+    std::vector<std::pair<uint32_t, uint32_t>> groups;
+    for (const IndirectDrawKey& key : instances) {
+        const std::pair<uint32_t, uint32_t> group(key.pipeline, key.geometryPage);
+        const auto found = std::ranges::lower_bound(groups, group);
+        if (found == groups.end() || *found != group) {
+            groups.insert(found, group);
+        }
+    }
+    return static_cast<uint32_t>(groups.size());
+}
+
 void buildIndirectDrawPlan(std::span<const IndirectDrawKey> instances, IndirectDrawPlan& plan) {
     plan.batches.clear();
     plan.groups.clear();

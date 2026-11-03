@@ -299,6 +299,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
     const ViewFrame leadFrame =
         prepareViewFrame(*m_views[views.front().view], views.front(), scene, previousGpuFrameMilliseconds);
     FrameState frame;
+    frame.gpuDrivenRequested = m_gpuDrivenSupported && std::ranges::any_of(frameViews, [](const auto& request) {
+                                   return request.view == 0 && request.plan.gpuDrivenSubmission;
+                               });
     if (!recordFrameStage(commandBuffer, frameIndex, scene, assets, rendering, views.front(), leadFrame, frameTasks,
                           timestampQueries, passTimestamps, frame)) {
         return false;
@@ -546,6 +549,16 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     stats.taskGraphLatencyMilliseconds = taskResult.stats.latencyMilliseconds;
     stats.renderableCount = static_cast<uint32_t>(m_renderItems.size());
     stats.droppedRenderItems = m_droppedRenderItems + m_droppedMaterialItems;
+    stats.droppedMaterialOverrides = m_droppedMaterialOverrides;
+    // More draw groups than the GPU-driven path holds: the frame draws
+    // through CPU submission, which has no group limit, until they fit.
+    stats.excessGpuDrawGroups = frame.gpuDrivenRequested ? excessGpuDrawGroups() : 0u;
+    frame.gpuDrivenFallback = stats.excessGpuDrawGroups > 0;
+    if (m_gpuDrawGroupOverflow.update(frame.gpuDrivenFallback)) {
+        m_log.warning("Opaque surfaces need " + std::to_string(maximumGpuDrawGroups + stats.excessGpuDrawGroups) +
+                      " GPU-driven draw groups (pipeline and geometry page pairs), more than the " +
+                      std::to_string(maximumGpuDrawGroups) + " there are; drawing through CPU submission instead");
+    }
     stats.particleBytes = m_particles.allocatedBytes();
     stats.irradianceVolumeBytes = m_irradianceVolume.allocatedBytes();
     stats.irradianceVolumeProbes =
@@ -585,7 +598,8 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     frame.leadShadowTiles = recordLocalShadows(commandBuffer, frameIndex, scene, assets, settings,
                                                std::span<const LocalLight>(frame.leadLights.data(), shadowedLightCount),
                                                cameraPosition, passTimestamps, stats);
-    const bool gpuDrivenLead = lead.view == 0 && m_gpuDrivenSupported && lead.plan.gpuDrivenSubmission;
+    const bool gpuDrivenLead =
+        lead.view == 0 && m_gpuDrivenSupported && lead.plan.gpuDrivenSubmission && !frame.gpuDrivenFallback;
     if (gpuDrivenLead) {
         // Shadow cascades cull from the same records before the camera does.
         if (!prepareGpuDrivenFrame(frameIndex, leadFrame.lodView,

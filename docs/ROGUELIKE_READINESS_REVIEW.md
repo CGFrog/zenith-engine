@@ -370,11 +370,10 @@ Ordered by rewrite risk. All seven are done (see Status above).
 
 ### Critical follow-ups
 Gaps the critical work left on purpose:
-- **Graceful limits:** the GPU-driven draw-group limit (64 pipeline and geometry-page pairs) is still fatal. `MeshPass`'s older "reported once" flags could move to `OverflowEpisode`.
+- **Graceful limits:** the GPU-driven LOD instance capacity (`maximumGpuDrivenInstances`) still fails the frame.
 - **Fault isolation:** the crash handler does nothing outside Windows. `std::terminate` paths bypass it. A behaviour hook that throws is disabled but doesn't stop Play.
 - **Runtime content:**
   - A scene that holds a runtime mesh can't be saved, so regenerate floors from their seed.
-  - Material-override overflow is logged but not counted in `RenderStats`.
 - **Spawning:** the prefab cache trusts an entry for 500 ms (`PrefabSystem::setFileCheckInterval`).
 - **Transient previews:** a paste or a module reload drops the preview. Debug-draw channel visibility is global and isn't saved. `DemoApplication` draws no debug labels.
 - **Asset collection:** runtime collection skips decoded audio held by emitters, collecting it only down to the audio budget.

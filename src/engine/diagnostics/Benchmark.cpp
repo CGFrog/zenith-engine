@@ -155,6 +155,8 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("render.dropped_items", s.droppedRenderItems, "count");
     sample("render.dropped_skinned_items", s.droppedSkinnedRenderItems, "count");
     sample("render.dropped_particle_emitters", s.droppedParticleEmitters, "count");
+    sample("render.dropped_material_overrides", s.droppedMaterialOverrides, "count");
+    sample("render.excess_gpu_draw_groups", s.excessGpuDrawGroups, "count");
 }
 
 void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& budgets, uint64_t firstFrame,

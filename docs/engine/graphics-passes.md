@@ -336,14 +336,23 @@ the frame. Each overflow is logged once per episode (until a frame fits again,
 - Skinned items beyond the `maximumSkinMatricesPerFrame` (65536) joint
   matrices draw unskinned, in their bind pose (`droppedSkinnedRenderItems`).
 - Material overrides beyond `maximumMaterialOverrides` (1024) distinct
-  material and factor pairs draw their plain material (logged once per
-  episode).
+  material and factor pairs draw their plain material
+  (`droppedMaterialOverrides`).
+- Opaque surfaces spanning more than `maximumGpuDrawGroups` (64) GPU-driven
+  draw groups (pipeline bucket and geometry page pairs, so a geometry-arena
+  layout limit rather than a per-scene count) send the frame's default view
+  through CPU submission, which has no group limit, until they fit again
+  (`excessGpuDrawGroups`, the groups beyond the limit). Nothing is left out;
+  the frame loses GPU culling and the GPU shadow culling that comes with it.
+  The count comes from the render items before any GPU-driven work
+  (`countIndirectDrawGroups`, which predicts `buildIndirectDrawPlan`'s
+  groups), so the whole frame takes one path.
 
-Local lights and local shadow tiles already keep the nearest within their
-limits. The GPU-driven limits still fail the frame and log an error each frame
-they are exceeded: the draw-group limit (64 pipeline bucket and geometry page
-pairs, a geometry-arena layout limit, not a per-scene count) and the LOD
-instance capacity (`maximumGpuDrivenInstances`).
+The geometry arena and the bindless texture table, retried every frame while
+full, warn once per episode the same way. Local lights and local shadow tiles
+already keep the nearest within their limits. The LOD instance capacity
+(`maximumGpuDrivenInstances`) still fails the frame and logs an error each
+frame it is exceeded.
 
 ### Bindless materials and vertex streams
 

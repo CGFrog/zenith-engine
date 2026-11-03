@@ -285,6 +285,11 @@ struct MeshPass::FrameState {
     ShadowCulling shadowCulling{ShadowCulling::Cpu};
     // Set once GPU-driven records were prepared for the default view.
     bool gpuDrivenPrepared{false};
+    // Whether a view of the frame's scene asked for GPU-driven submission
+    // (only the default view can), and whether this frame falls back to CPU
+    // submission because the opaque surfaces need too many draw groups.
+    bool gpuDrivenRequested{false};
+    bool gpuDrivenFallback{false};
     // Joint matrices the frame's scene wrote to the palette buffers;
     // secondary scenes append after them.
     uint32_t skinMatrixCount{1};

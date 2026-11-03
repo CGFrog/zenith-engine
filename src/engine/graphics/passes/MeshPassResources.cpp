@@ -143,14 +143,13 @@ const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetMana
                              streams->skinned() ? GeometryLayout::Skinned : GeometryLayout::Static);
     if (!geometry) {
         // Retried every frame while the arena is full; logged once per episode.
-        if (!m_geometryArenaFullReported) {
+        if (m_geometryArenaFull.update(true)) {
             m_log.warning("Geometry arena could not place a mesh; its draws are deferred until space frees");
-            m_geometryArenaFullReported = true;
         }
         m_deferredUploads.markDeferred(DeferredUploadKind::Mesh, key);
         return nullptr;
     }
-    m_geometryArenaFullReported = false;
+    m_geometryArenaFull.update(false);
     bool uploaded = ensureGeometryPage(geometry->page);
     if (uploaded) {
         const GeometryPage& page = m_geometryPages[geometry->page];
@@ -246,7 +245,7 @@ bool MeshPass::assignTextureSlots(GpuTexture& texture) {
         // Formats without an sRGB variant (BC5) sample linearly in every slot.
         texture.linearSlot = *linear;
         texture.srgbSlot = *linear;
-        m_textureTableFullReported = false;
+        m_textureTableFull.update(false);
         return true;
     }
     const auto srgb = linear ? m_textureTable->acquire(texture.srgbView) : std::nullopt;
@@ -255,14 +254,13 @@ bool MeshPass::assignTextureSlots(GpuTexture& texture) {
             m_textureTable->release(*linear);
         }
         // Retried every frame while the table is full; logged once per episode.
-        if (!m_textureTableFullReported) {
+        if (m_textureTableFull.update(true)) {
             m_log.warning("Bindless texture table is full (" + std::to_string(m_textureTable->capacity()) +
                           " slots); textures are deferred until slots free");
-            m_textureTableFullReported = true;
         }
         return false;
     }
-    m_textureTableFullReported = false;
+    m_textureTableFull.update(false);
     texture.linearSlot = *linear;
     texture.srgbSlot = *srgb;
     return true;
