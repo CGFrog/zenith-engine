@@ -57,6 +57,7 @@ zenith_add_test_suite(engine
         InputActionTests.cpp
         InputActionsJsonTests.cpp
         IrradianceVolumeTests.cpp
+        JobSystemTests.cpp
         LocalShadowTests.cpp
         LoggerTests.cpp
         MaterialAssetTests.cpp

@@ -83,8 +83,7 @@ JobHandle JobSystem::submit(Function function, int priority) {
     auto state = std::make_shared<JobContext::State>();
     state->id = m_nextId++;
     m_queue.push_back({priority, m_nextSequence++, std::move(function), state});
-    std::ranges::stable_sort(
-        m_queue, [](const QueuedJob& left, const QueuedJob& right) { return left.priority > right.priority; });
+    sortQueue();
     m_available.notify_one();
     return JobHandle(state);
 }
@@ -97,9 +96,16 @@ bool JobSystem::reprioritize(const JobHandle& handle, int priority) {
         return false;
     }
     found->priority = priority;
-    std::ranges::stable_sort(
-        m_queue, [](const QueuedJob& left, const QueuedJob& right) { return left.priority > right.priority; });
+    sortQueue();
     return true;
+}
+
+void JobSystem::sortQueue() {
+    // Highest priority first; the submission sequence keeps equal priorities in
+    // submission order, also for a job whose priority changed.
+    std::ranges::sort(m_queue, [](const QueuedJob& left, const QueuedJob& right) {
+        return left.priority != right.priority ? left.priority > right.priority : left.sequence < right.sequence;
+    });
 }
 
 bool JobSystem::takeNext(QueuedJob& job) {
