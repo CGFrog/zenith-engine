@@ -84,7 +84,7 @@ Entity selectVolume(const Scene& scene, const glm::vec3& cameraPosition,
                     SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
 
 // std430 record of one probe in the shader storage buffer; mirrors
-// IrradianceProbe in shaders/mesh.frag. irradiance[0].w is 1 for valid probes.
+// IrradianceProbe in shaders/include/irradiance_volume.glsl. irradiance[0].w is 1 for valid probes.
 struct GpuProbe {
     std::array<glm::vec4, 9> irradiance{};
     std::array<glm::vec2, irradianceProbeDepthTexels> depthMoments{};

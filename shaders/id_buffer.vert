@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Picking id buffer (IdBufferPass): the object's surface in its animated pose,
 // placed by a per-draw model-view-projection so the pass follows the view's
@@ -8,11 +9,7 @@ layout(set = 0, binding = 3, std430) readonly buffer SkinPalettes {
     mat4 joints[];
 } skinPalettes;
 
-layout(push_constant) uniform IdDraw {
-    mat4 modelViewProjection;
-    // x: first joint in the palette, y: joint count, z: object id.
-    uvec4 object;
-} draw;
+#include "id_draw.glsl"
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 4) in uvec4 inJoints;

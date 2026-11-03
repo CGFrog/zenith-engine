@@ -12,7 +12,7 @@
 #include <span>
 #include <vector>
 
-// Mirrors DecalRecord in shaders/mesh.frag and shaders/decal_clusters.comp (std430).
+// Mirrors DecalRecord in shaders/include/decal.glsl (std430).
 struct GpuDecal {
     // Rows of the affine world-to-decal transform (DecalProjector::worldToDecal).
     std::array<glm::vec4, 3> worldToDecal{};

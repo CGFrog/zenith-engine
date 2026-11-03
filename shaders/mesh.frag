@@ -1,7 +1,8 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : require
 
-const float PI = 3.14159265359;
+#include "constants.glsl"
 
 // Quality variants baked in by MeshPass::meshPipelines so disabled paths compile out.
 layout(constant_id = 0) const bool PHYSICALLY_BASED_LIGHTING = true;
@@ -10,48 +11,7 @@ layout(constant_id = 1) const int SHADOW_CASCADE_COUNT = 3;
 // material lit by the camera constants' studio rig.
 layout(constant_id = 2) const bool SOLID_SURFACES = false;
 
-layout(set = 0, binding = 0) uniform CameraData {
-    mat4 viewProjection;
-    mat4 previousViewProjection;
-    mat4 lightViewProjections[3];
-    vec4 cameraPosition;
-    vec4 lightDirection;
-    vec4 lightColor;
-    vec4 environmentSky;
-    vec4 environmentGround;
-    vec4 shadowSettings;
-    vec4 cascadeSplits;
-    vec4 renderingSettings;
-    vec4 environmentSpecular[6];
-    // Clustered local lighting; mirrors CameraData in MeshPass.cpp.
-    vec4 clusterDepth;     // xy: slice log scale, bias; zw: view depth = z / (depth + w)
-    vec4 clusterTileScale; // xy: cluster columns, rows per pixel
-    uvec4 clusterGrid;     // columns, rows, depth slices, local light count
-    // x: image-based lighting, y: probe weight, z: specular mip of roughness 1,
-    // w: ambient-occlusion texels per render pixel
-    vec4 environmentParams;
-    // Reflection probes (U9): x: 1 when per-pixel probe blending is active,
-    // y: resident probe count.
-    vec4 reflectionProbeParams;
-    // Volumetric fog (U10); see VolumetricFog.hpp. x: 1 composites the
-    // integrated fog volume; y, z: froxel slice = log(view depth) * y + z;
-    // w: froxel depth slices.
-    vec4 fogVolume;
-    // xy: integrated-volume uv per render pixel (1 / internal render extent).
-    vec4 fogScreen;
-    // Irradiance volume (U6); mirrors CameraData in MeshPass.cpp.
-    vec4 irradianceVolumeMinimum;  // xyz: world minimum corner, w: intensity
-    vec4 irradianceVolumeCellSize; // xyz: world probe spacing, w: edge blend distance
-    uvec4 irradianceVolumeCounts;  // xyz: probes per axis, w: 1 when a volume is bound
-    vec4 irradianceVolumeBias;     // x: normal bias, y: view bias
-    // Temporal resolve: NDC jitter applied to the current (xy) and previous (zw)
-    // projections, removed from motion vectors. Shaders declaring a prefix of
-    // the block end here.
-    vec4 temporalJitter;
-    // x: seconds of surface animation, y: 1 when sceneDepth holds this
-    // frame's opaque depth.
-    vec4 surfaceAnimation;
-} camera;
+#include "camera.glsl"
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
 
@@ -66,15 +26,7 @@ layout(std430, set = 0, binding = 6) readonly buffer EnvironmentIrradiance {
 // Split-sum BRDF scale and bias, indexed by (n.v, roughness).
 layout(set = 0, binding = 7) uniform sampler2D environmentBrdf;
 
-// Irradiance volume (U6): mirrors irradiance_volume::GpuProbe (std430). Same SH
-// convention as EnvironmentIrradiance; irradiance[0].w is 1 for valid probes.
-// depthMoments holds the mean and mean-square distance to the nearest surface
-// per octahedral texel (irradianceProbeDepthResolution squared texels).
-const int IRRADIANCE_PROBE_DEPTH_RESOLUTION = 8;
-struct IrradianceProbe {
-    vec4 irradiance[9];
-    vec2 depthMoments[IRRADIANCE_PROBE_DEPTH_RESOLUTION * IRRADIANCE_PROBE_DEPTH_RESOLUTION];
-};
+#include "irradiance_volume.glsl"
 layout(std430, set = 0, binding = 8) readonly buffer IrradianceVolumeProbes {
     IrradianceProbe probes[];
 } irradianceVolume;
@@ -91,47 +43,13 @@ layout(set = 0, binding = 24) uniform sampler2D transmissionBackground;
 // depth, reversed Z, read with texelFetch at render pixels.
 layout(set = 0, binding = 25) uniform sampler2D sceneDepth;
 
-// Mirrors MaterialRecord in engine/graphics/MaterialRecord.hpp (std430).
-struct MaterialRecord {
-    vec4 baseColor;
-    vec4 factors;  // metallic, roughness, normal scale, occlusion strength
-    vec4 emissive; // rgb radiance; w unused
-    vec4 surface;  // alpha cutoff, alpha mode (0 opaque, 1 mask, 2 blend), ior, transmission
-    uvec4 textures; // bindless slots: base color, normal, metallic-roughness, occlusion
-    uvec4 extraTextures; // emissive slot, lobe flags (LOBE_*), transmission slot, unused
-    vec4 clearcoat; // factor, perceptual roughness, normal scale, unused
-    vec4 sheen;     // linear rgb color, perceptual roughness
-    vec4 specular;  // linear rgb color, factor
-    vec4 volume;    // attenuation coefficient per world unit (rgb), thickness
-    uvec4 lobeTextures;  // bindless slots: clearcoat, clearcoat roughness, clearcoat normal, sheen color
-    uvec4 layerTextures; // bindless slots: sheen roughness, specular, specular color; w unused
-    vec4 water;          // wave length, steepness, speed, shore fade (LOBE_WATER)
-    uvec4 terrainAlbedo; // terrain layers' bindless slots (LOBE_TERRAIN)
-    uvec4 terrainNormal;
-    uvec4 terrainArm;
-    vec4 terrainTileSize; // metres per repeat of each layer
-};
-
-// Mirror the material_lobes bits in MaterialRecord.hpp.
-const uint LOBE_CLEARCOAT = 1u;
-const uint LOBE_SHEEN = 2u;
-const uint LOBE_TRANSMISSION = 4u;
-const uint LOBE_SPECULAR_TEXTURES = 8u;
-const uint LOBE_VOLUME = 16u;
-const uint LOBE_WATER = 32u;
-const uint LOBE_TERRAIN = 64u;
+#include "material.glsl"
 
 layout(std430, set = 0, binding = 4) readonly buffer Materials {
     MaterialRecord values[];
 } materials;
 
-// Mirrors GpuLocalLight in ClusteredLightingPass.hpp (std430).
-struct LocalLight {
-    vec4 positionRange;  // world position, range
-    vec4 colorIntensity; // linear color, intensity
-    vec4 directionType;  // world direction, type (0 point, 1 spot)
-    vec4 spotCone;       // inner and outer cone cosines, first local shadow tile (-1: unshadowed)
-};
+#include "local_light.glsl"
 
 layout(std430, set = 0, binding = 9) readonly buffer LocalLights {
     LocalLight values[];
@@ -151,12 +69,7 @@ layout(std430, set = 0, binding = 11) readonly buffer ClusterLightIndices {
 // point lights add the cube face (localShadowFace).
 layout(set = 0, binding = 14) uniform sampler2DShadow localShadowAtlas;
 
-// Mirrors GpuLocalShadowTile in LocalShadowPass.hpp (std430).
-struct LocalShadowTile {
-    mat4 viewProjection; // world to the tile's clip space
-    vec4 atlasRect;      // uv of the tile's top-left corner (xy) and its uv extent (zw)
-    vec4 params;         // x: shadow-texel world size per unit distance from the light
-};
+#include "local_shadow_tile.glsl"
 
 layout(std430, set = 0, binding = 15) readonly buffer LocalShadowTiles {
     LocalShadowTile values[];
@@ -167,19 +80,7 @@ layout(std430, set = 0, binding = 15) readonly buffer LocalShadowTiles {
 // probe records, their irradiance and the per-cluster probe masks.
 layout(set = 0, binding = 16) uniform samplerCubeArray reflectionProbeSpecular;
 
-// Mirror maximumResidentReflectionProbes and maximumBlendedReflectionProbes in
-// ReflectionProbes.hpp.
-const uint MAXIMUM_RESIDENT_REFLECTION_PROBES = 8;
-const uint MAXIMUM_BLENDED_REFLECTION_PROBES = 4;
-
-// Mirrors GpuReflectionProbe in ReflectionProbeClusterPass.hpp (std430).
-struct ReflectionProbeRecord {
-    vec4 centerBlend; // world box center, blend distance
-    vec4 halfExtents; // world box half extents
-    ivec4 parameters; // x: priority, y: probe cache slot
-    vec4 viewMinimum; // view-space influence bounds, used by the cluster pass
-    vec4 viewMaximum;
-};
+#include "reflection_probe.glsl"
 
 layout(std430, set = 0, binding = 17) readonly buffer ReflectionProbes {
     uvec4 header; // x: probe count
@@ -190,26 +91,7 @@ layout(std430, set = 0, binding = 17) readonly buffer ReflectionProbes {
     uint clusterMasks[];
 } reflectionProbes;
 
-// Clustered decals (DecalClusterPass). Mirror maximumDecals,
-// maximumDecalsPerCluster and decalDepthFadeFraction in Decals.hpp and the
-// texture flags in DecalClusterPass.hpp.
-const uint MAXIMUM_DECALS = 1024;
-const uint MAXIMUM_DECALS_PER_CLUSTER = 31;
-const uint DECAL_CLUSTER_STRIDE = MAXIMUM_DECALS_PER_CLUSTER + 1;
-const uint DECAL_HAS_ALBEDO = 1u;
-const uint DECAL_HAS_NORMAL = 2u;
-const float DECAL_DEPTH_FADE_FRACTION = 0.25;
-
-// Mirrors GpuDecal in DecalClusterPass.hpp (std430).
-struct DecalRecord {
-    vec4 worldToDecal[3]; // rows of the world-to-decal-space transform
-    vec4 tintOpacity;     // linear tint, opacity
-    vec4 surface;         // roughness, roughness strength, metallic, metallic strength
-    vec4 blend;           // base color strength, normal strength, angle fade scale, angle fade bias
-    uvec4 textures;       // albedo slot (sRGB), normal slot (linear), DECAL_HAS_* flags
-    vec4 viewMinimum;     // view-space bounds, used by the cluster pass
-    vec4 viewMaximum;
-};
+#include "decal.glsl"
 
 layout(std430, set = 0, binding = 19) readonly buffer Decals {
     uvec4 header; // x: decal count; zero when decals are off or absent
@@ -223,12 +105,7 @@ layout(std430, set = 0, binding = 20) readonly buffer DecalClusterLists {
 } decalClusterLists;
 
 // Bindless material textures; slots come from MaterialRecord.
-layout(set = 1, binding = 0) uniform sampler materialSampler;
-layout(set = 1, binding = 1) uniform texture2D materialTextures[];
-
-vec4 sampleMaterialTexture(uint slot, vec2 uv) {
-    return texture(sampler2D(materialTextures[nonuniformEXT(slot)], materialSampler), uv);
-}
+#include "material_textures.glsl"
 
 layout(location = 0) in vec3 worldPosition;
 layout(location = 1) in vec3 worldNormal;
@@ -512,45 +389,7 @@ vec3 evaluateIrradiance(vec4 coefficients[9], vec3 normal) {
     return max(result, vec3(0.0));
 }
 
-// Irradiance volume (U6). Mirrors the irradiance_volume namespace in
-// engine/graphics/IrradianceVolume.cpp; change both together.
-vec2 signNotZero(vec2 value) {
-    return vec2(value.x >= 0.0 ? 1.0 : -1.0, value.y >= 0.0 ? 1.0 : -1.0);
-}
-
-vec2 octahedralEncode(vec3 direction) {
-    vec2 projected = direction.xz / (abs(direction.x) + abs(direction.y) + abs(direction.z));
-    if (direction.y < 0.0) {
-        projected = (1.0 - abs(projected.yx)) * signNotZero(projected);
-    }
-    return projected * 0.5 + 0.5;
-}
-
-vec2 probeDepthTexel(uint probe, ivec2 texel) {
-    texel = clamp(texel, ivec2(0), ivec2(IRRADIANCE_PROBE_DEPTH_RESOLUTION - 1));
-    return irradianceVolume.probes[probe].depthMoments[texel.y * IRRADIANCE_PROBE_DEPTH_RESOLUTION + texel.x];
-}
-
-vec2 sampleProbeDepth(uint probe, vec3 direction) {
-    vec2 texel = octahedralEncode(direction) * float(IRRADIANCE_PROBE_DEPTH_RESOLUTION) - 0.5;
-    vec2 base = floor(texel);
-    vec2 fraction = texel - base;
-    ivec2 corner = ivec2(base);
-    vec2 top = mix(probeDepthTexel(probe, corner), probeDepthTexel(probe, corner + ivec2(1, 0)), fraction.x);
-    vec2 bottom =
-        mix(probeDepthTexel(probe, corner + ivec2(0, 1)), probeDepthTexel(probe, corner + ivec2(1, 1)), fraction.x);
-    return mix(top, bottom, fraction.y);
-}
-
-float chebyshevVisibility(vec2 moments, float distanceToProbe) {
-    if (distanceToProbe <= moments.x) {
-        return 1.0;
-    }
-    float variance = max(moments.y - moments.x * moments.x, 0.0001);
-    float delta = distanceToProbe - moments.x;
-    float probability = variance / (variance + delta * delta);
-    return probability * probability * probability;
-}
+#include "irradiance_probe_depth.glsl"
 
 // Visibility-weighted trilinear blend of the eight probes around the point.
 // Returns irradiance / pi in rgb and the volume's edge weight in a (zero when
@@ -935,55 +774,13 @@ struct SurfaceLobes {
 
 const uint LOBE_LAYERS = LOBE_SHEEN | LOBE_CLEARCOAT;
 
-// Mirror the functions of the same names in env_brdf_lut.comp and
-// EnvironmentLighting.cpp.
-float charlieDistribution(float nDotH, float alpha) {
-    float inverseAlpha = 1.0 / alpha;
-    float sinSquared = max(1.0 - nDotH * nDotH, 0.0);
-    return (2.0 + inverseAlpha) * pow(sinSquared, 0.5 * inverseAlpha) / (2.0 * PI);
-}
-
-float sheenLambdaHelper(float x, float alpha) {
-    float oneMinusAlphaSquared = (1.0 - alpha) * (1.0 - alpha);
-    float a = mix(21.5473, 25.3245, oneMinusAlphaSquared);
-    float b = mix(3.82987, 3.32435, oneMinusAlphaSquared);
-    float c = mix(0.19823, 0.16801, oneMinusAlphaSquared);
-    float d = mix(-1.97760, -1.27393, oneMinusAlphaSquared);
-    float e = mix(-4.32054, -4.85967, oneMinusAlphaSquared);
-    return a / (1.0 + b * pow(x, c)) + d * x + e;
-}
-
-float sheenLambda(float cosine, float alpha) {
-    if (abs(cosine) < 0.5) {
-        return exp(sheenLambdaHelper(cosine, alpha));
-    }
-    return exp(2.0 * sheenLambdaHelper(0.5, alpha) - sheenLambdaHelper(1.0 - cosine, alpha));
-}
-
-float sheenVisibility(float nDotL, float nDotV, float alpha) {
-    float denominator = (1.0 + sheenLambda(nDotV, alpha) + sheenLambda(nDotL, alpha)) * (4.0 * nDotV * nDotL);
-    return clamp(1.0 / max(denominator, 1e-6), 0.0, 1.0);
-}
+#include "sheen.glsl"
 
 float sheenAlpha(float sheenRoughness) {
     return max(sheenRoughness * sheenRoughness, 1e-6);
 }
 
-// KHR_materials_ior and KHR_materials_specular: dielectric reflectance at
-// normal incidence (rgb) and the specular weight (a), which scales the
-// dielectric Fresnel term including its grazing value. ior 1.5 with the
-// default specular gives (0.04, 1), the metallic-roughness model.
-vec4 dielectricSpecular(MaterialRecord material, vec2 uv) {
-    float ior = material.surface.z;
-    float reflectance = (ior - 1.0) / (ior + 1.0);
-    vec3 color = material.specular.rgb;
-    float weight = material.specular.w;
-    if ((material.extraTextures.y & LOBE_SPECULAR_TEXTURES) != 0u) {
-        weight *= sampleMaterialTexture(material.layerTextures.y, uv).a;
-        color *= sampleMaterialTexture(material.layerTextures.z, uv).rgb;
-    }
-    return vec4(min(vec3(reflectance * reflectance) * color, vec3(1.0)), weight);
-}
+#include "dielectric_specular.glsl"
 
 // tangentFrame maps tangent space to world space around the geometric normal.
 SurfaceLobes surfaceLobes(MaterialRecord material, vec2 uv, mat3 tangentFrame, vec3 viewDirection, float nDotV) {

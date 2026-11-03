@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Split-sum environment BRDF table: x = n.v, y = perceptual roughness, sampled at
 // texel centers. Stores (scale, bias) so specular = prefiltered * (F0 * scale + bias)
@@ -14,55 +15,16 @@ layout(push_constant) uniform Settings {
     uvec4 sizes; // x: table size, y: sample count
 } settings;
 
-const float PI = 3.14159265359;
+#include "constants.glsl"
 
-float radicalInverse(uint bits) {
-    return float(bitfieldReverse(bits)) * 2.3283064365386963e-10;
-}
-
-vec3 importanceSampleGgx(uint index, uint count, float roughness) {
-    float alpha = roughness * roughness;
-    float phi = 2.0 * PI * float(index) / float(count);
-    float xi = radicalInverse(index);
-    float cosTheta = sqrt((1.0 - xi) / (1.0 + (alpha * alpha - 1.0) * xi));
-    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
-    return vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
-}
+#include "importance_sampling.glsl"
 
 float smithGeometryIbl(float nDotV, float nDotL, float roughness) {
     float k = roughness * roughness * 0.5;
     return nDotV / (nDotV * (1.0 - k) + k) * (nDotL / (nDotL * (1.0 - k) + k));
 }
 
-// Charlie sheen distribution and visibility; mirror the functions of the same
-// names in EnvironmentLighting.cpp and mesh.frag.
-float charlieDistribution(float nDotH, float alpha) {
-    float inverseAlpha = 1.0 / alpha;
-    float sinSquared = max(1.0 - nDotH * nDotH, 0.0);
-    return (2.0 + inverseAlpha) * pow(sinSquared, 0.5 * inverseAlpha) / (2.0 * PI);
-}
-
-float sheenLambdaHelper(float x, float alpha) {
-    float oneMinusAlphaSquared = (1.0 - alpha) * (1.0 - alpha);
-    float a = mix(21.5473, 25.3245, oneMinusAlphaSquared);
-    float b = mix(3.82987, 3.32435, oneMinusAlphaSquared);
-    float c = mix(0.19823, 0.16801, oneMinusAlphaSquared);
-    float d = mix(-1.97760, -1.27393, oneMinusAlphaSquared);
-    float e = mix(-4.32054, -4.85967, oneMinusAlphaSquared);
-    return a / (1.0 + b * pow(x, c)) + d * x + e;
-}
-
-float sheenLambda(float cosine, float alpha) {
-    if (abs(cosine) < 0.5) {
-        return exp(sheenLambdaHelper(cosine, alpha));
-    }
-    return exp(2.0 * sheenLambdaHelper(0.5, alpha) - sheenLambdaHelper(1.0 - cosine, alpha));
-}
-
-float sheenVisibility(float nDotL, float nDotV, float alpha) {
-    float denominator = (1.0 + sheenLambda(nDotV, alpha) + sheenLambda(nDotL, alpha)) * (4.0 * nDotV * nDotL);
-    return clamp(1.0 / max(denominator, 1e-6), 0.0, 1.0);
-}
+#include "sheen.glsl"
 
 // Mirrors sheenAlbedoCosineSteps and sheenAlbedoAzimuthSteps.
 const uint SHEEN_COSINE_STEPS = 16u;

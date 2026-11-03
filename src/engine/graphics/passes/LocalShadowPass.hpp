@@ -15,7 +15,7 @@
 #include <span>
 #include <vector>
 
-// Mirrors LocalShadowTile in shaders/mesh.frag and shaders/local_shadow.vert
+// Mirrors LocalShadowTile in shaders/include/local_shadow_tile.glsl
 // (std430). One record per atlas tile, at the tile's index in
 // LocalShadowCache::tiles().
 struct GpuLocalShadowTile {
@@ -26,6 +26,8 @@ struct GpuLocalShadowTile {
     // x: world size of one shadow texel per unit distance from the light.
     glm::vec4 params{0.0f};
 };
+
+static_assert(sizeof(GpuLocalShadowTile) == 96, "GpuLocalShadowTile must match the std430 LocalShadowTile struct");
 
 // What the renderer knows about the frame's local lights and casters.
 struct LocalShadowFrameInput {

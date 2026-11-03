@@ -121,6 +121,9 @@ component it is given; the view propagates to multi-selection).
 1. GLSL under `shaders/` with a stage extension (`.vert`, `.frag`, `.comp`);
    the build compiles it to `build/shaders/*.spv` automatically. Resolve it
    at runtime with `shaderRoot()` (`engine/resources/ResourceLocator.hpp`).
+   Take shared records and helpers from `shaders/include/` rather than
+   copying them; a record a second shader needs moves there (see
+   [Shaders › Shared includes](engine/shaders.md#shared-includes)).
 2. The pass under `src/engine/graphics/passes/` (or `graphics/` for frame
    infrastructure), added to `src/engine/CMakeLists.txt`.
 3. Record it from the renderer at the right point of the

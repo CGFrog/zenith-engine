@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Blends the traced screen-space reflections into the HDR scene before the
 // temporal resolve: scene = scene * (1 - max(weight)) + reflection * weight,
@@ -37,13 +38,7 @@ float smoothFade(float x) {
     return x * x * (3.0 - 2.0 * x);
 }
 
-vec3 decodeOctahedral(vec2 encoded) {
-    vec3 normal = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
-    float fold = max(-normal.z, 0.0);
-    normal.x += normal.x >= 0.0 ? -fold : fold;
-    normal.y += normal.y >= 0.0 ? -fold : fold;
-    return normalize(normal);
-}
+#include "octahedral.glsl"
 
 // fresnelSchlickRoughness in mesh.frag.
 vec3 fresnelSchlickRoughness(float normalDotView, vec3 reflectance, float roughness) {

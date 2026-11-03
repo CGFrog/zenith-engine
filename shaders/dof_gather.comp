@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Depth of field, step 2 of 3: scatter-as-gather bokeh blur at half
 // resolution (after Gustafsson's single-pass bokeh depth of field). Samples
@@ -17,19 +18,7 @@ layout(set = 0, binding = 2) uniform sampler2D prepared;
 // (foreground) blur that covers this texel; zero when none does.
 layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D gathered;
 
-// Mirrors DepthOfFieldSettings in DepthOfFieldPass.cpp.
-layout(push_constant) uniform DepthOfFieldSettings {
-    vec4 fullSize;
-    vec4 gatherSize;
-    vec2 gatherUvScale;
-    vec2 depthSize;
-    float cocScale;
-    float focusDistance;
-    float maximumRadius; // full-resolution pixels
-    float depthScale;
-    float depthBias;
-    float ringSpacing; // half-resolution pixels
-} settings;
+#include "depth_of_field.glsl"
 
 const float goldenAngle = 2.39996323;
 // depth_of_field::maximumGatherSamples

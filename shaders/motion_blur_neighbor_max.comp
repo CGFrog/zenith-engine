@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Motion blur, step 2 of 3: the largest tile velocity in each tile's 3x3
 // neighbourhood (McGuire et al. 2012, "NeighborMax"). Tiles are at least as
@@ -10,17 +11,7 @@ layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 2, rgba16f) uniform readonly image2D tileMax;
 layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D neighborMax;
 
-// Mirrors MotionBlurSettings in MotionBlurPass.cpp and the other motion blur shaders.
-layout(push_constant) uniform MotionBlurSettings {
-    mat4 currentToPreviousClip;
-    vec4 colorRegion;
-    vec2 motionRegion;
-    float velocityScale;
-    float radiusPixels;
-    ivec2 tileCount;
-    int tileSize;
-    int sampleCount;
-} settings;
+#include "motion_blur.glsl"
 
 void main() {
     ivec2 tile = ivec2(gl_GlobalInvocationID.xy);

@@ -18,15 +18,15 @@
 // projects along -Y; texture u = x * 0.5 + 0.5 and v = z * 0.5 + 0.5, so the
 // top of the image lies toward local -Z.
 
-// Decals uploaded per frame; mirrors MAXIMUM_DECALS in mesh.frag and
-// decal_clusters.comp. Scenes with more keep the nearest (see selectDecals).
+// Decals uploaded per frame; mirrors MAXIMUM_DECALS in
+// shaders/include/decal.glsl. Scenes with more keep the nearest (see selectDecals).
 inline constexpr uint32_t maximumDecals = 1024;
 // Decals one cluster lists; mirrors MAXIMUM_DECALS_PER_CLUSTER. Each cluster
 // owns a block of one count followed by this many indices.
 inline constexpr uint32_t maximumDecalsPerCluster = 31;
 // Fraction of the box's half depth (along the projection axis) over which a
 // decal fades out toward the box's top and bottom faces; mirrors
-// DECAL_DEPTH_FADE_FRACTION in mesh.frag.
+// DECAL_DEPTH_FADE_FRACTION in shaders/include/decal.glsl.
 inline constexpr float decalDepthFadeFraction = 0.25f;
 
 struct DecalProjector {

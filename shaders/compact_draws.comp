@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Turns per-batch instance counts from gpu_visibility.comp into indexed
 // indirect draw commands. With compaction, non-empty batches are packed to the
@@ -7,17 +8,7 @@
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-// Mirrors GpuDrivenBatch in GpuDrivenPass.hpp.
-struct BatchRecord {
-    uint indexCount;
-    uint firstIndex;
-    int vertexOffset;
-    uint firstInstance;
-    uint group;
-    uint groupFirstBatch;
-    float lodGeometricError;
-    uint nextLodBatch;
-};
+#include "gpu_cull.glsl"
 
 struct DrawCommand {
     uint indexCount;

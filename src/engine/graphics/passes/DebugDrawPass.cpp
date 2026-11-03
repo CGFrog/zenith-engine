@@ -13,7 +13,7 @@
 #include <string>
 
 namespace {
-// Mirrors DebugLineSettings in shaders/debug_line.vert and debug_line.frag.
+// Mirrors DebugLineSettings in shaders/include/debug_line.glsl.
 struct DebugLinePushConstants {
     glm::mat4 viewProjection{1.0f};
     glm::vec4 depthTerms{0.0f};

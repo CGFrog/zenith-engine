@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Depth of field, step 1 of 3: downsamples the HDR scene to the
 // half-resolution gather target and stores each texel's signed circle of
@@ -15,28 +16,7 @@ layout(set = 0, binding = 1) uniform sampler2D motionDepth;
 // rgb: averaged scene color, a: signed CoC radius in half-resolution pixels.
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D prepared;
 
-// Mirrors DepthOfFieldSettings in DepthOfFieldPass.cpp.
-layout(push_constant) uniform DepthOfFieldSettings {
-    vec4 fullSize;      // blurred-image width, height, 1 / width, 1 / height
-    vec4 gatherSize;    // gather width, height, 1 / width, 1 / height
-    vec2 gatherUvScale; // gather extent / gather image extent
-    vec2 depthSize;     // depth (render) extent in pixels
-    float cocScale;
-    float focusDistance; // meters
-    float maximumRadius; // full-resolution pixels
-    float depthScale;
-    float depthBias;
-    float ringSpacing;
-} settings;
-
-float circleOfConfusion(ivec2 pixel) {
-    vec2 uv = (vec2(pixel) + 0.5) * settings.fullSize.zw;
-    ivec2 depthTexel = clamp(ivec2(uv * settings.depthSize), ivec2(0), ivec2(settings.depthSize) - 1);
-    float depth = texelFetch(motionDepth, depthTexel, 0).w;
-    float viewDistance = settings.depthBias / (depth + settings.depthScale);
-    float radius = settings.cocScale * (1.0 - settings.focusDistance / max(viewDistance, 1e-6));
-    return clamp(radius, -settings.maximumRadius, settings.maximumRadius);
-}
+#include "depth_of_field.glsl"
 
 void main() {
     ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
@@ -50,7 +30,7 @@ void main() {
         for (int x = 0; x < 2; ++x) {
             ivec2 pixel = min(texel * 2 + ivec2(x, y), lastPixel);
             color += max(texelFetch(sceneColor, pixel, 0).rgb, vec3(0.0));
-            circle += circleOfConfusion(pixel);
+            circle += circleOfConfusion(motionDepth, pixel);
         }
     }
     // Averages, with the radius converted to half-resolution pixels.

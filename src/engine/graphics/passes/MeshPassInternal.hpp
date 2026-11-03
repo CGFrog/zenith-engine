@@ -49,6 +49,7 @@ constexpr uint32_t transmissionBackgroundBinding = 24;
 // depth pyramid, whose level 0 is the opaque depth.
 constexpr uint32_t sceneDepthBinding = 25;
 
+// Mirrors the CameraData block in shaders/include/camera.glsl (std140).
 struct CameraData {
     glm::mat4 viewProjection{1.0f};
     glm::mat4 previousViewProjection{1.0f};
@@ -93,8 +94,7 @@ struct CameraData {
     // x: normal bias, y: view bias (world units); zw unused.
     glm::vec4 irradianceVolumeBias{0.0f};
     // Temporal resolve: NDC jitter of the current (xy) and previous (zw)
-    // projections, removed from motion vectors in mesh.frag. Shaders that
-    // declare only a prefix of the block end here; new members follow it.
+    // projections, removed from motion vectors in mesh.frag.
     glm::vec4 temporalJitter{0.0f};
     // x: seconds of surface animation (water waves; MeshPass::
     // advanceSurfaceAnimation), y: 1 when the scene depth (binding 25) holds
@@ -102,13 +102,17 @@ struct CameraData {
     glm::vec4 surfaceAnimation{0.0f};
 };
 
-// Mirrors RenderObject in the mesh, shadow, outline, and selection shaders.
+static_assert(sizeof(CameraData) == 752, "CameraData must match the std140 block in camera.glsl");
+
+// Mirrors RenderObject in shaders/include/render_object.glsl (std430).
 struct ObjectData {
     glm::mat4 model{1.0f};
     glm::mat4 previousModel{1.0f};
     // x: skin palette offset, y: joint count, z: material record index.
     glm::uvec4 skin{0};
 };
+
+static_assert(sizeof(ObjectData) == 144, "ObjectData must match the std430 RenderObject struct");
 
 inline void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageAspectFlags aspect,
                          VkImageLayout oldLayout, VkImageLayout newLayout, VkPipelineStageFlags2 srcStage,

@@ -25,7 +25,7 @@ struct GpuDrivenObjectRecord {
     glm::uvec4 skin{0u};
 };
 
-// Mirrors BatchRecord in shaders/gpu_visibility.comp and compact_draws.comp.
+// Mirrors BatchRecord in shaders/include/gpu_cull.glsl.
 struct GpuDrivenBatch {
     uint32_t indexCount{0};
     uint32_t firstIndex{0};
@@ -39,6 +39,8 @@ struct GpuDrivenBatch {
     // Batch of the next coarser level of the same primitive, when one exists.
     uint32_t nextLodBatch{0};
 };
+
+static_assert(sizeof(GpuDrivenBatch) == 32, "GpuDrivenBatch must match the std430 BatchRecord struct");
 
 // GPU frustum and two-phase occlusion culling that writes indirect draws.
 // Per frame: prepare -> beginFrame -> cull(Early) -> draw early groups ->

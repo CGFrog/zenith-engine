@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // GPU particles, step 2: ages and moves every live particle of the pool,
 // frees expired ones, culls the rest against the view, lights lit ones at
@@ -8,55 +9,14 @@
 
 layout(local_size_x = 64) in;
 
-const float PI = 3.14159265359;
-const uint FLAG_LIT = 2u;
-const uint FLAG_LOCAL_SPACE = 4u;
+#include "constants.glsl"
+#include "particle.glsl"
 
-// Mirrors particles::GpuParticleFrame (std140).
-layout(set = 0, binding = 0) uniform ParticleFrame {
-    mat4 viewProjection;
-    mat4 lightViewProjections[3];
-    vec4 cameraPosition; // w: time step
-    vec4 lightDirection; // xyz: toward the sun
-    vec4 lightRadiance;
-    vec4 cascadeSplits;
-    vec4 clusterDepth;   // x, y: slice = log(depth) * x + y; z, w: projection[0][0], [1][1]
-    uvec4 clusterGrid;   // columns, rows, slices, local light count
-    uvec4 counts;        // x: pool slots, y: spawns, z: sort keys, w: shadow cascades
-    vec4 ambient;        // rgb: hemisphere ambient radiance, w: environment diffuse intensity
-    uvec4 flags;         // x: ambient from the irradiance SH, y: emitter table entries
-    vec4 irradianceVolumeMinimum;
-    vec4 irradianceVolumeCellSize;
-    uvec4 irradianceVolumeCounts;
-} frame;
-
-// Mirrors particles::GpuParticleEmitter (std430).
-struct Emitter {
-    mat4 localToWorld;
-    vec4 gravityDrag;
-    vec4 direction;
-    vec4 speedLifetime;
-    vec4 sizeSpin; // x, y: start and end size, z: angular speed
-    vec4 startColor;
-    vec4 endColor;
-    vec4 shading; // x: emissive intensity, y: soft distance
-    uvec4 pool;
-    uvec4 spawn;
-};
+#include "particle_simulation.glsl"
 
 layout(std430, set = 0, binding = 1) readonly buffer Emitters {
     Emitter values[];
 } emitters;
-
-// Mirrors particles::GpuParticle (std430).
-struct Particle {
-    vec4 positionAge;
-    vec4 velocityLifetime;
-    vec4 worldPositionSize;
-    vec4 radiance;
-    vec4 render;
-    uvec4 info;
-};
 
 layout(std430, set = 0, binding = 2) buffer Particles {
     Particle values[];
@@ -77,13 +37,7 @@ layout(std430, set = 0, binding = 4) buffer DrawArguments {
 
 layout(set = 0, binding = 5) uniform sampler2DArrayShadow shadowMap;
 
-// Mirrors GpuLocalLight in ClusteredLightingPass.hpp (std430).
-struct LocalLight {
-    vec4 positionRange;
-    vec4 colorIntensity;
-    vec4 directionType;
-    vec4 spotCone;
-};
+#include "local_light.glsl"
 
 layout(std430, set = 0, binding = 6) readonly buffer LocalLights {
     LocalLight values[];
@@ -102,12 +56,7 @@ layout(std430, set = 0, binding = 9) readonly buffer EnvironmentIrradiance {
     vec4 coefficients[9];
 } environmentIrradiance;
 
-// Mirrors IrradianceProbe in mesh.frag and irradiance_volume::GpuProbe.
-const int IRRADIANCE_PROBE_DEPTH_RESOLUTION = 8;
-struct IrradianceProbe {
-    vec4 irradiance[9];
-    vec2 depthMoments[IRRADIANCE_PROBE_DEPTH_RESOLUTION * IRRADIANCE_PROBE_DEPTH_RESOLUTION];
-};
+#include "irradiance_volume.glsl"
 
 layout(std430, set = 0, binding = 10) readonly buffer IrradianceVolumeProbes {
     IrradianceProbe probes[];
@@ -182,45 +131,7 @@ vec3 localLightIrradiance(vec3 world, vec4 clip) {
     return irradiance;
 }
 
-// Octahedral lookup and Chebyshev test mirror the irradiance volume functions
-// in mesh.frag and volumetric_fog_inject.comp.
-vec2 signNotZero(vec2 value) {
-    return vec2(value.x >= 0.0 ? 1.0 : -1.0, value.y >= 0.0 ? 1.0 : -1.0);
-}
-
-vec2 octahedralEncode(vec3 direction) {
-    vec2 projected = direction.xz / (abs(direction.x) + abs(direction.y) + abs(direction.z));
-    if (direction.y < 0.0) {
-        projected = (1.0 - abs(projected.yx)) * signNotZero(projected);
-    }
-    return projected * 0.5 + 0.5;
-}
-
-vec2 probeDepthTexel(uint probe, ivec2 texel) {
-    texel = clamp(texel, ivec2(0), ivec2(IRRADIANCE_PROBE_DEPTH_RESOLUTION - 1));
-    return irradianceVolume.probes[probe].depthMoments[texel.y * IRRADIANCE_PROBE_DEPTH_RESOLUTION + texel.x];
-}
-
-vec2 sampleProbeDepth(uint probe, vec3 direction) {
-    vec2 texel = octahedralEncode(direction) * float(IRRADIANCE_PROBE_DEPTH_RESOLUTION) - 0.5;
-    vec2 base = floor(texel);
-    vec2 fraction = texel - base;
-    ivec2 corner = ivec2(base);
-    vec2 top = mix(probeDepthTexel(probe, corner), probeDepthTexel(probe, corner + ivec2(1, 0)), fraction.x);
-    vec2 bottom =
-        mix(probeDepthTexel(probe, corner + ivec2(0, 1)), probeDepthTexel(probe, corner + ivec2(1, 1)), fraction.x);
-    return mix(top, bottom, fraction.y);
-}
-
-float chebyshevVisibility(vec2 moments, float distanceToProbe) {
-    if (distanceToProbe <= moments.x) {
-        return 1.0;
-    }
-    float variance = max(moments.y - moments.x * moments.x, 0.0001);
-    float delta = distanceToProbe - moments.x;
-    float probability = variance / (variance + delta * delta);
-    return probability * probability * probability;
-}
+#include "irradiance_probe_depth.glsl"
 
 // Mirrors irradiance_volume::sampleMeanRadiance (see volumeMeanRadiance in
 // volumetric_fog_inject.comp): rgb mean radiance, a edge weight.

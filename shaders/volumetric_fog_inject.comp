@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Froxel volumetric fog, step 1: evaluates the participating medium of every
 // froxel and the light it scatters toward the eye (shadowed sun, clustered
@@ -8,7 +9,7 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-const float PI = 3.14159265359;
+#include "constants.glsl"
 
 // Mirrors InjectUniforms in VolumetricFogPass.cpp (std140).
 layout(set = 0, binding = 0) uniform FogFrame {
@@ -39,13 +40,7 @@ layout(set = 0, binding = 0) uniform FogFrame {
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
 
-// Mirrors GpuLocalLight in ClusteredLightingPass.hpp (std430).
-struct LocalLight {
-    vec4 positionRange;
-    vec4 colorIntensity;
-    vec4 directionType;
-    vec4 spotCone;
-};
+#include "local_light.glsl"
 
 layout(std430, set = 0, binding = 2) readonly buffer LocalLights {
     LocalLight values[];
@@ -67,14 +62,7 @@ layout(std430, set = 0, binding = 5) readonly buffer EnvironmentIrradiance {
 layout(set = 0, binding = 6) uniform sampler3D historyVolume;
 layout(set = 0, binding = 7, rgba16f) uniform writeonly image3D scatteringVolume;
 
-// Mirrors IrradianceProbe in mesh.frag and irradiance_volume::GpuProbe:
-// order-2 SH of irradiance / pi (irradiance[0].w is 1 for valid probes) and
-// distance moments per octahedral texel.
-const int IRRADIANCE_PROBE_DEPTH_RESOLUTION = 8;
-struct IrradianceProbe {
-    vec4 irradiance[9];
-    vec2 depthMoments[IRRADIANCE_PROBE_DEPTH_RESOLUTION * IRRADIANCE_PROBE_DEPTH_RESOLUTION];
-};
+#include "irradiance_volume.glsl"
 
 layout(std430, set = 0, binding = 8) readonly buffer IrradianceVolumeProbes {
     IrradianceProbe probes[];
@@ -172,45 +160,7 @@ vec3 localLightScattering(uvec3 froxel, vec3 world, vec3 toEye) {
     return radiance;
 }
 
-// Octahedral lookup and Chebyshev test mirror the irradiance volume functions
-// in mesh.frag (and engine/graphics/IrradianceVolume.cpp).
-vec2 signNotZero(vec2 value) {
-    return vec2(value.x >= 0.0 ? 1.0 : -1.0, value.y >= 0.0 ? 1.0 : -1.0);
-}
-
-vec2 octahedralEncode(vec3 direction) {
-    vec2 projected = direction.xz / (abs(direction.x) + abs(direction.y) + abs(direction.z));
-    if (direction.y < 0.0) {
-        projected = (1.0 - abs(projected.yx)) * signNotZero(projected);
-    }
-    return projected * 0.5 + 0.5;
-}
-
-vec2 probeDepthTexel(uint probe, ivec2 texel) {
-    texel = clamp(texel, ivec2(0), ivec2(IRRADIANCE_PROBE_DEPTH_RESOLUTION - 1));
-    return irradianceVolume.probes[probe].depthMoments[texel.y * IRRADIANCE_PROBE_DEPTH_RESOLUTION + texel.x];
-}
-
-vec2 sampleProbeDepth(uint probe, vec3 direction) {
-    vec2 texel = octahedralEncode(direction) * float(IRRADIANCE_PROBE_DEPTH_RESOLUTION) - 0.5;
-    vec2 base = floor(texel);
-    vec2 fraction = texel - base;
-    ivec2 corner = ivec2(base);
-    vec2 top = mix(probeDepthTexel(probe, corner), probeDepthTexel(probe, corner + ivec2(1, 0)), fraction.x);
-    vec2 bottom =
-        mix(probeDepthTexel(probe, corner + ivec2(0, 1)), probeDepthTexel(probe, corner + ivec2(1, 1)), fraction.x);
-    return mix(top, bottom, fraction.y);
-}
-
-float chebyshevVisibility(vec2 moments, float distanceToProbe) {
-    if (distanceToProbe <= moments.x) {
-        return 1.0;
-    }
-    float variance = max(moments.y - moments.x * moments.x, 0.0001);
-    float delta = distanceToProbe - moments.x;
-    float probability = variance / (variance + delta * delta);
-    return probability * probability * probability;
-}
+#include "irradiance_probe_depth.glsl"
 
 // Mirrors irradiance_volume::sampleMeanRadiance: rgb is the probes' mean
 // radiance (order-0 SH term), a the edge weight (zero outside the box or when

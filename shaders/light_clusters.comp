@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Assigns local lights to view clusters: one invocation per cluster, lights
 // staged through shared memory in batches. Lights are tested in ascending
@@ -11,13 +12,7 @@ const uint MAXIMUM_LIGHTS_PER_CLUSTER = 128;
 
 layout(local_size_x = 64) in;
 
-// Mirrors GpuLocalLight in ClusteredLightingPass.hpp (std430).
-struct LocalLight {
-    vec4 positionRange;
-    vec4 colorIntensity;
-    vec4 directionType;
-    vec4 spotCone; // inner and outer cone cosines, first local shadow tile (-1: none)
-};
+#include "local_light.glsl"
 
 layout(std430, set = 0, binding = 0) readonly buffer Lights {
     LocalLight values[];

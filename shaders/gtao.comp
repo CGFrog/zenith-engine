@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Ground-truth ambient occlusion (Jimenez et al. 2016) from the depth prepass.
 // src/engine/graphics/AmbientOcclusion.cpp mirrors the integration on the CPU;
@@ -36,17 +37,11 @@ layout(push_constant) uniform Settings {
     uint horizonLevel;      // pyramid level of the horizon samples
 } settings;
 
-const float PI = 3.14159265359;
+#include "constants.glsl"
 // Stored for the sky and other uncovered texels; the largest finite half float.
 const float SKY_DEPTH = 65504.0;
 
-vec3 decodeOctahedral(vec2 encoded) {
-    vec3 normal = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
-    float fold = max(-normal.z, 0.0);
-    normal.x += normal.x >= 0.0 ? -fold : fold;
-    normal.y += normal.y >= 0.0 ? -fold : fold;
-    return normalize(normal);
-}
+#include "octahedral.glsl"
 
 // `pixel` is a continuous render-pixel position (pixel centers at +0.5).
 vec3 viewPosition(vec2 pixel, float depth) {

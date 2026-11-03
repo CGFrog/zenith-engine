@@ -53,3 +53,57 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
 Recognized shader extensions automatically produce matching
 `build/shaders/<relative-path>.spv` files.
+
+## Shared includes
+
+GLSL that more than one shader needs lives once in `shaders/include/*.glsl`
+and is pulled in with `#include "<name>.glsl"` (the shader enables
+`GL_GOOGLE_include_directive`). The `.glsl` extension is not a stage, so an
+include is never compiled alone. glslang writes a depfile per shader, so
+editing an include rebuilds exactly the shaders that use it.
+
+Rules:
+
+- Every GPU record mirrored from C++ lives in one include, and the C++ type's
+  comment names it. A C++ `static_assert` pins the record's size.
+- Includes hold types, constants and functions. A shader declares its own
+  bindings, because the binding numbers differ between passes. The exception
+  is a binding that is part of one descriptor set layout every includer
+  shares: the camera block (`camera.glsl`), the bindless material set
+  (`material_textures.glsl`), the particle frame block
+  (`particle_simulation.glsl`) and push constants shared by one feature's
+  passes.
+- A function that reads a resource the includer declares says so in the
+  include's header comment (`irradiance_probe_depth.glsl` reads
+  `irradianceVolume`). Prefer passing the resource as a parameter when GLSL
+  allows it (samplers, as in `depth_of_field.glsl`).
+- Each include has an include guard (`ZENITH_<NAME>_GLSL`) and opens with a
+  comment saying what it is for.
+
+| Include | Contents | C++ mirror |
+| --- | --- | --- |
+| `constants.glsl` | `PI` | – |
+| `camera.glsl` | The camera uniform block (set 0, binding 0) | `mesh_pass_detail::CameraData` |
+| `render_object.glsl` | `RenderObject` | `mesh_pass_detail::ObjectData` |
+| `material.glsl` | `MaterialRecord`, `LOBE_*` | `MaterialRecord`, `material_lobes` |
+| `material_textures.glsl` | Bindless material set, `sampleMaterialTexture` | – |
+| `dielectric_specular.glsl` | `dielectricSpecular` (KHR_materials_ior/specular) | – |
+| `local_light.glsl` | `LocalLight` | `GpuLocalLight` |
+| `local_shadow_tile.glsl` | `LocalShadowTile` | `GpuLocalShadowTile` |
+| `irradiance_volume.glsl` | `IrradianceProbe` | `irradiance_volume::GpuProbe` |
+| `irradiance_probe_depth.glsl` | Probe depth moments and Chebyshev visibility | `irradiance_volume` functions |
+| `octahedral.glsl` | Octahedral encode and decode | `irradiance_volume`, `vertex_packing` |
+| `vertex_packing.glsl` | `decodeTangent` | `vertex_packing::unpackTangent` |
+| `reflection_probe.glsl` | `ReflectionProbeRecord`, probe limits | `GpuReflectionProbe` |
+| `decal.glsl` | `DecalRecord`, decal limits and flags | `GpuDecal`, `Decals.hpp` limits |
+| `sheen.glsl` | Charlie sheen distribution and visibility | `EnvironmentLighting.cpp` |
+| `environment_cube.glsl` | `cubeFaceDirection` | – |
+| `importance_sampling.glsl` | `radicalInverse`, `importanceSampleGgx` | – |
+| `hash.glsl` | `pcgHash` | – |
+| `particle.glsl` | `Particle`, `FLAG_*` | `GpuParticle`, `particles::flag*` |
+| `particle_simulation.glsl` | `ParticleFrame` block, `Emitter` | `GpuParticleFrame`, `GpuParticleEmitter` |
+| `gpu_cull.glsl` | `BatchRecord` | `GpuDrivenBatch` |
+| `depth_of_field.glsl` | DoF push constants, `circleOfConfusion` | `DepthOfFieldSettingsBlock` |
+| `motion_blur.glsl` | Motion blur push constants, `velocityAndDistance` | `MotionBlurSettings` |
+| `debug_line.glsl` | Debug line push constants | `DebugLinePushConstants` |
+| `id_draw.glsl` | Object-ID push constants | `IdBufferDraw` |

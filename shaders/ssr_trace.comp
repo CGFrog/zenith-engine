@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Hierarchical (Hi-Z) screen-space reflection trace. For each traced texel it
 // reflects the view vector about the depth prepass normal, marches the
@@ -50,13 +51,7 @@ vec3 projectToScreen(vec3 viewPosition, vec2 renderExtent) {
     return vec3((ndc * 0.5 + 0.5) * renderExtent, depth);
 }
 
-vec3 decodeOctahedral(vec2 encoded) {
-    vec3 normal = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
-    float fold = max(-normal.z, 0.0);
-    normal.x += normal.x >= 0.0 ? -fold : fold;
-    normal.y += normal.y >= 0.0 ? -fold : fold;
-    return normalize(normal);
-}
+#include "octahedral.glsl"
 
 uvec2 levelExtent(uint level) {
     return max(constants.extents.xy >> level, uvec2(1u));

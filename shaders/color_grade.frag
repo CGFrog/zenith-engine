@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Display-referred finishing stage (ColorGradePass): the LUT grade, vignette
 // and film grain, in that order, over the tone-mapped frame. Mirrors
@@ -21,11 +22,7 @@ layout(push_constant) uniform ColorGradeSettings {
 
 layout(location = 0) out vec4 outColor;
 
-uint pcgHash(uint value) {
-    uint state = value * 747796405u + 2891336453u;
-    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
+#include "hash.glsl"
 
 vec3 linearToSrgb(vec3 linear) {
     vec3 clamped = clamp(linear, 0.0, 1.0);

@@ -10,8 +10,7 @@
 
 // GPU form of a MaterialAsset: one std430 record per material in the camera
 // set's material buffer (binding 4). Mirrored by MaterialRecord in
-// shaders/mesh.frag, shaders/shadow.frag and shaders/depth_normal.frag; change
-// all four together.
+// shaders/include/material.glsl; change both together.
 struct MaterialRecord {
     glm::vec4 baseColor{1.0f};
     glm::vec4 factors{1.0f, 1.0f, 1.0f, 1.0f}; // metallic, roughness, normal scale, occlusion strength

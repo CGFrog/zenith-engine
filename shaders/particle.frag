@@ -1,5 +1,6 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : require
 
 // Shades one particle quad: sprite times the particle's radiance, faded
 // against the opaque depth behind it (soft particles), with the volumetric fog
@@ -8,32 +9,11 @@
 // (z) takes the strongest particle coverage so the temporal resolve trusts
 // history less where particles move. See ParticlePass.cpp.
 
-const uint FLAG_ADDITIVE = 1u;
+#include "particle.glsl"
 const uint TEXTURE_SLOT_SHIFT = 8u;
 const uint TEXTURE_SLOT_MASK = 0xffu;
 
-// Prefix of CameraData in mesh.frag (std140) through the fog members.
-layout(set = 0, binding = 0) uniform CameraData {
-    mat4 viewProjection;
-    mat4 previousViewProjection;
-    mat4 lightViewProjections[3];
-    vec4 cameraPosition;
-    vec4 lightDirection;
-    vec4 lightColor;
-    vec4 environmentSky;
-    vec4 environmentGround;
-    vec4 shadowSettings;
-    vec4 cascadeSplits;
-    vec4 renderingSettings;
-    vec4 environmentSpecular[6];
-    vec4 clusterDepth; // zw: view depth = z / (depth + w)
-    vec4 clusterTileScale;
-    uvec4 clusterGrid;
-    vec4 environmentParams;
-    vec4 reflectionProbeParams;
-    vec4 fogVolume; // x: fog active; y, z: froxel slice = log(depth) * y + z; w: slices
-    vec4 fogScreen; // xy: integrated-volume uv per render pixel
-} camera;
+#include "camera.glsl"
 
 layout(set = 0, binding = 18) uniform sampler3D volumetricFog;
 

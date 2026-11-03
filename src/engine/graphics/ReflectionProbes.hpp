@@ -17,8 +17,8 @@
 // functions below; reflection_probe_clusters.comp mirrors the cluster test.
 
 // Probes resident in the probe cube array at once; mirrors
-// MAXIMUM_RESIDENT_REFLECTION_PROBES in mesh.frag and
-// reflection_probe_clusters.comp. Cluster masks hold one bit per probe.
+// MAXIMUM_RESIDENT_REFLECTION_PROBES in shaders/include/reflection_probe.glsl.
+// Cluster masks hold one bit per probe.
 inline constexpr uint32_t maximumResidentReflectionProbes = 8;
 // Probes blended at one point; mirrors MAXIMUM_BLENDED_REFLECTION_PROBES.
 inline constexpr size_t maximumBlendedReflectionProbes = 4;

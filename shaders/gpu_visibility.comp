@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Two-phase occlusion culling. The early phase emits objects that were visible
 // last frame (frustum test only); they are drawn and the depth pyramid is built
@@ -24,23 +25,9 @@ struct ObjectRecord {
     uvec4 skin; // x: palette offset, y: joint count, z: material index
 };
 
-// Mirrors GpuDrivenBatch in GpuDrivenPass.hpp.
-struct BatchRecord {
-    uint indexCount;
-    uint firstIndex;
-    int vertexOffset;
-    uint firstInstance;
-    uint group;
-    uint groupFirstBatch;
-    float lodGeometricError;
-    uint nextLodBatch;
-};
+#include "gpu_cull.glsl"
 
-struct RenderObject {
-    mat4 model;
-    mat4 previousModel;
-    uvec4 skin;
-};
+#include "render_object.glsl"
 
 layout(std430, set = 0, binding = 0) readonly buffer ObjectRecords {
     ObjectRecord values[];

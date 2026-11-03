@@ -10,8 +10,8 @@
 #include <span>
 #include <vector>
 
-// Mirrors ReflectionProbeRecord in shaders/mesh.frag and
-// shaders/reflection_probe_clusters.comp (std430).
+// Mirrors ReflectionProbeRecord in shaders/include/reflection_probe.glsl
+// (std430).
 struct GpuReflectionProbe {
     glm::vec4 centerBlend{0.0f}; // world box center, blend distance
     glm::vec4 halfExtents{0.0f}; // world box half extents; w unused

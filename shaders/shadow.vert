@@ -1,28 +1,13 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
-layout(set = 0, binding = 0) uniform CameraData {
-    mat4 viewProjection;
-    mat4 previousViewProjection;
-    mat4 lightViewProjections[3];
-    vec4 cameraPosition;
-    vec4 lightDirection;
-    vec4 lightColor;
-    vec4 environmentSky;
-    vec4 environmentGround;
-    vec4 shadowSettings;
-    vec4 cascadeSplits;
-    vec4 renderingSettings;
-} camera;
+#include "camera.glsl"
 
 layout(push_constant) uniform ShadowDrawData {
     vec4 settings;
 } drawData;
 
-struct RenderObject {
-    mat4 model;
-    mat4 previousModel;
-    uvec4 skin;
-};
+#include "render_object.glsl"
 
 layout(set = 0, binding = 2, std430) readonly buffer ObjectBuffer {
     RenderObject values[];

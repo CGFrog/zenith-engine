@@ -1,23 +1,13 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Camera-facing particle quads pulled from the sorted keys: instance i draws
 // the particle named by key i, so instances follow the back-to-front order.
 // See src/engine/graphics/Particles.hpp and ParticlePass.cpp.
 
-// Prefix of CameraData in mesh.frag (std140); only these members are read.
-layout(set = 0, binding = 0) uniform CameraData {
-    mat4 viewProjection;
-} camera;
+#include "camera.glsl"
 
-// Mirrors particles::GpuParticle (std430).
-struct Particle {
-    vec4 positionAge;
-    vec4 velocityLifetime;
-    vec4 worldPositionSize; // xyz: world center, w: size
-    vec4 radiance;          // rgb: radiance, a: opacity
-    vec4 render;            // x: rotation, y: soft distance
-    uvec4 info;             // z: flags and texture slot
-};
+#include "particle.glsl"
 
 layout(std430, set = 1, binding = 0) readonly buffer Particles {
     Particle values[];

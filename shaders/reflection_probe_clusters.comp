@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Assigns resident reflection probes to view clusters: one invocation per
 // cluster writes a mask with bit i set when probe i's view-space influence
@@ -7,19 +8,9 @@
 // and the cluster bounds of ClusterGrid in Lighting.cpp (also used by
 // light_clusters.comp).
 
-// Mirrors maximumResidentReflectionProbes in ReflectionProbes.hpp.
-const uint MAXIMUM_RESIDENT_REFLECTION_PROBES = 8;
+#include "reflection_probe.glsl"
 
 layout(local_size_x = 64) in;
-
-// Mirrors GpuReflectionProbe in ReflectionProbeClusterPass.hpp (std430).
-struct ReflectionProbeRecord {
-    vec4 centerBlend;
-    vec4 halfExtents;
-    ivec4 parameters;
-    vec4 viewMinimum;
-    vec4 viewMaximum;
-};
 
 // Same layout as ReflectionProbes in mesh.frag.
 layout(std430, set = 0, binding = 0) buffer ReflectionProbes {

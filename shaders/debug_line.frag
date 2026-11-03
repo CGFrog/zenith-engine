@@ -1,11 +1,7 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
-// Mirrors debug_line.vert.
-layout(push_constant) uniform DebugLineSettings {
-    mat4 viewProjection;
-    vec4 depthTerms;
-    vec4 target;
-} settings;
+#include "debug_line.glsl"
 
 // The view's scene depth (reversed Z) within its render extent.
 layout(set = 0, binding = 0) uniform sampler2D sceneDepth;

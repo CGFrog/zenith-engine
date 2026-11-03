@@ -26,7 +26,7 @@ bool storageBinding(uint32_t binding) {
     return binding >= preparedStorageBinding;
 }
 
-// Mirrors DepthOfFieldSettings in shaders/dof_*.comp.
+// Mirrors DepthOfFieldSettings in shaders/include/depth_of_field.glsl.
 struct DepthOfFieldSettingsBlock {
     glm::vec4 fullSize{0.0f};
     glm::vec4 gatherSize{0.0f};

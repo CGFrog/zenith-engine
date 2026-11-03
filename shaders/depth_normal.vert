@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Depth prepass. The clip-space position must match mesh.vert bit for bit so
 // the shading pass can test EQUAL against this depth: keep the position math
@@ -6,21 +7,14 @@
 // and an invariant gl_Position).
 invariant gl_Position;
 
-layout(set = 0, binding = 0) uniform CameraData {
-    mat4 viewProjection;
-    mat4 previousViewProjection;
-} camera;
+#include "camera.glsl"
 
 // Rigid world-to-view transform of the frame (no projection).
 layout(push_constant) uniform DepthNormalData {
     mat4 view;
 } drawData;
 
-struct RenderObject {
-    mat4 model;
-    mat4 previousModel;
-    uvec4 skin;
-};
+#include "render_object.glsl"
 
 layout(std430, set = 0, binding = 2) readonly buffer ObjectData {
     RenderObject values[];
@@ -43,22 +37,7 @@ layout(location = 2) out vec4 viewTangent;
 // skin.z carries the object's material record index.
 layout(location = 3) flat out uint materialIndex;
 
-// Mirrors vertex_packing::decodeOctahedral.
-vec3 decodeOctahedral(vec2 encoded) {
-    vec3 direction = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
-    float fold = max(-direction.z, 0.0);
-    direction.x += direction.x >= 0.0 ? -fold : fold;
-    direction.y += direction.y >= 0.0 ? -fold : fold;
-    return normalize(direction);
-}
-
-// Mirrors vertex_packing::unpackTangent.
-vec4 decodeTangent(vec2 packedTangent) {
-    const float minimumFoldedMagnitude = 1.0 / 32767.0;
-    float magnitude = (abs(packedTangent.y) - minimumFoldedMagnitude) / (1.0 - minimumFoldedMagnitude);
-    vec2 encoded = vec2(packedTangent.x, clamp(magnitude * 2.0 - 1.0, -1.0, 1.0));
-    return vec4(decodeOctahedral(encoded), packedTangent.y < 0.0 ? -1.0 : 1.0);
-}
+#include "vertex_packing.glsl"
 
 void main() {
     vec3 inNormal = decodeOctahedral(inNormalOctahedral);

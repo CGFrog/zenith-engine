@@ -1,10 +1,7 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
-// Prefix of CameraData in shaders/mesh.frag and MeshPass.cpp.
-layout(set = 0, binding = 0) uniform CameraData {
-    mat4 viewProjection;
-    mat4 previousViewProjection;
-} camera;
+#include "camera.glsl"
 
 // World-space point on the far plane, kept homogeneous so it interpolates linearly.
 layout(location = 0) out vec4 farPoint;

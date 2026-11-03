@@ -1,5 +1,6 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : require
 
 // Writes the depth prepass normal target (PostProcessPass::normalFormat,
 // A2B10G10R10_UNORM); src/engine/graphics/SceneNormalEncoding.hpp mirrors the
@@ -17,45 +18,14 @@
 // The specular attachment is VK_NULL_HANDLE on frames without screen-space
 // reflections, which discards that output.
 
-// Mirrors MaterialRecord in engine/graphics/MaterialRecord.hpp (std430).
-struct MaterialRecord {
-    vec4 baseColor;
-    vec4 factors;  // metallic, roughness, normal scale, occlusion strength
-    vec4 emissive; // rgb radiance; w unused
-    vec4 surface;  // alpha cutoff, alpha mode (0 opaque, 1 mask, 2 blend), ior, transmission
-    uvec4 textures; // bindless slots: base color, normal, metallic-roughness, occlusion
-    uvec4 extraTextures; // emissive slot, lobe flags (LOBE_*), transmission slot, unused
-    vec4 clearcoat; // factor, perceptual roughness, normal scale, unused
-    vec4 sheen;     // linear rgb color, perceptual roughness
-    vec4 specular;  // linear rgb color, factor
-    vec4 volume;    // attenuation coefficient per world unit (rgb), thickness
-    uvec4 lobeTextures;  // bindless slots: clearcoat, clearcoat roughness, clearcoat normal, sheen color
-    uvec4 layerTextures; // bindless slots: sheen roughness, specular, specular color; w unused
-    vec4 water;          // wave length, steepness, speed, shore fade (LOBE_WATER)
-    uvec4 terrainAlbedo; // terrain layers' bindless slots (LOBE_TERRAIN)
-    uvec4 terrainNormal;
-    uvec4 terrainArm;
-    vec4 terrainTileSize; // metres per repeat of each layer
-};
-
-// Mirror the material_lobes bits in MaterialRecord.hpp.
-const uint LOBE_CLEARCOAT = 1u;
-const uint LOBE_SHEEN = 2u;
-const uint LOBE_TRANSMISSION = 4u;
-const uint LOBE_SPECULAR_TEXTURES = 8u;
-const uint LOBE_VOLUME = 16u;
+#include "material.glsl"
 
 layout(std430, set = 0, binding = 4) readonly buffer Materials {
     MaterialRecord values[];
 } materials;
 
 // Bindless material textures; slots come from MaterialRecord.
-layout(set = 1, binding = 0) uniform sampler materialSampler;
-layout(set = 1, binding = 1) uniform texture2D materialTextures[];
-
-vec4 sampleMaterialTexture(uint slot, vec2 uv) {
-    return texture(sampler2D(materialTextures[nonuniformEXT(slot)], materialSampler), uv);
-}
+#include "material_textures.glsl"
 
 layout(location = 0) in vec3 viewNormal;
 layout(location = 1) in vec2 texCoord;
@@ -64,22 +34,9 @@ layout(location = 3) flat in uint materialIndex;
 layout(location = 0) out vec4 outNormalRoughness;
 layout(location = 1) out vec4 outSpecular;
 
-// Mirrors dielectricSpecular in mesh.frag.
-vec4 dielectricSpecular(MaterialRecord material, vec2 uv) {
-    float ior = material.surface.z;
-    float reflectance = (ior - 1.0) / (ior + 1.0);
-    vec3 color = material.specular.rgb;
-    float weight = material.specular.w;
-    if ((material.extraTextures.y & LOBE_SPECULAR_TEXTURES) != 0u) {
-        weight *= sampleMaterialTexture(material.layerTextures.y, uv).a;
-        color *= sampleMaterialTexture(material.layerTextures.z, uv).rgb;
-    }
-    return vec4(min(vec3(reflectance * reflectance) * color, vec3(1.0)), weight);
-}
+#include "dielectric_specular.glsl"
 
-vec2 signNotZero(vec2 value) {
-    return vec2(value.x >= 0.0 ? 1.0 : -1.0, value.y >= 0.0 ? 1.0 : -1.0);
-}
+#include "octahedral.glsl"
 
 vec2 encodeOctahedral(vec3 normal) {
     normal /= abs(normal.x) + abs(normal.y) + abs(normal.z);

@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // Draws shadow casters into one local-light shadow atlas tile (LocalShadowPass).
 // The pass sets the tile's viewport; this shader only projects.
@@ -7,11 +8,7 @@ layout(push_constant) uniform LocalShadowDrawData {
     vec4 settings; // x: tile index
 } drawData;
 
-struct RenderObject {
-    mat4 model;
-    mat4 previousModel;
-    uvec4 skin;
-};
+#include "render_object.glsl"
 
 layout(set = 0, binding = 2, std430) readonly buffer ObjectBuffer {
     RenderObject values[];
@@ -21,12 +18,7 @@ layout(set = 0, binding = 3, std430) readonly buffer SkinPalettes {
     mat4 joints[];
 } skinPalettes;
 
-// Mirrors GpuLocalShadowTile in LocalShadowPass.hpp (std430).
-struct LocalShadowTile {
-    mat4 viewProjection;
-    vec4 atlasRect;
-    vec4 params;
-};
+#include "local_shadow_tile.glsl"
 
 layout(set = 0, binding = 15, std430) readonly buffer LocalShadowTiles {
     LocalShadowTile values[];

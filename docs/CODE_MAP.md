@@ -142,6 +142,7 @@ capability. `--check` fails when the generated index is stale.
 | Multiple views / secondary scenes | `RenderViewPlanning.*`, `RenderIds.hpp` | `RenderRuntime::{createView,createScene,setViewScene}` | `engine.RenderView` | [Render views](engine/graphics-views.md#render-views) |
 | Vulkan device, swapchain | `graphics/vulkan/VulkanContext.*`, `graphics/swapchain/Swapchain.*` | `VulkanContext`, `Swapchain` | `engine.GraphicsValidation` | [Graphics](engine/graphics.md) |
 | Add a shader | `shaders/*.{vert,frag,comp}` | – | – | [Shaders](engine/shaders.md), [Playbook](CONTRIBUTOR_PLAYBOOK.md#add-a-render-pass-or-shader) |
+| Shared GLSL (GPU records, common shader math) | `shaders/include/*.glsl` | `CameraData`, `MaterialRecord`, `LocalLight`, … | – | [Shaders › Shared includes](engine/shaders.md#shared-includes) |
 
 ### Editor
 

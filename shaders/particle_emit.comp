@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // GPU particles, step 1: writes this frame's new particles into their
 // emitters' rings. One thread per spawn; every random value derives from the
@@ -8,65 +9,20 @@
 
 layout(local_size_x = 64) in;
 
-const float PI = 3.14159265359;
-const uint FLAG_LOCAL_SPACE = 4u;
+#include "constants.glsl"
+#include "particle.glsl"
 
-// Mirrors particles::GpuParticleFrame (std140).
-layout(set = 0, binding = 0) uniform ParticleFrame {
-    mat4 viewProjection;
-    mat4 lightViewProjections[3];
-    vec4 cameraPosition; // w: time step
-    vec4 lightDirection;
-    vec4 lightRadiance;
-    vec4 cascadeSplits;
-    vec4 clusterDepth;
-    uvec4 clusterGrid;
-    uvec4 counts; // x: pool slots, y: spawns, z: sort keys, w: shadow cascades
-    vec4 ambient;
-    uvec4 flags; // y: emitter table entries (unoccupied ones spawn nothing)
-    vec4 irradianceVolumeMinimum;
-    vec4 irradianceVolumeCellSize;
-    uvec4 irradianceVolumeCounts;
-} frame;
-
-// Mirrors particles::GpuParticleEmitter (std430).
-struct Emitter {
-    mat4 localToWorld;
-    vec4 gravityDrag;
-    vec4 direction; // xyz: entity-space cone axis, w: cosine of the half angle
-    vec4 speedLifetime;
-    vec4 sizeSpin; // w: spawn radius
-    vec4 startColor;
-    vec4 endColor;
-    vec4 shading;
-    uvec4 pool;  // first slot, capacity, ring start, spawn count
-    uvec4 spawn; // spawn offset, first ordinal, seed, flags
-};
+#include "particle_simulation.glsl"
 
 layout(std430, set = 0, binding = 1) readonly buffer Emitters {
     Emitter values[];
 } emitters;
 
-// Mirrors particles::GpuParticle (std430).
-struct Particle {
-    vec4 positionAge;
-    vec4 velocityLifetime;
-    vec4 worldPositionSize;
-    vec4 radiance;
-    vec4 render;
-    uvec4 info;
-};
-
 layout(std430, set = 0, binding = 2) buffer Particles {
     Particle values[];
 } particles;
 
-// PCG hash (Jarzynski and Olano, "Hash Functions for GPU Rendering").
-uint pcgHash(uint value) {
-    uint state = value * 747796405u + 2891336453u;
-    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
+#include "hash.glsl"
 
 float nextRandom(inout uint state) {
     state = pcgHash(state);

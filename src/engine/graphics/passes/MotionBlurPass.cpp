@@ -14,7 +14,7 @@ constexpr uint32_t sampledInputCount = 2;
 constexpr uint32_t storageImageCount = 3;
 constexpr uint32_t bindingCount = sampledInputCount + storageImageCount;
 
-// Mirrors MotionBlurSettings in shaders/motion_blur_*.comp.
+// Mirrors MotionBlurSettings in shaders/include/motion_blur.glsl.
 struct MotionBlurSettings {
     glm::mat4 currentToPreviousClip{1.0f};
     glm::vec4 colorRegion{0.0f};

@@ -53,7 +53,8 @@ inline constexpr uint32_t sortBlockElements = sortWorkgroupSize * 2;
 // One camera-facing quad (two triangles) per particle.
 inline constexpr uint32_t verticesPerParticle = 6;
 
-// Bits of GpuParticleEmitter::spawn.w and GpuParticle::info.z.
+// Bits of GpuParticleEmitter::spawn.w and GpuParticle::info.z; mirror the
+// FLAG_* constants in shaders/include/particle.glsl.
 inline constexpr uint32_t flagAdditive = 1u << 0;
 inline constexpr uint32_t flagLit = 1u << 1;
 inline constexpr uint32_t flagLocalSpace = 1u << 2;
@@ -62,7 +63,7 @@ inline constexpr uint32_t textureSlotShift = 8;
 // Particle slots shared by every emitter at a quality; zero for Off.
 uint32_t particleBudget(ParticleQuality quality);
 
-// Mirrors Particle in the particle shaders (std430).
+// Mirrors Particle in shaders/include/particle.glsl (std430).
 struct GpuParticle {
     // xyz: simulation-space position (world, or entity space for Local
     // emitters); w: age in seconds.
@@ -84,7 +85,7 @@ static_assert(sizeof(GpuParticle) == 96, "GpuParticle must match the std430 Part
 static_assert(offsetof(GpuParticle, radiance) == 48 && offsetof(GpuParticle, info) == 80,
               "GpuParticle members must match the std430 Particle struct");
 
-// Mirrors Emitter in particle_emit.comp and particle_simulate.comp (std430).
+// Mirrors Emitter in shaders/include/particle_simulation.glsl (std430).
 struct GpuParticleEmitter {
     // Entity world transform; simulation space to world for Local emitters.
     glm::mat4 localToWorld{1.0f};
@@ -112,7 +113,7 @@ static_assert(sizeof(GpuParticleEmitter) == 208, "GpuParticleEmitter must match 
 static_assert(offsetof(GpuParticleEmitter, pool) == 176 && offsetof(GpuParticleEmitter, spawn) == 192,
               "GpuParticleEmitter members must match the std430 Emitter struct");
 
-// Mirrors ParticleFrame in particle_emit.comp and particle_simulate.comp (std140).
+// Mirrors ParticleFrame in shaders/include/particle_simulation.glsl (std140).
 struct GpuParticleFrame {
     glm::mat4 viewProjection{1.0f};
     std::array<glm::mat4, 3> lightViewProjections{};

@@ -1,30 +1,7 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
-// Prefix of CameraData in shaders/mesh.frag and MeshPass.cpp, through the fog fields.
-layout(set = 0, binding = 0) uniform CameraData {
-    mat4 viewProjection;
-    mat4 previousViewProjection;
-    mat4 lightViewProjections[3];
-    vec4 cameraPosition;
-    vec4 lightDirection; // xyz toward the light, w intensity
-    vec4 lightColor;
-    vec4 environmentSky;
-    vec4 environmentGround;
-    vec4 shadowSettings;
-    vec4 cascadeSplits;
-    vec4 renderingSettings;
-    vec4 environmentSpecular[6];
-    vec4 clusterDepth;
-    vec4 clusterTileScale;
-    uvec4 clusterGrid;
-    vec4 environmentParams;
-    // Reflection probes (U9); unused here but keeps the fog fields' offsets.
-    vec4 reflectionProbeParams;
-    // Volumetric fog (U10): x enables it, w is the froxel depth slice count.
-    vec4 fogVolume;
-    // xy: integrated-volume uv per render pixel.
-    vec4 fogScreen;
-} camera;
+#include "camera.glsl"
 
 // Integrated volumetric fog; the sky lies beyond the volume, so it receives
 // the fog accumulated through the last froxel slice.

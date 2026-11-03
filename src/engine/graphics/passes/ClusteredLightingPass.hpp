@@ -10,7 +10,7 @@
 #include <span>
 #include <vector>
 
-// Mirrors LocalLight in shaders/mesh.frag and shaders/light_clusters.comp (std430).
+// Mirrors LocalLight in shaders/include/local_light.glsl (std430).
 struct GpuLocalLight {
     glm::vec4 positionRange{0.0f};  // world position, range
     glm::vec4 colorIntensity{0.0f}; // linear color, intensity
@@ -20,6 +20,8 @@ struct GpuLocalLight {
     // see LocalShadowPass), or -1 when the light is unshadowed this frame.
     glm::vec4 spotCone{0.0f};
 };
+
+static_assert(sizeof(GpuLocalLight) == 64, "GpuLocalLight must match the std430 LocalLight struct");
 
 // Cluster statistics a frame's assignment produced, read once it retired.
 struct ClusterLightStatistics {

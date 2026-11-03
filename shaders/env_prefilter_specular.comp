@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
 // GGX-prefiltered specular radiance for one mip of the specular cube, using the
 // split-sum approximation (N = V = R). Samples read a source mip matched to each
@@ -13,40 +14,11 @@ layout(push_constant) uniform Settings {
     uvec4 sizes;         // x: target face size, y: sample count
 } settings;
 
-const float PI = 3.14159265359;
+#include "constants.glsl"
 
-vec3 cubeFaceDirection(uint face, vec2 uv) {
-    vec2 c = uv * 2.0 - 1.0;
-    vec3 direction;
-    if (face == 0u) {
-        direction = vec3(1.0, -c.y, -c.x);
-    } else if (face == 1u) {
-        direction = vec3(-1.0, -c.y, c.x);
-    } else if (face == 2u) {
-        direction = vec3(c.x, 1.0, c.y);
-    } else if (face == 3u) {
-        direction = vec3(c.x, -1.0, -c.y);
-    } else if (face == 4u) {
-        direction = vec3(c.x, -c.y, 1.0);
-    } else {
-        direction = vec3(-c.x, -c.y, -1.0);
-    }
-    return normalize(direction);
-}
+#include "environment_cube.glsl"
 
-float radicalInverse(uint bits) {
-    return float(bitfieldReverse(bits)) * 2.3283064365386963e-10;
-}
-
-// GGX half vector in tangent space (+Z is the normal) for low-discrepancy sample i.
-vec3 importanceSampleGgx(uint index, uint count, float roughness) {
-    float alpha = roughness * roughness;
-    float phi = 2.0 * PI * float(index) / float(count);
-    float xi = radicalInverse(index);
-    float cosTheta = sqrt((1.0 - xi) / (1.0 + (alpha * alpha - 1.0) * xi));
-    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
-    return vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
-}
+#include "importance_sampling.glsl"
 
 float distributionGgx(float nDotH, float roughness) {
     float alpha = roughness * roughness;

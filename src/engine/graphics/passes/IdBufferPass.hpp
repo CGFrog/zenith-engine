@@ -12,7 +12,7 @@
 #include <glm/glm.hpp>
 #include <volk.h>
 
-// Push constants of one id-buffer draw; mirrors IdDraw in shaders/id_buffer.*.
+// Push constants of one id-buffer draw; mirrors IdDraw in shaders/include/id_draw.glsl.
 struct IdBufferDraw {
     glm::mat4 modelViewProjection{1.0f};
     // The object's skin palette range in the camera set's palette buffer;
