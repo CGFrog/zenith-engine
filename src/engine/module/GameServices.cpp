@@ -13,7 +13,7 @@ GameServices::GameServices(AssetManager& assets, SceneDocumentOptions documents,
     , m_behaviours(std::move(behaviours))
     , m_world(assets, documents, m_time.timers(), m_log)
     , m_outside(assets, documents, debugDraw, m_log)
-    , m_content(documents.assetRoot, m_log) {}
+    , m_content(assets, documents.assetRoot, m_log) {}
 
 WorldServices& GameServices::world() {
     return m_world;

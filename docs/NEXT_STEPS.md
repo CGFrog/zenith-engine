@@ -5,29 +5,10 @@ general-purpose 3D game pipeline without coupling editor or game policy to
 reusable engine systems. Complete each milestone's exit criteria before
 expanding its scope.
 
-Milestones 1 to 19, 21, and 23 to 25 are complete. They, and the completed
-items of Milestones 20 and 22, are archived in
+Milestones 1 to 21 and 23 to 25 are complete. They, and the completed
+items of Milestone 22, are archived in
 [Completed milestones](history/milestones.md). This file keeps only the open
 items with their exit criteria.
-
-## Milestone 20: gameplay scripting and extension boundary
-
-Decided 2026-10-04 (see the [gameplay roadmap](GAMEPLAY_ROADMAP.md#decisions)):
-gameplay is C++ in hot-reloaded
-game modules. Per-entity logic is a `Behaviour` (a reflected component type
-with lifecycle hooks); bulk logic stays in systems. No embedded scripting
-runtime is planned, so sandboxing and instruction limits no longer apply.
-
-- [ ] Define the gameplay-facing API boundary: which engine types modules may
-      use, without exposing EnTT, SDL, Vulkan, Jolt, or editor types.
-
-Completed items are in [Completed milestones](history/milestones.md#milestone-20-gameplay-scripting-and-extension-boundary-completed-items).
-
-Exit criteria:
-
-- A packaged project implements a small gameplay loop in its game module
-  without recompiling the engine or accessing subsystem internals (the FPS
-  template, [gameplay roadmap item C6](history/gameplay-roadmap-2026.md#c6-fps-template-and-tutorial)).
 
 ## Milestone 22: renderer validation and hardening
 
@@ -76,12 +57,15 @@ scene) is in [Completed milestones](history/milestones.md#test-suite-follow-ups-
   (update-after-bind bindless and the RGBA8 fallback; `ZENITH_FORCE_UPDATE_AFTER_BIND`
   and `ZENITH_DISABLE_BLOCK_COMPRESSION` exercise those paths on the reference
   machine), and confirm the Windows, Linux, and macOS CI jobs.
-- Finish Milestone 20 by writing down the gameplay-facing API boundary.
 - Work through the test suite follow-ups above, highest value first.
 - Gameplay follow-ups are tracked in the
   [gameplay roadmap](GAMEPLAY_ROADMAP.md#open-follow-ups); the
   [roguelike readiness review](ROGUELIKE_READINESS_REVIEW.md) lists the editor
   and engine work still open for the roguelike (its critical items are done).
+
+The [gameplay API](engine/gameplay-api.md) is a contract the engine's headers
+are checked against; modules can still include host-only headers. Narrowing the
+include directories `Zenith::Engine` exports to modules is later work.
 
 Networking, multiplayer prediction, editor collaboration, advanced vehicles
 and soft-body physics, and a stable native binary-plugin ABI remain later work

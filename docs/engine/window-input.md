@@ -8,9 +8,14 @@ A small SDL window owner. `init` starts SDL video and creates a resizable Vulkan
 window at 1280x720. `shutdown` destroys the window and quits SDL. Vulkan uses
 surface capabilities and current pixel size when selecting its actual extent.
 
-## `src/engine/input/InputManager.*`
+## `src/engine/input/InputManager.*` and `InputState.*`
 
-Translates SDL-specific state into device-independent held/pressed keys,
+`InputState.hpp` holds the device-independent state (`InputState`, `Key`,
+`MouseButton`, gamepad buttons and axes, `InputCapture`, `InputEdgeBuffer`)
+with no SDL types, so gameplay headers such as `GameUi.hpp` and
+`InputActions.hpp` include it rather than `InputManager.hpp`, which is
+host-only (see [Gameplay API](gameplay-api.md)). `InputManager`
+translates SDL-specific state into device-independent held/pressed keys,
 mouse movement, gamepad buttons and axes, active-device, and capture state.
 Press and release edges are buffered until the first fixed update consumes
 them, so short inputs are not lost between physics ticks. Controller connection

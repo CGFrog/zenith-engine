@@ -605,7 +605,8 @@ void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationCont
                       .actions = actions ? &*actions : nullptr,
                       .ui = phase == SystemPhase::Ui ? ui : nullptr,
                       .behaviours = m_module->behaviours().get(),
-                      .debugDraw = m_debugDraw},
+                      .debugDraw = m_debugDraw,
+                      .physics = application != nullptr ? &application->physics : nullptr},
                      &m_profile, &m_systemFaults);
 }
 

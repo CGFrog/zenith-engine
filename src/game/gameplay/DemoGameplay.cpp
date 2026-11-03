@@ -1,7 +1,7 @@
 #include "DemoGameplay.hpp"
 
-#include "engine/application/Application.hpp"
 #include "engine/module/ModuleRegistrar.hpp"
+#include "engine/physics/PhysicsWorld.hpp"
 #include "game/gameplay/ItemCollection.hpp"
 #include "game/input/DemoInput.hpp"
 
@@ -14,10 +14,10 @@ SystemDescriptor itemCollectionSystem() {
             .phase = SystemPhase::FixedUpdate,
             .runIn = RunIn::Play,
             .run = [](const SystemContext& context) {
-                if (context.application == nullptr) {
+                if (context.physics == nullptr) {
                     return;
                 }
-                ItemCollectionSystem{}.fixedUpdate(context.scene, context.application->physics.contactEvents());
+                ItemCollectionSystem{}.fixedUpdate(context.scene, context.physics->contactEvents());
             }};
 }
 } // namespace

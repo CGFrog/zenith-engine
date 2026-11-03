@@ -3,6 +3,8 @@
 Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
 Game modules: shared libraries that add component types and systems to a host.
+Which engine headers and types a module may use is the
+[gameplay API](gameplay-api.md).
 `ModuleApi.hpp` is the C-linkage contract (`ZENITH_GAME_MODULE` defines
 `zenith_module_api_version`, `zenith_module_build_hash`, name, and version; the
 module defines `zenith_module_register(ModuleRegistrar&)`), and
@@ -114,9 +116,15 @@ Besides the scene, mode, and delta, a system gets:
 - `logger`: always set when a host runs it, in Edit too.
 - `input`: null when no player input reaches the scene (Edit, Simulate).
 - `services`: the session's `GameServices`, null in Edit.
+- `physics`: the scene's `PhysicsWorld`, for queries and contact events; null
+  when the host has no running application (the editor's Edit mode). It is the
+  last member.
+- `application`: the host's `ApplicationContext`, for the engine's own systems
+  only; game modules use `services` and `physics` instead (see
+  [Gameplay API](gameplay-api.md#host-only-code)).
 - `debugDraw`: the host's debug drawing in every mode (in a session, the same
   as `services->outside().debugDraw()`), so `RunIn::Edit` systems can draw previews;
-  null only for a host without one. It is the last member, so modules built
+  null only for a host without one. It was appended, so modules built
   before it read the others unchanged.
 - `ui`: set only in the `Ui` phase.
 - `actions`: the module's input actions (`ModuleRegistrar::addInputActions`)
@@ -124,7 +132,7 @@ Besides the scene, mode, and delta, a system gets:
   [Window and input](window-input.md).
 
 Changing `SystemContext`, `ModuleRegistrar`, or a registered descriptor bumps
-`ZENITH_MODULE_API_VERSION` (now 13: the [gameplay roadmap](../history/gameplay-roadmap-2026.md)'s A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, C6 added `BehaviourContext::physics`, and E7 added `unscaledDeltaSeconds` to both contexts and the pause and time scale to `GameServices`; the roguelike readiness review's critical items then changed the layouts of `Scene`, `GameServices`, `SystemContext` (`debugDraw`), `PrefabSystem`, `DebugDraw`, `ContactEvent` and `ApplicationControl`, which made it 9; the editor's asset, material, collision and navigation tools then changed `ContactEvent`, `ColliderComponent`, `MaterialOverrideComponent`, `FieldPresentation`, `ComponentType` and `GameServices`, which made it 10; asset import then added `InputState::droppedFiles` and definition schemas to `ModuleRegistrar` and `GameModule`, which made it 11; the convex-hull collider then added an alternative to `ColliderShape`, which made it 12; grouping `GameServices` into `world()`, `time()`, `content()` and `outside()` then changed its layout and accessors, which made it 13; the game's pointer request (`OutsideServices::setPointerReleased`), water materials (`MaterialAsset::water`) and free character motion (`CharacterControllerComponent::motion`) then changed those layouts, which made it 14).
+`ZENITH_MODULE_API_VERSION` (now 15: the [gameplay roadmap](../history/gameplay-roadmap-2026.md)'s A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, C6 added `BehaviourContext::physics`, and E7 added `unscaledDeltaSeconds` to both contexts and the pause and time scale to `GameServices`; the roguelike readiness review's critical items then changed the layouts of `Scene`, `GameServices`, `SystemContext` (`debugDraw`), `PrefabSystem`, `DebugDraw`, `ContactEvent` and `ApplicationControl`, which made it 9; the editor's asset, material, collision and navigation tools then changed `ContactEvent`, `ColliderComponent`, `MaterialOverrideComponent`, `FieldPresentation`, `ComponentType` and `GameServices`, which made it 10; asset import then added `InputState::droppedFiles` and definition schemas to `ModuleRegistrar` and `GameModule`, which made it 11; the convex-hull collider then added an alternative to `ColliderShape`, which made it 12; grouping `GameServices` into `world()`, `time()`, `content()` and `outside()` then changed its layout and accessors, which made it 13; the game's pointer request (`OutsideServices::setPointerReleased`), water materials (`MaterialAsset::water`) and free character motion (`CharacterControllerComponent::motion`) then changed those layouts, which made it 14; the [gameplay API boundary](gameplay-api.md) then added `SystemContext::physics` and `ContentServices::assets()`, which made it 15).
 
 ## Behaviours (`src/engine/behaviour/`)
 

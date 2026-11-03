@@ -163,6 +163,7 @@ Engine (`src/engine/`, `shaders/`):
 - [Audio](engine/audio.md): `AudioSystem` decoding, streaming, and mixing.
 - [Scene](engine/scene.md): ECS scenes, reflection and component types, collections and visibility, prefabs, entity reference remapping, jobs, and additive scenes.
 - [Game modules](engine/modules.md): the module ABI, loading and shadow copies, system scheduling, behaviours, and `Gameplay`.
+- [Gameplay API](engine/gameplay-api.md): the engine headers and third-party types game modules may use, and the build check that keeps them free of SDL, Vulkan, Jolt and ImGui.
 - [Projects](engine/projects.md): the project manifest and the checked-in demo, showcase, and irradiance-room projects.
 - [Assets](engine/assets.md): CPU asset types, import, streaming policy, texture cooking, GUIDs, and the asset database.
 - [Platform services](engine/platform.md): writable locations, file reads, the file watcher, and child processes.

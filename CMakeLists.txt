@@ -213,6 +213,9 @@ foreach(header_dependency IN ITEMS volk imgui zenith_imguizmo)
         $<TARGET_PROPERTY:${header_dependency},INTERFACE_COMPILE_DEFINITIONS>)
 endforeach()
 
+include(cmake/GameplayApi.cmake)
+zenith_add_gameplay_api_check()
+
 if(MSVC)
     target_compile_options(zenith_engine PRIVATE /W4 /permissive- /FS)
     target_compile_options(zenith_demo PRIVATE /W4 /permissive-)

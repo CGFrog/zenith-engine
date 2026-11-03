@@ -415,9 +415,18 @@ Exit criteria:
 - Identical source content and settings produce byte-identical derived assets,
   and corrupted inputs fail within documented resource limits.
 
-## Milestone 20: gameplay scripting and extension boundary (completed items)
+## Milestone 20: gameplay scripting and extension boundary
 
-The open item and the exit criteria stay in [Next steps](../NEXT_STEPS.md#milestone-20-gameplay-scripting-and-extension-boundary).
+Decided 2026-10-04 (see the [gameplay roadmap](../GAMEPLAY_ROADMAP.md#decisions)):
+gameplay is C++ in hot-reloaded game modules. Per-entity logic is a
+`Behaviour`; bulk logic stays in systems. No embedded scripting runtime is
+planned.
+
+Exit criterion, met by the FPS template ([gameplay roadmap item
+C6](gameplay-roadmap-2026.md#c6-fps-template-and-tutorial),
+`zenith_fps_template_module_build`): a packaged project implements a small
+gameplay loop in its game module without recompiling the engine or accessing
+subsystem internals.
 
 - [x] Keep gameplay modules project-owned and make engine registration
       explicit (`ModuleRegistrar`); modules reach services only through the
@@ -437,6 +446,14 @@ The open item and the exit criteria stay in [Next steps](../NEXT_STEPS.md#milest
       still unguarded at the time; see the [roguelike readiness
       review](../ROGUELIKE_READINESS_REVIEW.md), Critical item 3. They are guarded
       now ([Game modules](../engine/modules.md#fault-isolation)).
+- [x] Define the gameplay-facing API boundary
+      ([Gameplay API](../engine/gameplay-api.md), 2026-11-02): the supported
+      headers, checked at build time to stay free of SDL, Vulkan, Jolt, ImGui
+      and editor types. EnTT stays public by decision, so the original wording
+      ("without exposing EnTT") was dropped. `InputState.hpp` was split from
+      `InputManager.hpp` to keep SDL out, and `SystemContext::physics` and
+      `ContentServices::assets()` replaced modules' use of
+      `SystemContext::application` (module API version 15).
 
 ## Milestone 21: platform, accessibility, and release operations
 

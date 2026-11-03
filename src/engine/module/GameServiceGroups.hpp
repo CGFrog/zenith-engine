@@ -91,11 +91,12 @@ class WorldServices {
 };
 
 // The session's own data: values per SessionResource type, named random
-// streams, and paths to the project's asset files.
+// streams, paths to the project's asset files, and the asset manager for
+// content the game loads or builds at runtime.
 class ContentServices {
   public:
-    // log must outlive the content.
-    ContentServices(std::filesystem::path assetRoot, const LogChannel& log);
+    // assets and log must outlive the content.
+    ContentServices(AssetManager& assets, std::filesystem::path assetRoot, const LogChannel& log);
     ContentServices(const ContentServices&) = delete;
     ContentServices& operator=(const ContentServices&) = delete;
 
@@ -117,6 +118,11 @@ class ContentServices {
     // for loading files such as a DefinitionTable. A path that is empty,
     // absolute, or leaves the asset root is logged and gives an empty path.
     std::filesystem::path assetPath(std::string_view assetPath) const;
+    // The host's asset manager, for loading textures and models and creating
+    // runtime meshes and materials (for example generated terrain). Loads go
+    // through assetPath; lease what the session keeps so asset collection
+    // leaves it alone.
+    AssetManager& assets();
     // The session's random stream for name ("layout", "loot", ...): drawing
     // from one stream never changes another. Every stream derives from the
     // session seed, which starts at 0; a game sets it for a new run
@@ -126,6 +132,7 @@ class ContentServices {
     RandomStreams& randomStreams();
 
   private:
+    AssetManager& m_assets;
     std::filesystem::path m_assetRoot;
     const LogChannel& m_log;
     RandomStreams m_random;

@@ -48,8 +48,9 @@ Effects& WorldServices::effects() {
     return m_effects;
 }
 
-ContentServices::ContentServices(std::filesystem::path assetRoot, const LogChannel& log)
-    : m_assetRoot(std::move(assetRoot))
+ContentServices::ContentServices(AssetManager& assets, std::filesystem::path assetRoot, const LogChannel& log)
+    : m_assets(assets)
+    , m_assetRoot(std::move(assetRoot))
     , m_log(log) {}
 
 SessionResources& ContentServices::resources() {
@@ -64,6 +65,10 @@ std::filesystem::path ContentServices::assetPath(std::string_view assetPath) con
         return {};
     }
     return m_assetRoot / relative;
+}
+
+AssetManager& ContentServices::assets() {
+    return m_assets;
 }
 
 RandomStream& ContentServices::random(std::string_view name) {

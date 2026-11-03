@@ -3,7 +3,7 @@
 // GameUiContext: immediate-mode panels, text, images, buttons, toggles, sliders, layout, anchors.
 
 #include "engine/assets/Assets.hpp"
-#include "engine/input/InputManager.hpp"
+#include "engine/input/InputState.hpp"
 #include "engine/ui/Accessibility.hpp"
 
 #include <cstdint>

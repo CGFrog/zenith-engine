@@ -20,6 +20,7 @@ class GameServices;
 class GameUiContext;
 class InputActionState;
 class Logger;
+class PhysicsWorld;
 class Scene;
 struct ApplicationContext;
 struct InputState;
@@ -81,7 +82,10 @@ std::string_view systemPhaseName(SystemPhase phase);
 // What a system may touch while it runs. Pointers that may be null must be
 // tolerated by systems that read them:
 // - application is null when the host has no running application services,
-//   as in the editor's edit mode.
+//   as in the editor's edit mode. It is for the engine's own systems and
+//   hosts, not part of the gameplay API (docs/engine/gameplay-api.md): game
+//   modules reach assets through services->content().assets() and the
+//   physics world through physics.
 // - services is null in Edit mode (see GameServices).
 // - logger is never null when a host runs the systems, in every mode.
 // - input is the device state of the current frame (of the fixed step, for
@@ -94,6 +98,8 @@ std::string_view systemPhaseName(SystemPhase phase);
 // - debugDraw is the host's debug drawing (the same as
 //   OutsideServices::debugDraw in a gameplay session), set in every mode, so
 //   Edit systems can draw previews too; null only for a host without one.
+// - physics is the scene's physics world (BehaviourContext::physics for
+//   systems), for queries and contact events; null whenever application is.
 struct SystemContext {
     Scene& scene;
     ApplicationContext* application{nullptr};
@@ -115,6 +121,7 @@ struct SystemContext {
     const BehaviourRegistry* behaviours{nullptr};
     // Appended last, so modules reading the members before it are unaffected.
     DebugDraw* debugDraw{nullptr};
+    PhysicsWorld* physics{nullptr};
 };
 
 // A named per-frame callback over a scene, usually registered by a game

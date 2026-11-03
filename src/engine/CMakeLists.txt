@@ -122,6 +122,7 @@ add_library(zenith_engine SHARED
     input/InputActions.cpp
     input/InputActionsJson.cpp
     input/InputManager.cpp
+    input/InputState.cpp
     input/InputProfiles.cpp
     jobs/JobSystem.cpp
     jobs/FrameTaskGraph.cpp

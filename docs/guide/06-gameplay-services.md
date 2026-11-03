@@ -10,7 +10,8 @@ scene load to unload).
 `GameServices` groups its services by the question they answer:
 `world()` changes the scene (commands, prefabs, effects), `time()` says when
 things happen (timers, pause, time scale), `content()` is the session's own
-data (resources, random streams, asset paths), and `outside()` reaches
+data (resources, random streams, asset paths, and the asset manager for
+content built at runtime), and `outside()` reaches
 beyond the scene (audio, navigation, saves, debug drawing). Events and
 logging (`events()`, `log()`) sit on `GameServices` itself.
 
@@ -27,6 +28,7 @@ logging (`events()`, `log()`) sit on `GameServices` itself.
 | Pause or slow time | `services->time().setPaused`, `setTimeScale` | [Time](#time-pause-and-slow-motion) |
 | Reproducible randomness | `services->content().random(name)` | [Randomness](#randomness) |
 | Data files (items, enemies, loot) | `DefinitionTable<T>` | [Data tables](#data-tables) |
+| Load textures, build meshes or materials at runtime | `services->content().assets()` | [Gameplay API](../engine/gameplay-api.md#host-only-code) |
 | Keep state for a run | registry context / `services->content().resource<T>()` | [Per-game state](#per-game-state) |
 | Move AI along paths | `NavAgentComponent`, `services->outside().navigation()` | [Navigation](#navigation) |
 | Drive animation | `AnimatorComponent` | [Animation](#animation) |
@@ -102,7 +104,7 @@ replaces actions of the same name. Deep dive:
 
 ## Physics queries
 
-`context.physics` (behaviours) is the scene's `PhysicsWorld`
+`context.physics` (behaviours and systems) is the scene's `PhysicsWorld`
 (`engine/physics/PhysicsWorld.hpp`). Queries see the bodies as of the last
 physics step.
 
@@ -144,8 +146,9 @@ action is empty (for AI).
 
 **Contacts and triggers.** Behaviours get `onCollision`, `onTriggerEnter`,
 and `onTriggerExit` (see [chapter 5](05-game-logic.md#hooks-and-the-order-they-run-in)).
-Systems can read `TriggerEntered`/`TriggerExited` events, or the world's
-`contactEvents()` and `triggerEvents()`. Deep dive: [Physics](../engine/physics.md).
+Systems can read `TriggerEntered`/`TriggerExited` events, or
+`context.physics->contactEvents()` and `triggerEvents()` (`context.physics` is
+null in Edit mode). Deep dive: [Physics](../engine/physics.md).
 
 ## Spawning and destroying
 

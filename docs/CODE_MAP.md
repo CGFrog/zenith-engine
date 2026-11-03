@@ -61,6 +61,7 @@ capability. `--check` fails when the generated index is stale.
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
 | Module ABI, version, compatibility | `src/engine/module/ModuleApi.*` | `ZENITH_GAME_MODULE`, `ZENITH_MODULE_API_VERSION`, `checkModuleCompatibility` | `engine.GameModule` | [Modules](engine/modules.md) |
+| Which engine headers a module may use | `cmake/GameplayApi.cmake`, `src/engine/module/ZenithModulePch.hpp` | `ZENITH_GAMEPLAY_API_HEADERS`, `zenith_gameplay_api_check` | build target `zenith_gameplay_api_check` | [Gameplay API](engine/gameplay-api.md) |
 | What a module registers | `src/engine/module/ModuleRegistrar.*` | `addComponentType`, `addSystem`, `addBehaviour`, `addInputActions`, `addDefinitionTable`, `BehaviourOptions` | `engine.GameModule` | [Modules](engine/modules.md) |
 | Loading a module, shadow copies | `src/engine/module/GameModule.*`, `ModuleShadowCopy.*`, `SharedLibrary.*` | `GameModule::load`, `GameModuleLoading`, `ModuleShadowCopy` | `engine.GameModule` | [Modules](engine/modules.md) |
 | Systems: phases, order, RunIn, context | `src/engine/module/SystemScheduler.*` | `SystemPhase`, `RunIn`, `SystemContext`, `SystemDescriptor`, `SystemScheduler::run`, `runGameplayPhase`, `SystemFaults` | `engine.SystemScheduler` | [Modules › Frame order](engine/modules.md#frame-order-and-phases) |
@@ -85,7 +86,7 @@ capability. `--check` fails when the generated index is stale.
 
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
-| Raw device input (SDL → state) | `src/engine/input/InputManager.*` | `InputManager`, `InputState`, `Key`, `MouseCapturePolicy` | `zenith_input_manager` | [Window and input](engine/window-input.md) |
+| Raw device input (SDL → state) | `src/engine/input/InputManager.*`, `InputState.*` (SDL-free) | `InputManager`, `InputState`, `Key`, `MouseCapturePolicy` | `zenith_input_manager` | [Window and input](engine/window-input.md) |
 | Input actions | `src/engine/input/InputActions.*`, `InputActionsJson.*` | `InputActionMap::evaluate`, `InputActionState::{pressed,down,released,axis,axis2D}` | `engine.InputAction`, `engine.InputActionsJson` | [Window and input](engine/window-input.md) |
 | Player rebinding profiles | `src/engine/input/InputProfiles.*` | `InputProfile` | `engine.InputAction` | [Window and input](engine/window-input.md) |
 | HUD and game UI widgets | `src/engine/ui/GameUi.*` | `GameUiContext::{panel,text,button,toggle,slider,progressBar}`, `UiAnchor`, `UiLayout` | `engine.GameUi` | [UI](engine/ui.md) |
@@ -929,8 +930,9 @@ Device input, input actions and their JSON, and remappable profiles.
 | --- | --- | --- |
 | `InputActions` .hpp/.cpp | `MouseAxis`, `InputActionValueType`, `InputBinding`, `InputActionValue`, … | InputActionMap/InputActionState: named buttons and axes evaluated from bindings. |
 | `InputActionsJson` .hpp/.cpp | `InputActionsJsonResult` | input_actions.json: reading and writing a project's input actions. |
-| `InputManager` .hpp/.cpp | `InputCapture`, `MouseCapturePolicy`, `Key`, `MouseButton`, … | SDL events to InputState: keys, mouse, gamepads, text, dropped files, mouse capture. |
+| `InputManager` .hpp/.cpp | `MouseCapturePolicy`, `InputManager` | SDL events to InputState: keys, mouse, gamepads, text, dropped files, mouse capture. |
 | `InputProfiles` .hpp/.cpp | `ButtonBehavior`, `BindingConflictPolicy`, `ProfileBinding`, `InputProfile`, … | Named player rebinding profiles with conflict and hold/toggle policies. |
+| `InputState` .hpp/.cpp | `InputCapture`, `Key`, `MouseButton`, `GamepadButton`, … | The input a frame or fixed step sees: keys, mouse, gamepad and dropped files, with no platform types, so gameplay code can read it without SDL (InputManager fills it). |
 
 ### `src/engine/jobs/`
 
@@ -984,7 +986,7 @@ Jolt-backed physics behind Zenith components and queries.
 
 | File | Main types | Summary |
 | --- | --- | --- |
-| `CharacterController` .hpp | `CharacterControllerComponent` | CharacterControllerComponent: a walking character moved by a kinematic controller (steps, slopes, ground snapping). |
+| `CharacterController` .hpp | `CharacterMotion`, `CharacterControllerComponent` | CharacterControllerComponent: a walking character moved by a kinematic controller (steps, slopes, ground snapping). |
 | `JoltDebugDraw` .hpp/.cpp | `JoltDebugDraw` | Private to the physics subsystem: includes Jolt headers. |
 | `JoltRuntime` .hpp/.cpp | `JoltRuntimeLease` | Private to the physics subsystem. |
 | `PhysicsComponents` .hpp | `PhysicsMotionType`, `PhysicsLayer`, `BoxCollider`, `SphereCollider`, … | Physics component types: colliders (box, sphere, capsule, triangle mesh, convex hull), rigid bodies, motion types, layers. |

@@ -95,7 +95,7 @@ covers the tag, the helpers, and the documents.
 
 ### Transforms from gameplay code
 
-EnTT stays public, but `Scene`'s transform helpers are the supported gameplay
+EnTT stays public (it is part of the [gameplay API](gameplay-api.md#third-party-types)), but `Scene`'s transform helpers are the supported gameplay
 API for moving entities (`Scene.hpp`, implemented in `SceneTransforms.cpp`):
 
 - Setters write `TransformComponent::local` and mark the entity dirty:

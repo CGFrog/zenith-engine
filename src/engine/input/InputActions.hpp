@@ -2,7 +2,7 @@
 
 // InputActionMap/InputActionState: named buttons and axes evaluated from bindings.
 
-#include "InputManager.hpp"
+#include "InputState.hpp"
 
 #include <glm/glm.hpp>
 #include <optional>

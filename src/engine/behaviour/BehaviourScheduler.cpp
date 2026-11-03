@@ -1,7 +1,5 @@
 #include "BehaviourScheduler.hpp"
 
-#include "engine/application/Application.hpp"
-
 #include "engine/module/GameServices.hpp"
 
 #include <algorithm>
@@ -147,7 +145,7 @@ class Dispatcher {
                 .services = m_context.services,
                 .actions = m_context.actions,
                 .logger = m_context.logger,
-                .physics = m_context.application != nullptr ? &m_context.application->physics : nullptr};
+                .physics = m_context.physics};
     }
 
     void lifecycle(const std::vector<Entry>& entries) const {
