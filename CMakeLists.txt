@@ -65,8 +65,12 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/zenith-engine.json.in"
     "${CMAKE_CURRENT_BINARY_DIR}/zenith-engine.json" @ONLY)
 
 # Compile each shader in shaders/ to a matching .spv file in the build tree.
-# glslang infers the shader stage from the source extension.
+# glslang infers the shader stage from the source extension. Shared GLSL lives
+# in shaders/include/*.glsl (no stage extension, so never compiled alone);
+# shaders pull it in with #include and glslang's depfile rebuilds them when an
+# include changes.
 set(ZENITH_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+set(ZENITH_SHADER_INCLUDE_DIR "${ZENITH_SHADER_SOURCE_DIR}/include")
 set(ZENITH_SHADER_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 set(ZENITH_SHADER_EXTENSIONS
     vert tesc tese geom frag comp
@@ -89,6 +93,7 @@ foreach(shader_source IN LISTS ZENITH_SHADER_SOURCES)
         "${shader_source}"
     )
     set(shader_binary "${ZENITH_SHADER_BINARY_DIR}/${shader_relative_path}.spv")
+    set(shader_depfile "${shader_binary}.d")
     get_filename_component(shader_binary_dir "${shader_binary}" DIRECTORY)
 
     add_custom_command(
@@ -96,9 +101,12 @@ foreach(shader_source IN LISTS ZENITH_SHADER_SOURCES)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${shader_binary_dir}"
         COMMAND $<TARGET_FILE:glslang-standalone>
             --target-env vulkan1.4
+            "-I${ZENITH_SHADER_INCLUDE_DIR}"
+            --depfile "${shader_depfile}"
             -V "${shader_source}"
             -o "${shader_binary}"
         DEPENDS "${shader_source}" glslang-standalone
+        DEPFILE "${shader_depfile}"
         COMMENT "Compiling Vulkan shader ${shader_relative_path}"
         VERBATIM
     )
