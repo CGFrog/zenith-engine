@@ -16,7 +16,10 @@
 #include "engine/scene/SceneDocument.hpp"
 #include "engine/scene/Tags.hpp"
 
+#include "support/Approx.hpp"
 #include "support/Doctest.hpp"
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -35,8 +38,10 @@ TEST_SUITE_BEGIN("Outliner");
 // The outliner: its display modes and filter (with the c:, t:, and p: search
 // syntax) as pure trees, the flattened row cache, orphan data, the
 // operators behind its gestures (reorder, collection rename, select
-// matching), and the panel driven headlessly (area state, Ctrl/Shift
-// clicks, restriction toggles, drags onto and between rows, search, the
+// matching, parent drop with and without keeping the world transform), and
+// the panel driven headlessly (area state, Ctrl/Shift clicks, restriction
+// toggles, drags onto rows, the scene root, collections, and between rows,
+// refused drops onto descendants, search with name and field filters, the
 // clipped rows and reveal, and in-place collection rename).
 
 namespace {
@@ -306,6 +311,42 @@ TEST_CASE("Outliner: filter syntax") {
     CHECK_MESSAGE(fixture.history.size() == 0, "selecting matches should record no undo step");
 }
 
+TEST_CASE("Outliner: filter prefixes ignore case and keep colons in their value") {
+    const std::vector<OutlinerFilterTerm> expected{
+        {.field = OutlinerFilterField::Tag, .text = "Enemy"},
+        {.field = OutlinerFilterField::Prefab, .text = "props/door.prefab"},
+        {.field = OutlinerFilterField::Component, .text = "rigid body"},
+        {.field = OutlinerFilterField::Prefab, .text = "a:b"},
+        {.field = OutlinerFilterField::Name, .text = ":lamp"},
+        {.field = OutlinerFilterField::Name, .text = "open quote"},
+    };
+    CHECK(parseOutlinerFilter(R"(TAG:Enemy PreFab:props/door.prefab Component:"rigid body" p:a:b :lamp "open quote)")
+              .terms == expected);
+}
+
+TEST_CASE("Outliner: field filters apply in every display mode") {
+    Fixture fixture;
+    Scene& scene = fixture.scene;
+    scene.registry().emplace<TagsComponent>(scene.findEntity(fixture.barrel), TagsComponent{{"loot"}});
+    scene.registry().emplace<TagsComponent>(scene.findEntity(fixture.tree2), TagsComponent{{"loot"}});
+    // Barrel is listed under Props and under Crates.
+    CHECK(tree(scene, OutlinerDisplayMode::ViewLayer, "t:loot") == "*Props[*Crates[Barrel],Barrel],Tree 2");
+    CHECK(tree(scene, OutlinerDisplayMode::Collections, "t:loot") == "*Props[*Crates[Barrel],Barrel],Tree 2");
+    CHECK(tree(scene, OutlinerDisplayMode::Prefabs, "t:loot") == "*prefabs/tree.prefab[Tree 2]");
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::ViewLayer, "p:tree") == "Tree,Tree 2",
+                  "p: should match instances outside the Prefabs mode");
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::ViewLayer, "p:tree t:loot") == "Tree 2",
+                  "field terms should combine with AND");
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::ViewLayer, "p:").find("Lamp") == std::string::npos,
+                  "an empty prefab term should match prefab instances only");
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::Prefabs, "rock") == "prefabs/rock.prefab[Rock]",
+                  "a name term should match a prefab group's label and its instances");
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::Prefabs, "prefabs/rock") == "prefabs/rock.prefab",
+                  "a name term should match a prefab group's label");
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::Collections, "c:point").empty(),
+                  "a component no object has should match nothing, not even collections");
+}
+
 TEST_CASE("Outliner: row index") {
     Fixture fixture;
     const std::vector<OutlinerNode> rows = buildOutlinerTree(fixture.scene, {.mode = OutlinerDisplayMode::ViewLayer});
@@ -496,6 +537,41 @@ TEST_CASE("Outliner: parent drop operator") {
     fixture.editing().undo();
     CHECK_MESSAGE((fixture.parent(fixture.crate) == entt::null && fixture.parent(fixture.rock) == entt::null),
                   "undo should restore the parents");
+}
+
+TEST_CASE("Outliner: parent drop keeps the world transform unless asked not to") {
+    Fixture fixture;
+    Scene& scene = fixture.scene;
+    scene.setLocalTransform(scene.findEntity(fixture.lamp), glm::translate(glm::mat4(1.0f), glm::vec3(10.0f, 0, 0)));
+    scene.setLocalTransform(scene.findEntity(fixture.rock), glm::translate(glm::mat4(1.0f), glm::vec3(0, 2.0f, 0)));
+    const auto rockPosition = [&scene, &fixture] {
+        scene.updateWorldTransforms();
+        return std::pair{glm::vec3(scene.localTransform(scene.findEntity(fixture.rock))[3]),
+                         glm::vec3(scene.registry().get<TransformComponent>(scene.findEntity(fixture.rock)).world[3])};
+    };
+    fixture.selection.assign({fixture.rock});
+
+    REQUIRE(static_cast<bool>(fixture.invoke("outliner.parent_drop", {{"parent", fixture.lamp.value}})));
+    const auto [keptLocal, keptWorld] = rockPosition();
+    CHECK(testsupport::approxEqual(keptWorld, glm::vec3(0, 2.0f, 0)));
+    CHECK(testsupport::approxEqual(keptLocal, glm::vec3(-10.0f, 2.0f, 0)));
+
+    fixture.editing().undo();
+    REQUIRE(static_cast<bool>(
+        fixture.invoke("outliner.parent_drop", {{"parent", fixture.lamp.value}, {"keep_transform", false}})));
+    const auto [movedLocal, movedWorld] = rockPosition();
+    CHECK(testsupport::approxEqual(movedLocal, glm::vec3(0, 2.0f, 0)));
+    CHECK_MESSAGE(testsupport::approxEqual(movedWorld, glm::vec3(10.0f, 2.0f, 0)),
+                  "without keep_transform the object should move with its new parent");
+
+    CHECK_MESSAGE(fixture.invoke("outliner.parent_drop", {{"parent", 4242}}).status == OperatorStatus::Failed,
+                  "an unknown parent should fail");
+    fixture.diagnostics.acknowledgeErrors();
+    fixture.selection.clear();
+    CHECK_MESSAGE(fixture.invoke("outliner.parent_drop", {{"parent", fixture.lamp.value}}).status ==
+                      OperatorStatus::Cancelled,
+                  "a drop without a selection should do nothing");
+    CHECK(fixture.history.size() == 1);
 }
 
 // The editor smoke's outliner step, headless: add, collect, link, undo all.
@@ -728,6 +804,85 @@ TEST_CASE("Outliner: drags") {
     fixture.editing().undo();
     CHECK_MESSAGE((!fixture.member(fixture.rock, fixture.empty) && fixture.parent(fixture.tree) == entt::null),
                   "undo should unlink and unparent");
+}
+
+TEST_CASE("Outliner: dragging onto the scene root unparents") {
+    Fixture fixture;
+    const SceneEntityId wick = fixture.add("Wick", fixture.lamp);
+    HeadlessImGuiContext imgui;
+    ImGui::GetIO().ConfigInputTrickleEventQueue = false;
+    // Revealing Wick opens Lamp.
+    fixture.selection.assign({wick});
+    fixture.draw();
+    fixture.draw();
+    const ImGuiWindow* window = panelWindow(fixture);
+    REQUIRE(window != nullptr);
+    CHECK_MESSAGE(dragRow(fixture, entityRow(fixture, wick), HeadlessImGuiContext::itemId(*window, "Scene Root")),
+                  "Wick's row and the Scene Root row should be found");
+    CHECK((fixture.parent(wick) == entt::null));
+    CHECK(fixture.history.size() == 1);
+    fixture.editing().undo();
+    CHECK_MESSAGE(fixture.parent(wick) == fixture.scene.findEntity(fixture.lamp), "undo should restore the parent");
+}
+
+TEST_CASE("Outliner: dragging onto a descendant changes nothing") {
+    Fixture fixture;
+    HeadlessImGuiContext imgui;
+    ImGui::GetIO().ConfigInputTrickleEventQueue = false;
+    fixture.draw();
+    // Bulb, Lamp's child, is also listed under Crates.
+    CHECK_MESSAGE(
+        dragRow(fixture, entityRow(fixture, fixture.lamp), entityRow(fixture, fixture.bulb, fixture.crates.value)),
+        "Lamp's row and Bulb's row in Crates should be found");
+    CHECK((fixture.parent(fixture.lamp) == entt::null));
+    CHECK((fixture.parent(fixture.bulb) == fixture.scene.findEntity(fixture.lamp)));
+    CHECK_MESSAGE(fixture.history.size() == 0, "a refused drop should record no undo step");
+    CHECK_MESSAGE((fixture.selection.ids() == std::vector<SceneEntityId>{fixture.lamp}),
+                  "the dragged row should still become the selection");
+}
+
+TEST_CASE("Outliner: dragging a selected row onto a collection links the selection") {
+    Fixture fixture;
+    HeadlessImGuiContext imgui;
+    ImGui::GetIO().ConfigInputTrickleEventQueue = false;
+    fixture.draw();
+    fixture.selection.assign({fixture.tree, fixture.rock});
+    CHECK_MESSAGE(dragRow(fixture, entityRow(fixture, fixture.tree), collectionRow(fixture, fixture.empty)),
+                  "Tree's row and the Empty collection should be found");
+    CHECK(fixture.member(fixture.tree, fixture.empty));
+    CHECK(fixture.member(fixture.rock, fixture.empty));
+    CHECK_FALSE(fixture.member(fixture.tree2, fixture.empty));
+    CHECK_MESSAGE(fixture.history.size() == 1, "linking the selection should be one undo step");
+    CHECK_MESSAGE((fixture.parent(fixture.tree) == entt::null), "a collection drop should not reparent");
+}
+
+TEST_CASE("Outliner: search with a field filter shows the matching rows") {
+    Fixture fixture;
+    fixture.scene.registry().emplace<TagsComponent>(fixture.scene.findEntity(fixture.lid), TagsComponent{{"hinge"}});
+    HeadlessImGuiContext imgui;
+    fixture.draw();
+    const ImGuiWindow* window = panelWindow(fixture);
+    REQUIRE(window != nullptr);
+    const auto search = [&fixture, window](const char* text) {
+        HeadlessImGuiContext::activateNextFrame(HeadlessImGuiContext::itemId(*window, "##HierarchyFilter"));
+        fixture.draw();
+        HeadlessImGuiContext::typeNextFrame(text);
+        fixture.draw();
+        fixture.draw();
+        // Leave the field, so the next activation selects its text.
+        ImGui::ClearActiveID();
+        fixture.draw();
+    };
+    // Lid's parent Crate starts closed; the search opens it.
+    search("t:hinge");
+    CHECK((fixture.panel.displayedEntities() == std::vector<SceneEntityId>{fixture.crate, fixture.lid}));
+    // Activating the field again selects its text, so typing replaces the search.
+    search("p:tree");
+    CHECK((fixture.panel.displayedEntities() == std::vector<SceneEntityId>{fixture.tree, fixture.tree2}));
+    fixture.panel.setDisplayMode(OutlinerDisplayMode::Prefabs);
+    fixture.draw();
+    CHECK_MESSAGE((fixture.panel.displayedEntities() == std::vector<SceneEntityId>{fixture.tree, fixture.tree2}),
+                  "the search should carry over to another display mode");
 }
 
 TEST_CASE("Outliner: search") {

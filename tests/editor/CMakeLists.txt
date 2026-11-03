@@ -158,6 +158,7 @@ zenith_add_test_suite(editor
         SmokeRunnerTests.cpp
         SnappingCursorTests.cpp
         SystemProfilerTests.cpp
+        ThumbnailCacheTests.cpp
         TransientEditingTests.cpp
         ViewportChromeTests.cpp
         ViewportPickingTests.cpp

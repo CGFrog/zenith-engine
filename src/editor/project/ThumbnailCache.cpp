@@ -30,10 +30,15 @@ void copyPreviewTexel(const TextureAsset& source, size_t sourceOffset, uint8_t* 
 }
 
 CachedThumbnail downsample(TextureAsset source) {
-    const float scale = std::min(1.0f, static_cast<float>(maximumThumbnailExtent) /
-                                           static_cast<float>(std::max(source.width, source.height)));
-    const uint32_t width = std::max(1u, static_cast<uint32_t>(source.width * scale));
-    const uint32_t height = std::max(1u, static_cast<uint32_t>(source.height * scale));
+    // Integer scaling, so the longer side is exactly the extent (a float
+    // scale truncated some sources one texel short).
+    const uint32_t longest = std::max(source.width, source.height);
+    const uint32_t extent = std::min(longest, maximumThumbnailExtent);
+    const auto fit = [longest, extent](uint32_t side) {
+        return std::max(1u, static_cast<uint32_t>(static_cast<uint64_t>(side) * extent / longest));
+    };
+    const uint32_t width = fit(source.width);
+    const uint32_t height = fit(source.height);
     CachedThumbnail thumbnail{.state = ThumbnailState::Ready, .width = width, .height = height};
     thumbnail.rgba.resize(static_cast<size_t>(width) * height * 4);
     for (uint32_t y = 0; y < height; ++y) {
