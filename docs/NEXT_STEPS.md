@@ -32,24 +32,20 @@ Exit criteria:
 ## Test suite follow-ups
 
 The suite runs in parallel, captures one reference view per CTest, and has
-direct tests for reflection, `InputManager`, and the headless `EditorSession`.
-Remaining coverage gaps, highest value first:
+direct tests for reflection, `InputManager`, the headless `EditorSession`,
+additive scenes, `JobSystem`, `ThumbnailCache`, the outliner, and cooked
+meshes. The finished follow-ups are in
+[Completed milestones](history/milestones.md#test-suite-follow-ups-completed).
+Open items found while writing them:
 
-- [ ] Additive-scene tests: broken references and additive load/unload
-      ownership (today only sections of `ProductionMilestonesTests.cpp`).
-      Prefabs have `tests/editor/PrefabTests.cpp`: registry round trip with
-      module and unknown components, version 1 migration, link persistence by
-      GUID, field-level overrides, nested prefabs and cycles, and every
-      `prefab.*` operator with undo and redo.
-- [ ] `JobSystem` tests: ordering, dependencies, exceptions, and shutdown while
-      busy.
-- [ ] `ThumbnailCache` and `HierarchyPanel` tests: downsampling,
-      request/find/invalidate, worker shutdown, filtering, and reparent drops.
-- [ ] Cook optimized meshes and LOD chains into the derived-asset cache, as
-      textures are, so imports skip meshoptimizer at load time.
-
-The finished follow-up (recording editor edits without serializing the whole
-scene) is in [Completed milestones](history/milestones.md#test-suite-follow-ups-completed).
+- [ ] `JobSystem::shutdown` waits for running jobs without asking them to
+      cancel, so a running job that waits for cancellation blocks shutdown
+      and the destructor unless it is cancelled through its handle
+      (`src/engine/jobs/JobSystem.hpp`).
+- [ ] A cooked-mesh cache hit still loads the glTF buffers and reads the
+      accessors through cgltf; only optimization is skipped. There are no
+      per-model mesh import settings yet (the cache key already covers them).
+      See [Assets](engine/assets.md).
 
 ## Recommended next implementation slice
 
@@ -57,7 +53,6 @@ scene) is in [Completed milestones](history/milestones.md#test-suite-follow-ups-
   (update-after-bind bindless and the RGBA8 fallback; `ZENITH_FORCE_UPDATE_AFTER_BIND`
   and `ZENITH_DISABLE_BLOCK_COMPRESSION` exercise those paths on the reference
   machine), and confirm the Windows, Linux, and macOS CI jobs.
-- Work through the test suite follow-ups above, highest value first.
 - Gameplay follow-ups are tracked in the
   [gameplay roadmap](GAMEPLAY_ROADMAP.md#open-follow-ups); the
   [roguelike readiness review](ROGUELIKE_READINESS_REVIEW.md) lists the editor

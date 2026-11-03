@@ -54,7 +54,7 @@ capability. `--check` fails when the generated index is stale.
 | Tags | `src/engine/scene/Tags.*` | `TagsComponent`, `findEntitiesWithTag`, `hasTag` | `engine.Tags` | [Project Settings](editor/project-settings.md) |
 | Transient (unsaved, generated) entities | `src/engine/scene/Scene.hpp` | `TransientComponent`, `markTransient`, `destroyTransient` | `engine.TransientEntity` | [Scene › Transient](engine/scene.md#transient-entities) |
 | Save games | `src/engine/scene/SaveGame.*` | `SaveGameStore`, `OutsideServices::saveGame` | `engine.SaveGame` | [Scene](engine/scene.md) |
-| Additive / asynchronous scenes | `src/engine/scene/AdditiveSceneManager.*`, `src/engine/jobs/JobSystem.*` | `AdditiveSceneManager`, `JobSystem` | `engine.AssetStreaming` | [Scene](engine/scene.md) |
+| Additive / asynchronous scenes | `src/engine/scene/AdditiveSceneManager.*`, `src/engine/jobs/JobSystem.*` | `AdditiveSceneManager`, `JobSystem` | `engine.AdditiveScene`, `engine.JobSystem`, `engine.AssetStreaming` | [Scene](engine/scene.md) |
 
 ### Gameplay programming (modules, systems, behaviours)
 
@@ -100,7 +100,7 @@ capability. `--check` fails when the generated index is stale.
 | Physics components | `src/engine/physics/PhysicsComponents.hpp`, `CharacterController.hpp` | `ColliderComponent`, `RigidBodyComponent`, `PhysicsMotionType`, `CharacterControllerComponent` | `engine.Physics` | [Physics](engine/physics.md) |
 | Stepping, body sync, interpolation | `src/engine/physics/PhysicsWorld.*` | `PhysicsWorld::{step,interpolate,refreshBody}` | `engine.Physics` | [Physics › PhysicsWorld](engine/physics.md#srcenginephysicsphysicsworld) |
 | Raycasts, shape casts, overlaps | `src/engine/physics/PhysicsWorld.hpp` | `raycast`, `raycastAll`, `shapeCast`, `overlap`, `closestPoint`, `PhysicsQueryFilter` | `engine.PhysicsQuery` | [Physics](engine/physics.md) |
-| Contacts and triggers | `src/engine/physics/PhysicsWorld.hpp` | `contactEvents`, `triggerEvents`, `ContactEvent`, `TriggerEvent` | `engine.PhysicsQuery` | [Physics](engine/physics.md) |
+| Contacts and triggers | `src/engine/physics/PhysicsWorld.hpp` | `contactEvents`, `triggerEvents` (sensor pairs report to both sides), `ContactEvent`, `TriggerEvent` | `engine.PhysicsQuery` | [Physics](engine/physics.md) |
 | Collision layers | `src/engine/physics/PhysicsLayers.*` | `PhysicsLayerTable`, `physicsLayerMask` | `engine.PhysicsQuery` | [Physics](engine/physics.md) |
 | Navigation mesh and paths | `src/engine/navigation/NavigationWorld.*`, `NavMeshBuildSettings.hpp` | `NavigationWorld::{bake,findPath}`, `gatherNavigationGeometry` | `engine.Navigation` | [Navigation](engine/navigation.md) |
 | AI agents and crowds | `src/engine/navigation/NavAgent.*`, `NavigationCrowd.*` | `NavAgentComponent`, `setNavDestination`, `NavigationCrowd` | `engine.Navigation` | [Navigation](engine/navigation.md) |
@@ -117,6 +117,7 @@ capability. `--check` fails when the generated index is stale.
 | Asset GUIDs and `.meta` | `src/engine/assets/AssetDatabase.*`, `AssetGuid.*`, `AssetMeta.*` | `AssetDatabase`, `AssetGuid`, `AssetMeta` | `engine.AssetDatabase` | [Assets](engine/assets.md) |
 | Material files (`.zmat`) | `src/engine/assets/MaterialAssetFile.*` | `MaterialFile` | `engine.MaterialAsset` | [Assets](engine/assets.md) |
 | Texture cooking (BC7/BC5 KTX2) | `src/engine/assets/TextureCooker.*`, `CompressedTexture.*`, `src/asset_build_main.cpp` | `zenith_asset_build cook-model-textures` | `engine.CompressedTexture` | [Assets](engine/assets.md) |
+| Mesh cooking (optimized meshes and LODs in the derived cache) | `src/engine/assets/CookedMesh.*`, `ModelImporter.cpp`, `src/asset_build_main.cpp` | `cookModelMeshes`, `AssetManager::{setCookedMeshRoot,meshCookStatistics}`, `zenith_asset_build cook-model-meshes`, `zenith_cooked_meshes` | `engine.CookedMesh` | [Assets](engine/assets.md) |
 | Import limits, derived-data cache | `src/engine/assets/ProductionAssetPipeline.*` | `AssetImportLimits`, `DerivedAssetCache` | `engine.ProductionMilestones` | [Assets](engine/assets.md) |
 | Reloading changed assets | `src/engine/assets/Assets.hpp`, `src/editor/project/AssetReload.*` | `reloadModel`, `reloadTexture` | `engine.AssetReload` | [Assets](engine/assets.md) |
 
@@ -132,6 +133,7 @@ capability. `--check` fails when the generated index is stale.
 | Clustered lights | `src/engine/graphics/Lighting.*`, `passes/ClusteredLightingPass.*`, `shaders/light_clusters.comp` | `ClusterGrid`, `ClusterGridConfiguration` | `engine.ClusteredLighting` | [Scene passes](engine/graphics-passes.md) |
 | Shadows | `passes/MeshPassShadows.cpp`, `LocalShadows.*`, `passes/LocalShadowPass.*` | `LocalShadowCache` | `engine.LocalShadow` | [Scene passes](engine/graphics-passes.md) |
 | GPU-driven culling | `GpuCullLayout.*`, `passes/GpuDrivenPass.*`, `passes/MeshPassGpuDriven.cpp`, `shaders/gpu_visibility.comp` | `GpuCullLayout` | `engine.GpuCullLayout` | [Scene passes](engine/graphics-passes.md) |
+| Draw-group overflow (CPU fallback) and render overflow stats | `RenderSubmission.*`, `passes/MeshPassRecord.cpp`, `passes/MeshPassGpuDriven.cpp`, `Rendering.hpp` | `countIndirectDrawGroups`, `RenderStats::{excessGpuDrawGroups,droppedMaterialOverrides}` | `engine.RenderSubmission`, `zenith_render_capacity_vulkan_smoke` | [Scene passes](engine/graphics-passes.md) |
 | AO / SSR / fog / particles / decals | `AmbientOcclusion.*`, `ScreenSpaceReflectionTrace.hpp`, `VolumetricFog.*`, `Particles.*`, `Decals.*` and their `passes/*Pass.*` | – | `engine.AmbientOcclusion`, `engine.ScreenSpaceReflection`, `engine.VolumetricFog`, `engine.Particle`, `engine.Decal` | [Scene passes](engine/graphics-passes.md) |
 | Environment lighting, probes, irradiance | `EnvironmentLighting.*`, `ReflectionProbes.*`, `IrradianceVolume.*`, `passes/EnvironmentPass.*` | – | `engine.EnvironmentLighting`, `engine.ReflectionProbe`, `engine.IrradianceVolume` | [Scene passes](engine/graphics-passes.md) |
 | Post: TAA, upscaling, DoF, motion blur, bloom, tone map, grade | `TemporalQuality.*`, `SpatialUpscale.*`, `DepthOfField.*`, `MotionBlur.*`, `ToneMapping.*`, `ColorGrading.*` and `passes/` | – | `engine.TemporalQuality`, `engine.ToneMapping`, `engine.ColorGrading`, ... | [Post-processing](engine/graphics-post.md) |
@@ -161,7 +163,7 @@ capability. `--check` fails when the generated index is stale.
 | Inspector / Properties drawing | `interaction/EntityPropertiesView.*`, `ReflectedFieldEditor.*`, `ComponentEditors.*`, `panels/InspectorPanel.*`, `panels/PropertiesPanel.*` | `EntityPropertiesView`, `ComponentEditorOverrides` | `editor.ReflectedFieldEditor`, `editor.PropertiesPanel`, `editor.ComponentEditor` | [Inspector](editor/inspector.md) |
 | Entity / asset reference fields, eyedropper | `interaction/EntityReferenceField.*`, `AssetReferenceField.*`, `EntityEyedropper.*` | – | `editor.EntityReferenceField`, `editor.AssetReferenceField` | [Inspector](editor/inspector.md) |
 | Hierarchy (outliner) | `panels/HierarchyPanel.*`, `panels/outliner/` | `HierarchyPanel`, `OutlinerTree`, `OutlinerFilter` | `editor.Outliner` | [Outliner](editor/outliner.md) |
-| Asset Browser | `panels/AssetBrowserPanel.*`, `project/ProjectAssets.*`, `project/AssetCatalog.*` | `AssetBrowserPanel::drawBrowser`, `ProjectAssets` | `editor.AssetBrowser`, `editor.ProjectAsset` | [Asset Browser](editor/asset-browser.md) |
+| Asset Browser | `panels/AssetBrowserPanel.*`, `project/ProjectAssets.*`, `project/AssetCatalog.*` | `AssetBrowserPanel::drawBrowser`, `ProjectAssets`, `ThumbnailCache` | `editor.AssetBrowser`, `editor.ProjectAsset`, `editor.ThumbnailCache` | [Asset Browser](editor/asset-browser.md) |
 | Viewport panel and chrome | `panels/ViewportPanel.*`, `ViewportChrome.*`, `ViewportRegistry.*`, `ViewportOperators.*` | `ViewportPanel`, `ViewportRegistry::active` | `editor.ViewportChrome`, `editor.MultiViewport` | [Viewports](editor/viewport.md) |
 | Editor camera navigation | `interaction/EditorCamera.*` | `EditorCamera` (RMB fly + WASD/QE, MMB orbit, Shift pan, Ctrl/wheel zoom) | `editor.EditorCamera` | [Viewports](editor/viewport.md) |
 | Click / box / lasso selection, picking | `viewport/ViewportPicker.*`, `ViewportSelectOperators.*`, `BoxSelect.*`, `LassoSelect.*`, `interaction/Selection.*` | `ViewportPicker`, `Selection` | `editor.ViewportPicking`, `editor.SelectionTools`, `editor.Selection` | [Viewports](editor/viewport.md) |
@@ -341,7 +343,7 @@ Executable entry points: the game runner and the asset cooker.
 
 | File | Main types | Summary |
 | --- | --- | --- |
-| `asset_build_main` .cpp |  | zenith_asset_build: offline texture cooking and derived-data builds. |
+| `asset_build_main` .cpp |  | zenith_asset_build: offline texture and mesh cooking and derived-data builds. |
 | `main` .cpp |  | Game runner composition root: parse the command line, load the project and its module, run ProjectApplication or DemoApplication. |
 
 ### `src/editor/`
@@ -706,12 +708,13 @@ CPU asset import, storage, GUIDs, cooking, and streaming.
 | `ColorLut` .hpp/.cpp | `ColorLut`, `ColorLutResult` | A three-dimensional colour lookup table in the Adobe Cube LUT (".cube") convention, also written by DaVinci Resolve. |
 | `CompressedTexture` .hpp/.cpp | `BlockCompressedDecodeResult`, `CookedTextureLookup` | Block-compressed texture containers and the cooked-texture convention shared by the offline cooker (zenith_asset_build) and runtime import. |
 | `ContentHash` .hpp/.cpp | `ContentHasher` | Incremental 64-bit FNV-1a: a fast, stable, non-cryptographic fingerprint for cache keys and change detection. |
+| `CookedMesh` .hpp/.cpp | `CookedMesh`, `CookedModelMeshes`, `CookedMeshDecodeResult`, `CookedMeshLookup` | Cooked model meshes: the optimized vertices, indices, and LOD ranges of a glTF model's meshes as a versioned CPU format stored in the DerivedAssetCache, so imports can skip meshoptimizer. |
 | `ImageDecoder` .hpp/.cpp | `ImageDecodeResult` | Decodes image files to CPU pixels (stb_image); |
 | `IrradianceVolumeAsset` .hpp/.cpp | `IrradianceProbe`, `IrradianceVolumeData`, `IrradianceVolumeResult` | Baked irradiance probe volume: a regular grid of probes filling a world-space axis-aligned box. |
 | `MaterialAssetFile` .hpp/.cpp | `MaterialTextureSlot`, `MaterialTextureReference`, `MaterialFile`, `MaterialFileResult` | Material asset files (.zmat): one standalone metallic-roughness material as JSON. |
 | `MeshBuilder` .hpp/.cpp | `MeshBuildOptions`, `MeshBuildResult`, `MeshBuilder` | Assembles a MeshAsset in code, for AssetManager::createMesh: procedural walls, floors and stairs, merged room geometry, debug or minimap meshes. |
 | `MeshOptimization` .hpp/.cpp | `MeshOptimizationSettings` | Import-time tuning for GPU-friendly ordering and LOD generation. |
-| `ModelImporter` .hpp/.cpp | `ModelImporter`, `ModelTextureSource`, `ModelTextureSourcesResult`, `ModelOutlinePrimitive`, … | glTF 2.0 import (cgltf) into CPU models, meshes, and materials; |
+| `ModelImporter` .hpp/.cpp | `ModelImporter`, `MeshCookOutcome`, `ModelMeshCookResult`, `ModelTextureSource`, … | glTF 2.0 import (cgltf) into CPU models, meshes, and materials; |
 | `PackedVertexStreams` .hpp/.cpp | `PackedVertexAttributes`, `PackedSkinInfluence`, `PackedVertexStreams` | Compact, renderer-independent encoding of `Vertex` split into separately bindable streams. |
 | `ProductionAssetPipeline` .hpp/.cpp | `AssetImportLimits`, `AssetValidationCounts`, `AssetPipelineResult`, `CompressedMeshCodec`, … | Import limits and validation, KTX2 handling, compressed mesh decoders, derived-data cache. |
 | `TextureCooker` .hpp/.cpp | `TextureCookResult` | Offline texture cooking to BC7/BC5 KTX2 (zenith_asset_build). |
@@ -1065,7 +1068,7 @@ ECS scene, component types and serialization, prefabs, collections, save games.
 | `PrefabOverrides` .cpp |  | Prefab overrides: comparing instances with their prefab through staging scenes, applying overrides when rebuilding, and recording the structural edits (removals and moves) made to instances in the scene. |
 | `PrefabQueries` .cpp |  | Prefab instance queries: the instance an entity belongs to, its members, the instances of a prefab, and unpacking an instance. |
 | `PrefabSystem` .cpp | `ModelRootField` | PrefabSystem: instantiating, refreshing, and capturing prefab instances. |
-| `PrefabSystemInternal` .hpp | `PendingNestedReference`, `UnmappedReferences`, `InstanceIds`, `PrefabSystem` | Internal to the prefab system: what PrefabSystem.cpp and its domain files (PrefabIdRemap, PrefabOverrides, PrefabNesting, PrefabQueries) share. |
+| `PrefabSystemInternal` .hpp | `PendingNestedReference`, `UnmappedReferences`, `InstanceIds`, `PrefabSystem` | Internal to the prefab system: what PrefabSystem.cpp and its domain files (PrefabIdRemap, PrefabOverrides, PrefabNesting, PrefabQueries) and the document codec (Prefab.cpp) share. |
 | `RenderComponentTypes` .hpp/.cpp |  | Rendering and effect components: model instances, meshes, cameras, particle emitters, decals, and material overrides. |
 | `SaveGame` .hpp/.cpp | `SaveGameInfo`, `SaveGameResult`, `SaveDataFormat`, `SaveGameStore` | SaveGameStore: save slots holding a scene's changes against its baseline document. |
 | `Scene` .hpp/.cpp | `SceneEntityIdComponent`, `NameComponent`, `TransformComponent`, `SceneTransformUpdateStats`, … | Scene (EnTT registry + hierarchy + transforms) and the core components (name, transform, relationship, mesh, camera...). |

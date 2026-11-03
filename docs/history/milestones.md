@@ -578,3 +578,22 @@ Exit criteria:
       command (`SceneEditing::perform`); large scenes pay for it on every edit,
       and it bounds the size of `zenith_scene_editing`'s large-scene test.
       Done by gameplay roadmap D4 (`SceneEditing::captureEntities`).
+- [x] Additive-scene tests (2026-11-02, `tests/engine/AdditiveSceneTests.cpp`):
+      broken and dangling references, failed loads that publish nothing,
+      unload ownership with shared assets, duplicate loads, unload order,
+      cancelling a load, and `clear`.
+- [x] `JobSystem` tests (2026-11-02, `tests/engine/JobSystemTests.cpp`):
+      ordering, bounded submission, exceptions, cancellation, and shutdown or
+      destruction while busy. They found that `reprioritize` let a job jump
+      ahead of older jobs of the same priority; the queue now breaks ties by
+      submission order.
+- [x] `ThumbnailCache` and outliner tests (2026-11-02,
+      `tests/editor/ThumbnailCacheTests.cpp`, `tests/editor/OutlinerTests.cpp`):
+      downsampling, request/find/invalidate, worker shutdown, filter prefixes,
+      and reparent and collection drops. They found that some thumbnails came
+      out 95 texels on the long side instead of 96; sizes are now integer
+      arithmetic.
+- [x] Cook optimized meshes and LOD chains into the derived-asset cache
+      (2026-11-02, `src/engine/assets/CookedMesh.*`, `zenith_cooked_meshes`):
+      a cache hit skips meshoptimizer (about 4.5x faster model loads in a
+      Debug build). See [Assets](../engine/assets.md).
