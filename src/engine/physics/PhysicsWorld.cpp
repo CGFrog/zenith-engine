@@ -282,6 +282,9 @@ class PhysicsWorld::Impl {
     struct SensorPair {
         uint32_t contacts{0};
         bool dormant{false};
+        // Both bodies are sensors, so each event is also reported the other
+        // way round.
+        bool mutual{false};
         uint32_t sensorBody{0};
         uint32_t otherBody{0};
         Entity sensor{entt::null};
@@ -414,7 +417,7 @@ class PhysicsWorld::Impl {
     void endSensorPairs(uint32_t key) {
         for (auto pair = sensorPairs.begin(); pair != sensorPairs.end();) {
             if (pair->second.sensorBody == key || pair->second.otherBody == key) {
-                pendingTriggerEvents.push_back(exited(pair->second));
+                report(TriggerEventType::Exited, pair->second);
                 pair = sensorPairs.erase(pair);
             } else {
                 ++pair;
@@ -444,12 +447,21 @@ class PhysicsWorld::Impl {
         return false;
     }
 
-    static TriggerEvent exited(const SensorPair& pair) {
-        return {.type = TriggerEventType::Exited,
-                .sensor = pair.sensor,
-                .other = pair.other,
-                .sensorId = pair.sensorId,
-                .otherId = pair.otherId};
+    // Queues the pair's event, and for two sensors the same event seen from
+    // the other sensor.
+    void report(TriggerEventType type, const SensorPair& pair) {
+        pendingTriggerEvents.push_back({.type = type,
+                                        .sensor = pair.sensor,
+                                        .other = pair.other,
+                                        .sensorId = pair.sensorId,
+                                        .otherId = pair.otherId});
+        if (pair.mutual) {
+            pendingTriggerEvents.push_back({.type = type,
+                                            .sensor = pair.other,
+                                            .other = pair.sensor,
+                                            .sensorId = pair.otherId,
+                                            .otherId = pair.sensorId});
+        }
     }
 
     // Turns the step's sensor contacts (in orderPendingContacts order, so a
@@ -473,7 +485,7 @@ class PhysicsWorld::Impl {
                 if (eitherAsleep(firstKey, secondKey)) {
                     pair->second.dormant = true;
                 } else {
-                    pendingTriggerEvents.push_back(exited(pair->second));
+                    report(TriggerEventType::Exited, pair->second);
                     sensorPairs.erase(pair);
                 }
                 continue;
@@ -505,11 +517,8 @@ class PhysicsWorld::Impl {
             pair.other = other.second;
             pair.sensorId = sceneIdOf(sensor.second);
             pair.otherId = sceneIdOf(other.second);
-            pendingTriggerEvents.push_back({.type = TriggerEventType::Entered,
-                                            .sensor = pair.sensor,
-                                            .other = pair.other,
-                                            .sensorId = pair.sensorId,
-                                            .otherId = pair.otherId});
+            pair.mutual = firstIsSensor && isSensor(second->second);
+            report(TriggerEventType::Entered, pair);
         }
         std::sort(pendingTriggerEvents.begin() + removalExits, pendingTriggerEvents.end(), triggerEventPrecedes);
         triggerEvents.swap(pendingTriggerEvents);

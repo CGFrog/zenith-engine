@@ -89,6 +89,11 @@ per pair of bodies. They are derived on the main thread from Jolt's contacts.
   first. Each side carries its scene id, because the entity may already be
   gone.
 - A body that falls asleep inside stays inside.
+- Two sensors that overlap report each other: every event of the pair comes
+  twice, once with each as the sensor, so both sensors' trigger hooks run.
+  Jolt pairs bodies only when one of them moves, so two static sensors never
+  overlap; a kinematic or dynamic sensor (a moving hit volume) detects static
+  ones.
 - `GameServices::publishPhysicsEvents` turns them into `TriggerEntered` and
   `TriggerExited` events.
 

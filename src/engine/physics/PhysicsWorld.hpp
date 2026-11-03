@@ -84,7 +84,9 @@ bool contactEventPrecedes(const ContactEvent& first, const ContactEvent& second)
 // exist, so each side also carries its scene id. Bodies are matched on whole
 // bodies: a pair is inside while any of their shapes touch. A body that falls
 // asleep inside stays inside (Jolt drops a sleeping body's contacts; waking
-// up inside reports nothing). Two sensors never report each other.
+// up inside reports nothing). Two overlapping sensors report each other: every
+// event comes twice, once with each as the sensor. As with other bodies, one
+// of them must be moving (two static sensors never touch).
 enum class TriggerEventType {
     Entered,
     Exited,

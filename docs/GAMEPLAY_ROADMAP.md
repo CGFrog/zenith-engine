@@ -84,7 +84,6 @@ against the code when the roadmap was archived.
 
 ### Physics, navigation, and input
 
-- Sensor-vs-sensor overlaps are not reported. [A3] (unverified)
 - Characters do not push each other (Jolt's character-vs-character collision
   is not set up), and a character leaving a moving platform loses the
   platform's velocity. [B1] (unverified)

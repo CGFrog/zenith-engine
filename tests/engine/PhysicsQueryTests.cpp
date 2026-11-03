@@ -6,6 +6,7 @@
 
 #include "support/Doctest.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
@@ -315,6 +316,65 @@ TEST_CASE("PhysicsQuery: triggers") {
     log.events.clear();
     physics.clear();
     CHECK_MESSAGE(physics.triggerEvents().empty(), "clearing the world drops trigger state without events");
+}
+
+// Two sensors overlapping report each other: each is the sensor of one
+// event and the other body of the other. Two static sensors never overlap,
+// as neither moves.
+TEST_CASE("PhysicsQuery: sensors detect each other") {
+    PhysicsWorld physics;
+    CHECK_MESSAGE((static_cast<bool>(physics.init())), "physics initializes");
+    Scene scene;
+    AssetManager assets;
+    const Entity zone = addBody(
+        scene, "Zone sensor", {.position = {0.0f, 1.0f, 0.0f}, .shape = BoxCollider{glm::vec3(1.0f)}, .sensor = true});
+    const Entity overlapping =
+        addBody(scene, "Overlapping static sensor",
+                {.position = {1.5f, 1.0f, 0.0f}, .shape = BoxCollider{glm::vec3(1.0f)}, .sensor = true});
+    // A kinematic sensor (a weapon's hit volume, say) swept through the zone.
+    const Entity sweep = addBody(scene, "Swept sensor",
+                                 {.position = {-4.0f, 1.0f, 0.0f},
+                                  .shape = SphereCollider{0.3f},
+                                  .motion = PhysicsMotionType::Kinematic,
+                                  .layer = PhysicsLayer::Dynamic,
+                                  .sensor = true});
+    TriggerLog log;
+    // Along +x at 3 m/s, from x = -4 to the zone's centre.
+    const float dt = physics.config().fixedTimeStep;
+    const int steps = static_cast<int>(std::round(4.0f / (3.0f * dt)));
+    for (int index = 0; index <= steps; ++index) {
+        scene.registry().get<TransformComponent>(sweep).local = glm::translate(
+            glm::mat4(1.0f), {std::min(-4.0f + 3.0f * static_cast<float>(index) * dt, 0.0f), 1.0f, 0.0f});
+        scene.markTransformDirty(sweep);
+        step(physics, scene, assets);
+        log.record(physics);
+    }
+    const auto count = [&log](TriggerEventType type, Entity sensor, Entity other) {
+        return std::ranges::count_if(log.events, [&](const TriggerEvent& event) {
+            return event.type == type && event.sensor == sensor && event.other == other;
+        });
+    };
+    CHECK_MESSAGE(
+        (count(TriggerEventType::Entered, zone, sweep) == 1 && count(TriggerEventType::Entered, sweep, zone) == 1),
+        "a sensor entering another reports an entry for each of them");
+    CHECK_MESSAGE((count(TriggerEventType::Entered, zone, overlapping) == 0 &&
+                   count(TriggerEventType::Entered, overlapping, zone) == 0),
+                  "two overlapping static sensors report nothing");
+
+    // Removing the swept sensor exits both sides, by scene id.
+    const SceneEntityId zoneId = scene.id(zone);
+    const SceneEntityId sweepId = scene.id(sweep);
+    log.events.clear();
+    scene.destroyEntity(sweep);
+    step(physics, scene, assets);
+    log.record(physics);
+    const auto exited = [&log](SceneEntityId sensor, SceneEntityId other) {
+        return std::ranges::count_if(log.events, [&](const TriggerEvent& event) {
+            return event.type == TriggerEventType::Exited && event.sensorId == sensor && event.otherId == other;
+        });
+    };
+    CHECK_MESSAGE((log.events.size() == 2 && exited(zoneId, sweepId) == 1 && exited(sweepId, zoneId) == 1),
+                  "removing one of two overlapping sensors exits both of them");
 }
 
 TEST_CASE("PhysicsQuery: layer field schema") {
