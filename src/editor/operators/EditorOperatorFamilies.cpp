@@ -2,6 +2,7 @@
 
 #include "editor/application/EditorSessionOperators.hpp"
 #include "editor/menus/EditorMenus.hpp"
+#include "editor/operators/AnimationOperators.hpp"
 #include "editor/operators/BuildOperators.hpp"
 #include "editor/operators/CodeOperators.hpp"
 #include "editor/operators/ComponentOperators.hpp"
@@ -48,6 +49,7 @@ constexpr std::array operatorFamilies{
     OperatorFamily{"model", registerModelOperatorFamily},
     OperatorFamily{"placement", registerPlacementOperatorFamily},
     OperatorFamily{"select", registerSelectOperatorFamily},
+    OperatorFamily{"animation", registerAnimationOperatorFamily},
 };
 } // namespace
 

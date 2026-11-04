@@ -403,7 +403,7 @@ Gaps the critical work left on purpose:
    - collider shape-type switch, offset, and drag handles;
    - nav bake settings UI and menu entries;
    - overlay toggles (physics, nav, crowd, contacts) that also work in Play, through `PhysicsWorld::drawDebug` and `NavigationWorld::drawDebug`.
-6. **Animator inspector.** Edit states, transitions, parameters and events through reflected lists, not a node graph, with a "preview state" button (`AnimationComponentTypes.cpp:216`).
+6. **Animator inspector.** *Done:* the Animator section edits the entry state, parameters, states (clip picked from the model, with Preview through `animation.preview_state`), transitions with conditions, and events as lists; renames and removals keep references whole, and edits that would fail validation are refused (`interaction/AnimatorEditor`). The original item: edit states, transitions, parameters and events through reflected lists, not a node graph, with a "preview state" button (`AnimationComponentTypes.cpp:216`).
 7. **Outliner scale and search.** *Done:* cached, clipped rows (an unchanged frame takes about 1.2 ms with 10,000 entities), `c:`/`t:`/`p:` filters with Select All Matching, saved sibling order with drag reordering, and collection rename. The original list:
    - `ImGuiListClipper` and incremental rebuild (`HierarchyPanel.cpp:164`);
    - filter by component and tag;

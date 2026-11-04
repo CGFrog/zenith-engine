@@ -416,7 +416,14 @@ static colliders on first use. Deep dive: [Navigation](../engine/navigation.md).
 
 Models with glTF animation clips get an **Animation** component. For
 gameplay-driven animation add an **Animator**: a state machine of states
-(clip, speed, loop), transitions with conditions, and parameters. From code:
+(clip, speed, loop), transitions with conditions, and parameters. Build it in
+the Inspector's Animator section: add parameters and states (each state picks
+one of the model's clips; **Preview** plays it on the object), then
+transitions between states, each waiting for its conditions, an exit time, or
+both. Renaming a state or parameter updates everything that names it, and an
+edit that would leave the animator unusable is refused with the reason shown
+below the section. A state whose clip the model no longer has is shown in red.
+Gameplay then drives the parameters from code:
 
 ```cpp
 auto& animator = scene.registry().get<AnimatorComponent>(entity);

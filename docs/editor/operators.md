@@ -94,6 +94,15 @@ one. A scene holding a runtime mesh (`AssetManager::createMesh`) cannot be
 saved, so the runner cannot record the step and the operator is refused.
 `tests/editor/MeshAssignTests.cpp` covers it with the inspector row.
 
+`AnimationOperators` (the `animation` family) holds `animation.preview_state
+{entity, state}` (Undo, Internal; Edit mode and Play), which the Animator
+inspector's Preview button runs: `enterAnimatorState` puts the entity's
+animator in the state at once, so its Animation component plays the state's
+clip from the start at the state's speed and looping, as one undo step scoped
+to the entity. In Edit mode the clip plays as the Animation component's own
+Preview does; in Play the running animator continues from that state.
+`tests/editor/AnimatorEditorTests.cpp` covers it with undo.
+
 `SelectOperators` (the `select` family) holds `object.select_hierarchy
 {direction, extend}` (`]` children, `[` parent, Shift extends) and
 `object.select_grouped {type, extend}` (Shift+G opens its menu, also in Edit >

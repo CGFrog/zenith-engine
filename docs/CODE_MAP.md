@@ -105,7 +105,7 @@ capability. `--check` fails when the generated index is stale.
 | Navigation mesh and paths | `src/engine/navigation/NavigationWorld.*`, `NavMeshBuildSettings.hpp` | `NavigationWorld::{bake,findPath}`, `gatherNavigationGeometry` | `engine.Navigation` | [Navigation](engine/navigation.md) |
 | AI agents and crowds | `src/engine/navigation/NavAgent.*`, `NavigationCrowd.*` | `NavAgentComponent`, `setNavDestination`, `NavigationCrowd` | `engine.Navigation` | [Navigation](engine/navigation.md) |
 | Animation playback | `src/engine/animation/AnimationSystem.*` | `updateAnimations`, `beginAnimationCrossFade` | `engine.Animation` | [Animation](engine/animation.md) |
-| Animator state machine | `src/engine/animation/Animator.*` | `AnimatorComponent::{setFloat,setBool,setTrigger}`, `updateAnimator`, `AnimationEvent` | `engine.Animator` | [Animation](engine/animation.md) |
+| Animator state machine | `src/engine/animation/Animator.*` | `AnimatorComponent::{setFloat,setBool,setTrigger}`, `updateAnimator`, `enterAnimatorState`, `AnimationEvent` | `engine.Animator` | [Animation](engine/animation.md) |
 
 ### Assets
 
@@ -162,6 +162,7 @@ capability. `--check` fails when the generated index is stale.
 | Adjust Last Operation panel | `operators/LastOperatorPanel.*` | `LastOperatorPanel` | `editor.Operator` | [Operators](editor/operators.md) |
 | Menus, Add menu, pies | `src/editor/menus/MenuRegistry.*`, `DefaultMenus.*`, `PieMenu.*`, `application/EditorMainMenu.cpp` | `MenuRegistry::{addMenu,addEntry,addSection}`, `wm.call_menu` | `editor.Menu` | [Menus](editor/menus.md) |
 | Inspector / Properties drawing | `interaction/EntityPropertiesView.*`, `ReflectedFieldEditor.*`, `ComponentEditors.*`, `panels/InspectorPanel.*`, `panels/PropertiesPanel.*` | `EntityPropertiesView`, `ComponentEditorOverrides` | `editor.ReflectedFieldEditor`, `editor.PropertiesPanel`, `editor.ComponentEditor` | [Inspector](editor/inspector.md) |
+| Animator inspector and state preview | `interaction/AnimatorEditor.*`, `operators/AnimationOperators.*` | `AnimatorEditor::{drawAnimator,renameState,removeParameter}`, `animation.preview_state` | `editor.AnimatorEditor` | [Inspector](editor/inspector.md) |
 | Entity / asset reference fields, eyedropper | `interaction/EntityReferenceField.*`, `AssetReferenceField.*`, `EntityEyedropper.*` | – | `editor.EntityReferenceField`, `editor.AssetReferenceField` | [Inspector](editor/inspector.md) |
 | Hierarchy (outliner) | `panels/HierarchyPanel.*`, `panels/outliner/` | `HierarchyPanel`, `OutlinerTree`, `OutlinerFilter` | `editor.Outliner` | [Outliner](editor/outliner.md) |
 | Asset Browser | `panels/AssetBrowserPanel.*`, `project/ProjectAssets.*`, `project/AssetCatalog.*` | `AssetBrowserPanel::drawBrowser`, `ProjectAssets`, `ThumbnailCache` | `editor.AssetBrowser`, `editor.ProjectAsset`, `editor.ThumbnailCache` | [Asset Browser](editor/asset-browser.md) |

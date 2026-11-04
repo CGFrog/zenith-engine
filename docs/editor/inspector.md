@@ -5,7 +5,7 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 `interaction/EntityPropertiesView` draws the selection's sections: name, label
 filter, transform, every registered component (reflected fields, or a custom
 editor registered there for `collider`, `morph_weights`, `irradiance_volume`,
-and `animation`), preserved unknown components, asset warnings, the model drop
+`animation`, and `animator`), preserved unknown components, asset warnings, the model drop
 target, and the irradiance bake button. Panels add the Add Component button
 from `menus/AddComponentMenu`, which opens the searchable Add Component menu
 grouped by `ComponentType::category()` (empty categories show as "Other").
@@ -61,6 +61,29 @@ mark per axis, so an edit changes only that axis on every entity.
 Components only the active entity has follow under "Active Entity Only";
 holding Alt while editing applies the change to every selected entity with the
 component.
+
+The Animator section (`interaction/AnimatorEditor`) edits the state machine
+as lists rather than a node graph: the entry state, then Parameters (name,
+type, starting value), States (name, a clip chosen from the entity's model,
+speed, loop, and **Preview**, which runs `animation.preview_state`),
+Transitions (from a state or Any state, to, cross-fade, an optional exit
+time, and conditions whose tests offer only those fitting the parameter's
+type), and Events (state, time, name). Names are references in an animator,
+so renaming a state or parameter renames every transition, condition, event
+and entry state naming it, and removing one removes what referred to it (a
+transition left with nothing to wait for goes too). Name fields commit when
+typing ends. Documents refuse an invalid animator, which would break undo and
+reloads, so each edit is made on a copy and kept only when
+`validateAnimatorDefinition` accepts it; a refused edit leaves the component
+as it was and says why. States whose clip the model lacks (usually a renamed
+clip) are marked in the error colour, since such an animator does nothing at
+run time. In Play the section also shows the current state and its time.
+`tests/editor/AnimatorEditorTests.cpp` covers the reference-keeping edits, an
+idle frame, and the preview.
+
+> 📷 **Screenshot needed — `EDITOR-ANIMATOR-INSPECTOR`:** *The Inspector's
+> Animator section on a character, with States and Transitions open and one
+> condition shown.*
 
 Entity reference fields draw through `interaction/EntityReferenceField`: a box
 naming the referenced entity ("None", its name, or "Missing" in the error

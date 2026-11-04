@@ -43,5 +43,14 @@ the event markers the playback passed (once per loop). The engine's
 `zenith.animator` system (Update, Play, ordered after the game's Update
 systems) runs `updateAnimators`, which publishes each marker as an
 `AnimationEvent` (`zenith.animation_event`: entity, state, and name) to the
-session's `EventQueue`, readable in the next frame. A graph editor is later
-work.
+session's `EventQueue`, readable in the next frame.
+
+`enterAnimatorState` puts an animator in a named state at once, with no
+cross-fade or transition: the animation plays the state's clip from its start
+and the state time restarts. The editor's Preview button uses it (see the
+[Inspector](../editor/inspector.md)); a game can use it to reset a character on
+respawn. It refuses, changing nothing, a missing state or one whose clip the
+model lacks.
+
+The editor edits animators in the Inspector as lists (states, transitions,
+parameters, events); a node-graph editor is later work.

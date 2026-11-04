@@ -53,6 +53,7 @@ add_library(zenith_editor_app STATIC
     document/RuntimeApply.cpp
     document/SceneFragment.cpp
     interaction/ComponentEditorOverrides.cpp
+    interaction/AnimatorEditor.cpp
     interaction/ComponentEditors.cpp
     interaction/EditorCamera.cpp
     interaction/EntityEyedropper.cpp
@@ -73,6 +74,7 @@ add_library(zenith_editor_app STATIC
     menus/PieMenu.cpp
     modules/GameModuleHost.cpp
     operators/ComponentOperators.cpp
+    operators/AnimationOperators.cpp
     operators/BuildOperators.cpp
     operators/CodeOperators.cpp
     operators/DebugOperators.cpp

@@ -13,10 +13,11 @@ To add a screenshot:
    followed by an italic caption line if useful.
 4. Re-run the script; the entry disappears from this list.
 
-46 screenshots needed.
+47 screenshots needed.
 
 | ID | Page | What to capture |
 | --- | --- | --- |
+| `EDITOR-ANIMATOR-INSPECTOR` | [editor/inspector.md:84](../editor/inspector.md) | The Inspector's Animator section on a character, with States and Transitions open and one condition shown. |
 | `GUIDE-01-HUB` | [guide/01-getting-started.md:60](../guide/01-getting-started.md) | The Project Hub on first launch: the Recent Projects list (empty or with the demo), the New from Template section showing both templates, and the Open Project... button. |
 | `GUIDE-01-NEWPROJECT` | [guide/01-getting-started.md:104](../guide/01-getting-started.md) | The New from Template form with C++ Game selected, a project name typed in, and the location field with its Browse... button. |
 | `GUIDE-01-SPINNER` | [guide/01-getting-started.md:134](../guide/01-getting-started.md) | The C++ Game template scene in Play mode with the cube mid-rotation, the Inspector showing the Spinner section (degrees_per_second = 90), and the warm Play tint on the panel headers. |
@@ -45,10 +46,10 @@ To add a screenshot:
 | `GUIDE-04-BUILDERRORS` | [guide/04-play-and-debug.md:163](../guide/04-play-and-debug.md) | The Build panel showing a compiler error, and the same error in Diagnostics, with a behaviour section in the Inspector showing its "failed" badge. |
 | `GUIDE-05-NEWBEHAVIOUR` | [guide/05-game-logic.md:94](../guide/05-game-logic.md) | The Module > New Behaviour... dialog with Name "Slider" and two float fields (distance, speed) filled in. |
 | `GUIDE-05-BEHAVIOURSECTION` | [guide/05-game-logic.md:376](../guide/05-game-logic.md) | A behaviour's Inspector section (e.g. Hitscan Weapon) with the enabled checkbox, its fields with units, and the Edit Script button and status badge in the header. |
-| `GUIDE-06-PROJECTSETTINGS` | [guide/06-gameplay-services.md:49](../guide/06-gameplay-services.md) | Project Settings on the Physics Layers tab, showing the layer list (Static, Dynamic, Player, plus a custom "Targets" layer) and the collision matrix of checkboxes. |
-| `GUIDE-06-INPUTACTIONS` | [guide/06-gameplay-services.md:99](../guide/06-gameplay-services.md) | Project Settings on the Input Actions tab with "Fire" selected, its bindings listed, and the Add Binding source picker open. |
-| `GUIDE-06-HUD` | [guide/06-gameplay-services.md:271](../guide/06-gameplay-services.md) | The FPS template's HUD in the game view: crosshair, "Targets 2 / 5" counter, and a message line; and a second capture of its pause menu. |
-| `GUIDE-06-NAVMESH` | [guide/06-gameplay-services.md:404](../guide/06-gameplay-services.md) | A level with the Navigation Mesh overlay on, the sidebar's Navigation tab showing bake stats, and an agent with its path drawn. |
+| `GUIDE-06-PROJECTSETTINGS` | [guide/06-gameplay-services.md:51](../guide/06-gameplay-services.md) | Project Settings on the Physics Layers tab, showing the layer list (Static, Dynamic, Player, plus a custom "Targets" layer) and the collision matrix of checkboxes. |
+| `GUIDE-06-INPUTACTIONS` | [guide/06-gameplay-services.md:101](../guide/06-gameplay-services.md) | Project Settings on the Input Actions tab with "Fire" selected, its bindings listed, and the Add Binding source picker open. |
+| `GUIDE-06-HUD` | [guide/06-gameplay-services.md:278](../guide/06-gameplay-services.md) | The FPS template's HUD in the game view: crosshair, "Targets 2 / 5" counter, and a message line; and a second capture of its pause menu. |
+| `GUIDE-06-NAVMESH` | [guide/06-gameplay-services.md:411](../guide/06-gameplay-services.md) | A level with the Navigation Mesh overlay on, the sidebar's Navigation tab showing bake stats, and an agent with its path drawn. |
 | `GUIDE-07-RENDERSTATS` | [guide/07-engine-concepts.md:269](../guide/07-engine-concepts.md) | The Render Statistics panel and Graphics panel GPU timing table on the showcase project, showing per-pass milliseconds. |
 | `GUIDE-08-STANDALONE` | [guide/08-shipping.md:20](../guide/08-shipping.md) | The game running in its own window via `zenith --project`, beside the editor's Info log showing the streamed `game` output. |
 | `GUIDE-08-PACKAGE` | [guide/08-shipping.md:33](../guide/08-shipping.md) | The Build panel at the end of a successful Build and Package, and the file manager window it opens with the .zip selected. |

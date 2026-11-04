@@ -238,6 +238,17 @@ bool updateAnimator(AnimatorComponent& animator, AnimationComponent& animation, 
     return true;
 }
 
+bool enterAnimatorState(AnimatorComponent& animator, AnimationComponent& animation,
+                        std::span<const AnimationClip> clips, std::string_view state) {
+    const AnimatorState* found = findNamed(animator.definition.states, state);
+    const std::optional<uint32_t> clip = found != nullptr ? clipIndex(clips, found->clip) : std::nullopt;
+    if (!clip) {
+        return false;
+    }
+    enter(animator, animation, *found, *clip, std::nullopt);
+    return true;
+}
+
 void updateAnimators(Scene& scene, const AssetManager& assets, EventQueue* events, float deltaSeconds) {
     entt::registry& registry = scene.registry();
     std::vector<std::string> passed;

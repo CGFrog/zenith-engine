@@ -96,6 +96,7 @@ zenith_add_test(zenith_editor_module_smoke EXECUTABLE zenith_editor
 # last, after the test modules and paths its cases use.
 zenith_add_test_suite(editor
     SOURCES
+        AnimatorEditorTests.cpp
         AssetBrowserTests.cpp
         AssetImportTests.cpp
         AssetReferenceFieldTests.cpp
