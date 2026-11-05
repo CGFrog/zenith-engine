@@ -436,6 +436,7 @@ Camera, selection, gizmo transforms, and the Inspector's field editors.
 
 | File | Main types | Summary |
 | --- | --- | --- |
+| `AnimatorEditor` .hpp/.cpp | `AnimatorEditorState`, `AnimatorEditResult` | The Animator component's Inspector: parameters, states, transitions and events, with renames that follow references. |
 | `AssetReferenceField` .hpp/.cpp | `AssetReferenceFieldContext`, `AssetReferenceState`, `AssetReferenceFieldOptions` | The Inspector's asset field: a project path with a picker, drag and drop, and thumbnails. |
 | `ComponentEditorOverrides` .hpp/.cpp | `ComponentEditorOverrideResult`, `ComponentEditorOverrides` | Custom component editors contributed from outside EntityPropertiesView, for example by a game module, keyed by component type key. |
 | `ComponentEditors` .hpp/.cpp | `EditableTransform`, `ColliderShapeKind`, `ColliderMeshChoice` | Custom Inspector editors for components reflection cannot express (transform, collider shape, mesh). |
@@ -481,6 +482,7 @@ Every editor command (operator), the keymap, and F3 search.
 
 | File | Main types | Summary |
 | --- | --- | --- |
+| `AnimationOperators` .hpp/.cpp | `AnimatorPreviewProperties` | animation.preview_state: plays an animator state on its object, for the Animator inspector's Preview. |
 | `BuildOperators` .hpp/.cpp | `BuildOperatorServices` | Starts and stops the session's build (ProjectBuild), which the Build panel shows. |
 | `CodeOperators` .hpp/.cpp | `GenerateCodeProperties`, `CodeOperatorServices`, `EditScriptProperties`, `OpenSourceProperties` | module.generate_code / new_* and opening sources in the IDE (Edit Script). |
 | `CollectionOperators` .hpp/.cpp | `NewCollectionProperties`, `CollectionProperties`, `RenameCollectionProperties`, `CollectionFlagProperties`, … | Headless collection operators (Blender-style collections, see engine/scene/Collections.hpp). |
