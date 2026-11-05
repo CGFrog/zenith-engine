@@ -179,11 +179,13 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+# stb has no release tags, so it is pinned to a commit. Not shallow: a shallow
+# clone fetches only the branch tip, which stops containing the pinned commit
+# as soon as stb's master moves on.
 FetchContent_Declare(
     stb
     GIT_REPOSITORY https://github.com/nothings/stb.git
     GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20
-    GIT_SHALLOW TRUE
 )
 
 set(ENTT_BUILD_TESTING OFF CACHE BOOL "" FORCE)
