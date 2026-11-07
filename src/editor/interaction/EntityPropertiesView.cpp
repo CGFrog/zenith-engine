@@ -3,6 +3,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/PrefabEditDocument.hpp"
+#include "editor/interaction/AnimatorEditor.hpp"
 #include "editor/interaction/AssetReferenceField.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/EntityReferenceField.hpp"
@@ -228,6 +229,26 @@ EntityPropertiesView::EntityPropertiesView(ComponentInspectorLayout& layout)
         const auto* model = context.app.scene.registry().try_get<ModelComponent>(entity);
         const ModelAsset* asset = model != nullptr ? context.app.assets.model(model->model) : nullptr;
         return ComponentEditors::drawAnimation(*static_cast<AnimationComponent*>(component), asset);
+    });
+    // The name being typed and the last refused edit; shared by copies of the editor.
+    m_customEditors.emplace("animator", [editorState = std::make_shared<AnimatorEditor::AnimatorEditorState>()](
+                                            EditorContext& context, Entity entity, void* component) {
+        const SceneEntityId id = context.app.scene.id(entity);
+        if (editorState->owner != id.value) {
+            *editorState = {.owner = id.value};
+        }
+        // State clips are chosen from the entity's model.
+        const auto* model = context.app.scene.registry().try_get<ModelComponent>(entity);
+        const ModelAsset* asset = model != nullptr ? context.app.assets.model(model->model) : nullptr;
+        const std::span<const AnimationClip> clips =
+            asset != nullptr ? std::span<const AnimationClip>(asset->animations) : std::span<const AnimationClip>{};
+        const AnimatorEditor::AnimatorEditResult result =
+            AnimatorEditor::drawAnimator(*static_cast<AnimatorComponent*>(component), clips, *editorState);
+        if (result.previewState) {
+            context.invoke("animation.preview_state",
+                           Json{{"entity", id.value}, {"state", *result.previewState}}.dump());
+        }
+        return result.changed;
     });
 }
 

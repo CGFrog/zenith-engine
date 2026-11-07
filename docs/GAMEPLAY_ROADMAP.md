@@ -78,9 +78,10 @@ against the code when the roadmap was archived.
   entity, so such saves are larger until the level is re-saved; undo
   snapshots leave runtime state out, so an undone Play-mode edit resets
   runtime fields to their defaults. [B5] (unverified)
-- Animator states address clips by name; renamed clips leave animators inert
-  without a diagnostic. Both clips of a cross-fade share the target state's
-  speed and looping. [B3] (unverified)
+- Animator states address clips by name; a renamed clip leaves the animator
+  inert. The Animator inspector marks such states, but the runtime still
+  reports nothing. Both clips of a cross-fade share the target state's speed
+  and looping. [B3]
 
 ### Physics, navigation, and input
 

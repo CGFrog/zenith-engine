@@ -126,6 +126,13 @@ std::string validateAnimatorDefinition(const AnimatorDefinition& definition);
 bool updateAnimator(AnimatorComponent& animator, AnimationComponent& animation, std::span<const AnimationClip> clips,
                     float deltaSeconds, std::vector<std::string>& events);
 
+// Puts the animator in the named state at once, without a cross-fade: the
+// animation plays the state's clip from its start at the state's speed and
+// looping, and the state time restarts (an editor preview, a respawn). Returns
+// false, changing nothing, when there is no such state or clips lacks its clip.
+bool enterAnimatorState(AnimatorComponent& animator, AnimationComponent& animation,
+                        std::span<const AnimationClip> clips, std::string_view state);
+
 // Runs updateAnimator for every entity with an animator, an animation, and a
 // model, and publishes the events as AnimationEvent to events when it is set.
 void updateAnimators(Scene& scene, const AssetManager& assets, EventQueue* events, float deltaSeconds);

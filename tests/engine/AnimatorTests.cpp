@@ -143,6 +143,28 @@ TEST_CASE("Animator: missing clips and validation") {
     CHECK_MESSAGE(!validateAnimatorDefinition(definition).empty(), "state names are unique");
 }
 
+TEST_CASE("Animator: entering a state directly") {
+    Rig rig;
+    rig.step(0.1f);
+    rig.animator.setFloat("speed", 1.0f);
+    rig.step(0.1f);
+    CHECK_MESSAGE(rig.animation.blendClipIndex.has_value(), "the walk cross-fade is under way");
+
+    CHECK_MESSAGE(enterAnimatorState(rig.animator, rig.animation, rig.available, "Jump"),
+                  "an existing state can be entered");
+    CHECK_MESSAGE((rig.animator.currentState == "Jump" && rig.animator.stateTime == 0.0f &&
+                   rig.animation.clipIndex == 2 && !rig.animation.blendClipIndex && rig.animation.time == 0.0f &&
+                   !rig.animation.looping && rig.animation.playing),
+                  "entering plays the state's clip from its start, without a cross-fade");
+
+    CHECK_MESSAGE(!enterAnimatorState(rig.animator, rig.animation, rig.available, "Nowhere"),
+                  "a missing state cannot be entered");
+    rig.available = {{.name = "Idle", .duration = 1.0f}};
+    CHECK_MESSAGE((!enterAnimatorState(rig.animator, rig.animation, rig.available, "Walk") &&
+                   rig.animator.currentState == "Jump"),
+                  "a state whose clip is missing cannot be entered, and nothing changes");
+}
+
 TEST_CASE("Animator: scene document") {
     const std::shared_ptr<const ComponentTypeRegistry> types = builtInComponentTypes();
     AssetManager assets;
